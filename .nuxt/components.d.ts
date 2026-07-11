@@ -16,10 +16,12 @@ type LazyComponent<T> = DefineComponent<HydrationStrategies, {}, {}, {}, {}, {},
 
 export const AppShell: typeof import("../components/AppShell.vue")['default']
 export const BaseModal: typeof import("../components/BaseModal.vue")['default']
+export const ConfirmModal: typeof import("../components/ConfirmModal.vue")['default']
 export const GlobalLoading: typeof import("../components/GlobalLoading.vue")['default']
 export const LoadingState: typeof import("../components/LoadingState.vue")['default']
 export const PageHeader: typeof import("../components/PageHeader.vue")['default']
 export const RecordDetailModal: typeof import("../components/RecordDetailModal.vue")['default']
+export const SearchableSelect: typeof import("../components/SearchableSelect.vue")['default']
 export const ToastAlert: typeof import("../components/ToastAlert.vue")['default']
 export const NuxtWelcome: typeof import("../node_modules/nuxt/dist/app/components/welcome.vue")['default']
 export const NuxtLayout: typeof import("../node_modules/nuxt/dist/app/components/nuxt-layout")['default']
@@ -46,10 +48,12 @@ export const Body: typeof import("../node_modules/nuxt/dist/head/runtime/compone
 export const NuxtIsland: typeof import("../node_modules/nuxt/dist/app/components/nuxt-island")['default']
 export const LazyAppShell: LazyComponent<typeof import("../components/AppShell.vue")['default']>
 export const LazyBaseModal: LazyComponent<typeof import("../components/BaseModal.vue")['default']>
+export const LazyConfirmModal: LazyComponent<typeof import("../components/ConfirmModal.vue")['default']>
 export const LazyGlobalLoading: LazyComponent<typeof import("../components/GlobalLoading.vue")['default']>
 export const LazyLoadingState: LazyComponent<typeof import("../components/LoadingState.vue")['default']>
 export const LazyPageHeader: LazyComponent<typeof import("../components/PageHeader.vue")['default']>
 export const LazyRecordDetailModal: LazyComponent<typeof import("../components/RecordDetailModal.vue")['default']>
+export const LazySearchableSelect: LazyComponent<typeof import("../components/SearchableSelect.vue")['default']>
 export const LazyToastAlert: LazyComponent<typeof import("../components/ToastAlert.vue")['default']>
 export const LazyNuxtWelcome: LazyComponent<typeof import("../node_modules/nuxt/dist/app/components/welcome.vue")['default']>
 export const LazyNuxtLayout: LazyComponent<typeof import("../node_modules/nuxt/dist/app/components/nuxt-layout")['default']>

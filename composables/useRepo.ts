@@ -55,6 +55,11 @@ export function useRepo() {
       } : {})
     }
 
+    // Khi sửa, không ghi lại created_at từ state client. Firestore đang lưu
+    // Timestamp server; nếu client gửi lại ISO string thì Rules coi là đổi
+    // field bất biến và chặn update.
+    if (!isCreate) delete payload.created_at
+
     if (data.search_text) payload.search_text = data.search_text
     else if (isCreate || Object.keys(data).length > 3) {
       payload.search_text = normalizeText(

@@ -9,7 +9,6 @@ const navItems = [
   { to: '/products', label: 'Sản phẩm', perm: 'page.products' },
   { to: '/payments', label: 'Thanh toán', perm: 'page.payments' },
   { to: '/shipments', label: 'Vận chuyển', perm: 'page.shipments' },
-  { to: '/invoices', label: 'Hóa đơn', perm: 'page.invoices' },
   { to: '/activity-logs', label: 'Nhật ký', perm: 'page.activity_logs' },
   { to: '/settings/users', label: 'Người dùng & quyền', perm: 'admin.only' },
   { to: '/settings/general', label: 'Cài đặt chung', perm: 'page.settings' }

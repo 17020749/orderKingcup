@@ -31,6 +31,7 @@ export { setInterval } from '#app/compat/interval';
 export { definePageMeta } from '../node_modules/nuxt/dist/pages/runtime/composables';
 export { defineLazyHydrationComponent } from '#app/composables/lazy-hydration';
 export { useAuth } from '../composables/useAuth';
+export { useConfirmDialog } from '../composables/useConfirmDialog';
 export { useFirebaseServices } from '../composables/useFirebaseServices';
 export { useOrderLogic } from '../composables/useOrderLogic';
 export { useRepo } from '../composables/useRepo';

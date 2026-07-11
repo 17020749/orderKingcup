@@ -10,6 +10,7 @@ const { appUser, hasPermission } = useAuth()
 const { loadScopedOrders, loadScopedOrderItems, loadScopedExportRequests } = useScopedQueries()
 const { buildFulfillmentRows, orderSummary, requestItems, requestLineProgress } = useWarehouseLogic()
 const { showToast, withLoading } = useUi()
+const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const { invalidateScopedCache } = useRepo()
 
 const loading = ref(false)
@@ -42,18 +43,24 @@ const selectedOrder = computed(() => orders.value.find(order => order.id === for
 const canDeletePermission = computed(() =>
   hasPermission('*') || hasPermission('export_requests.delete') || hasPermission('orders.delete')
 )
+const orderOptions = computed(() => orders.value.map(order => ({
+  value: order.id,
+  label: `${order.order_code || ''} - ${order.customer_name || ''}`,
+  subLabel: [order.phone, order.sale_name].filter(Boolean).join(' · '),
+  search: `${order.order_code || ''} ${order.customer_name || ''} ${order.phone || ''} ${order.sale_name || ''}`
+})))
 
 async function loadRows(force = false) {
   loading.value = true
   try {
-    const [loadedOrders, requests] = await Promise.all([
-      loadScopedOrders(force),
-      loadScopedExportRequests([], force)
-    ])
+    const loadedOrders = await loadScopedOrders(force)
     orders.value = loadedOrders.filter(isActive)
+    const [requests, items] = await Promise.all([
+      loadScopedExportRequests(orders.value, force),
+      loadScopedOrderItems(orders.value, force)
+    ])
     rows.value = requests.filter(isActive)
 
-    const items = await loadScopedOrderItems(orders.value, force)
     itemsByOrder.value = items.reduce((map, item) => {
       if (!map[item.order_id]) map[item.order_id] = []
       map[item.order_id].push(item)
@@ -294,7 +301,12 @@ async function removeRequest(row: any) {
   if (!canDeleteRequest(row)) {
     return showToast('Phiếu đã xuất kho hoặc đã có mã phiếu kho nên không thể xóa.', 'error')
   }
-  if (!confirm(`Xóa phiếu xuất kho ${row.request_id}?`)) return
+  const confirmed = await askConfirm({
+    title: 'Xóa phiếu xuất kho',
+    message: `Bạn chắc chắn muốn xóa phiếu xuất kho ${row.request_id}?\nPhiếu đã xuất kho hoặc đã có mã phiếu kho sẽ không được xóa.`,
+    confirmLabel: 'Xóa phiếu'
+  })
+  if (!confirmed) return
 
   await withLoading(async () => {
     const remainingRequests = rows.value.filter(item => item.id !== row.id && item.order_id === row.order_id && isActive(item))
@@ -444,7 +456,16 @@ onMounted(() => loadRows())
 
     <BaseModal v-if="showModal" :title="editing ? `Sửa phiếu ${form.request_id}` : 'Tạo yêu cầu xuất kho'" size="xl" :loading="saving" save-label="Lưu phiếu xuất" @close="showModal=false" @save="saveRequest">
       <div class="form-grid">
-        <div class="form-group"><label>Đơn hàng</label><select v-model="form.order_id" class="select" :disabled="!!editing" @change="prepareLines"><option value="">Chọn đơn</option><option v-for="order in orders" :key="order.id" :value="order.id">{{ order.order_code }} - {{ order.customer_name }}</option></select></div>
+        <div class="form-group">
+          <label>Đơn hàng</label>
+          <SearchableSelect
+            v-model="form.order_id"
+            :options="orderOptions"
+            :disabled="!!editing"
+            placeholder="Tìm đơn hàng theo mã, khách hàng, SĐT..."
+            @change="prepareLines"
+          />
+        </div>
         <div class="form-group"><label>Ngày xuất dự kiến</label><input v-model="form.export_date" class="input" type="date" /></div>
       </div>
       <div v-if="selectedOrder" class="detail-grid">
@@ -482,5 +503,11 @@ onMounted(() => loadRows())
       <h3 v-if="timeline(selectedRequest).length">Timeline xử lý</h3>
       <div v-for="(step,index) in timeline(selectedRequest)" :key="index" class="detail-item" style="margin-bottom:8px"><strong>{{ step.title || statusLabel(step.status) }}</strong><div class="small subtle">{{ formatDateTime(step.time) }} · {{ step.actor }}</div><div>{{ step.note }}</div></div>
     </BaseModal>
+
+    <ConfirmModal
+      v-bind="confirmState"
+      @cancel="resolveConfirm(false)"
+      @confirm="resolveConfirm(true)"
+    />
   </AppShell>
 </template>

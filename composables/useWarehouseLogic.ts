@@ -60,8 +60,12 @@ function requestedQuantity(item: any) {
 function actualExportedQuantity(item: any, status: string, requested: number) {
   const explicit = toNumber(
     item?.actual_export_quantity
+    ?? item?.actual_exported_quantity
     ?? item?.exported_quantity
+    ?? item?.exported_qty
     ?? item?.warehouse_export_quantity
+    ?? item?.warehouse_exported_quantity
+    ?? item?.stock_out_quantity
     ?? item?.fulfilled_quantity
     ?? item?.actual_quantity
   )
@@ -72,8 +76,15 @@ function actualExportedQuantity(item: any, status: string, requested: number) {
 function processedQuantity(item: any, status: string, requested: number, exported: number) {
   const explicit = toNumber(
     item?.processed_quantity
+    ?? item?.processed_qty
     ?? item?.approved_quantity
+    ?? item?.approved_qty
+    ?? item?.accepted_quantity
+    ?? item?.accepted_qty
     ?? item?.warehouse_processed_quantity
+    ?? item?.warehouse_accepted_quantity
+    ?? item?.handled_quantity
+    ?? item?.confirmed_quantity
   )
   if (explicit > 0) return Math.min(requested || explicit, Math.max(explicit, exported))
   if (EXPORTED_STATUSES.has(status)) return Math.max(requested, exported)

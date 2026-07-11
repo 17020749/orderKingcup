@@ -9,6 +9,7 @@ const { saveDoc, softDeleteDoc } = useRepo()
 const { loadScopedOrders, loadScopedInvoices } = useScopedQueries()
 const { appUser, hasPermission } = useAuth()
 const { showToast, withLoading } = useUi()
+const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
 const rows = ref<InvoiceDoc[]>([])
 const orders = ref<OrderDoc[]>([])
@@ -111,7 +112,12 @@ async function save() {
 }
 
 async function remove(row: InvoiceDoc) {
-  if (!confirm(`Xóa hóa đơn ${row.invoice_number || row.order_code}?`)) return
+  const confirmed = await askConfirm({
+    title: 'Xóa hóa đơn',
+    message: `Bạn chắc chắn muốn xóa hóa đơn ${row.invoice_number || row.order_code}?`,
+    confirmLabel: 'Xóa hóa đơn'
+  })
+  if (!confirmed) return
   await withLoading(async () => {
     await softDeleteDoc('invoices', row.id, row.invoice_number || row.order_code || row.id)
     rows.value = rows.value.filter(item => item.id !== row.id)
@@ -172,6 +178,12 @@ onMounted(() => loadRows())
       :field-order="['id','order_id','order_code','invoice_number','invoice_date','invoice_amount','invoice_status','tax_code','company_name','billing_address','note','created_by','created_at','updated_at','order_owner_email','order_created_by','order_sale_email','status','active','deleted']"
       :money-fields="['invoice_amount']"
       @close="showDetailModal = false"
+    />
+
+    <ConfirmModal
+      v-bind="confirmState"
+      @cancel="resolveConfirm(false)"
+      @confirm="resolveConfirm(true)"
     />
   </AppShell>
 </template>

@@ -7,6 +7,7 @@ const { saveDoc, softDeleteDoc } = useRepo()
 const { loadScopedCustomers } = useScopedQueries()
 const { hasPermission } = useAuth()
 const { showToast } = useUi()
+const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
@@ -54,7 +55,12 @@ async function saveCustomer() {
   finally { saving.value = false }
 }
 async function removeCustomer(row: CustomerDoc) {
-  if (!confirm(`Xóa khách hàng ${row.customer_name}?`)) return
+  const confirmed = await askConfirm({
+    title: 'Xóa khách hàng',
+    message: `Bạn chắc chắn muốn xóa khách hàng ${row.customer_name}?`,
+    confirmLabel: 'Xóa khách hàng'
+  })
+  if (!confirmed) return
   try {
     await softDeleteDoc('customers', row.id)
     rows.value = rows.value.filter(r => r.id !== row.id)
@@ -113,6 +119,12 @@ onMounted(() => loadRows())
       :record="selectedDetail"
       :field-order="['id','customer_code','customer_name','company_name','phone','email','tax_code','billing_address','shipping_address','source','note','created_by','created_at','updated_at','status','active','deleted']"
       @close="showDetailModal = false"
+    />
+
+    <ConfirmModal
+      v-bind="confirmState"
+      @cancel="resolveConfirm(false)"
+      @confirm="resolveConfirm(true)"
     />
   </AppShell>
 </template>

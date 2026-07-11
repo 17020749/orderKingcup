@@ -11,6 +11,7 @@ const { calcItems, computePaymentStatus, parseLogoLines } = useOrderLogic()
 const { invalidateScopedCache } = useRepo()
 const { loadScopedOrders, loadScopedOrderItems, loadScopedPayments, loadScopedExportRequests, loadScopedCustomers, loadProducts } = useScopedQueries()
 const { showToast, withLoading } = useUi()
+const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const { buildFulfillmentRows, orderSummary } = useWarehouseLogic()
 
 const loading = ref(false)
@@ -40,6 +41,18 @@ const selectedDetailRequests = computed(() => selectedDetail.value
   ? exportRequests.value.filter(request => request.order_id === selectedDetail.value?.id && isActive(request))
   : [])
 const selectedDetailProgress = computed(() => buildFulfillmentRows(selectedDetailItems.value, selectedDetailRequests.value))
+const customerOptions = computed(() => customers.value.map(customer => ({
+  value: customer.id,
+  label: `${customer.customer_name || 'Khách chưa tên'}${customer.phone ? ` - ${customer.phone}` : ''}`,
+  subLabel: [customer.company_name, customer.email].filter(Boolean).join(' · '),
+  search: `${customer.customer_name || ''} ${customer.phone || ''} ${customer.email || ''} ${customer.company_name || ''}`
+})))
+const productOptions = computed(() => products.value.map(product => ({
+  value: product.id,
+  label: `${product.product_code || ''} - ${product.product_name || ''}`,
+  subLabel: [product.unit, (product as any).category, (product as any).packing_standard].filter(Boolean).join(' · '),
+  search: `${product.product_code || ''} ${product.product_name || ''} ${product.unit || ''} ${(product as any).category || ''}`
+})))
 
 const orderDetailLabels: Record<string, string> = {
   order_code: 'Mã đơn hàng', order_date: 'Ngày giờ đơn', customer_id: 'ID khách hàng',
@@ -156,7 +169,17 @@ function removeLogoLine(item: any, index: number) {
 }
 
 function toggleLogoMode(item: any) {
-  if (item.has_logo && !item.logo_lines.length) addLogoLine(item)
+  if (item.has_logo) {
+    if (!item.logo_lines.length) addLogoLine(item)
+    item.quantity = 0
+    item.unit_price = 0
+  } else {
+    const qty = item.logo_lines.reduce((sum: number, line: any) => sum + toNumber(line.quantity), 0)
+    const total = item.logo_lines.reduce((sum: number, line: any) => sum + logoLineTotal(line), 0)
+    item.quantity = qty || 1
+    item.unit_price = qty ? round2(total / qty) : 0
+    item.logo_lines = []
+  }
 }
 
 function logoLineTotal(line: any) {
@@ -470,7 +493,12 @@ async function saveOrder() {
 
 async function softDeleteOrder(row: OrderDoc) {
   if (!canDeleteRow(row)) return showToast('Đơn đã có lịch sử xuất kho, không thể xóa', 'error')
-  if (!confirm(`Xóa đơn hàng ${row.order_code}?`)) return
+  const confirmed = await askConfirm({
+    title: 'Xóa đơn hàng',
+    message: `Bạn chắc chắn muốn xóa đơn hàng ${row.order_code}?\nCác dòng sản phẩm và phiếu xuất chưa thực hiện của đơn này cũng sẽ được xóa mềm.`,
+    confirmLabel: 'Xóa đơn'
+  })
+  if (!confirmed) return
 
   await withLoading(async () => {
     const orderItems = itemsByOrder.value[row.id] || []
@@ -614,10 +642,12 @@ onMounted(loadRows)
         <div class="form-group"><label>Sale phụ trách</label><input v-model="form.sale_name" class="input" /></div>
         <div class="form-group">
           <label>Khách hàng</label>
-          <select v-model="form.customer_id" class="select" @change="chooseCustomer">
-            <option value="">Chọn khách</option>
-            <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.customer_name }} - {{ c.phone }}</option>
-          </select>
+          <SearchableSelect
+            v-model="form.customer_id"
+            :options="customerOptions"
+            placeholder="Tìm khách theo tên, SĐT, email..."
+            @change="chooseCustomer"
+          />
         </div>
         <div class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
         <div class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
@@ -637,12 +667,23 @@ onMounted(loadRows)
           <button type="button" class="product-row-remove" @click="removeItem(index)">×</button>
         </div>
         <div class="form-row-3">
-          <div class="form-group"><label>Sản phẩm</label><select v-model="item.product_id" class="select" @change="chooseProduct(item)"><option value="">Chọn sản phẩm</option><option v-for="p in products" :key="p.id" :value="p.id">{{ p.product_code }} - {{ p.product_name }}</option></select></div>
+          <div class="form-group">
+            <label>Sản phẩm</label>
+            <SearchableSelect
+              v-model="item.product_id"
+              :options="productOptions"
+              placeholder="Tìm sản phẩm theo mã hoặc tên..."
+              @change="chooseProduct(item)"
+            />
+          </div>
           <div class="form-group"><label>Mã SP</label><input v-model="item.product_code" class="input" readonly /></div>
           <div class="form-group"><label>Tên sản phẩm</label><input v-model="item.product_name" class="input" readonly /></div>
           <div class="form-group"><label>Đơn vị</label><input v-model="item.unit" class="input" readonly /></div>
-          <div class="form-group"><label>Số lượng</label><input v-model.number="item.quantity" class="input" type="number" min="0" /></div>
-          <div class="form-group"><label>Đơn giá</label><input v-model.number="item.unit_price" class="input" type="number" min="0" /></div>
+          <template v-if="!item.has_logo">
+            <div class="form-group"><label>Số lượng</label><input v-model.number="item.quantity" class="input" type="number" min="0" /></div>
+            <div class="form-group"><label>Đơn giá</label><input v-model.number="item.unit_price" class="input" type="number" min="0" /></div>
+          </template>
+          <div v-else class="logo-parent-hidden-note">Sản phẩm có logo: số lượng, đơn giá và thành tiền được tính từ các dòng logo bên dưới.</div>
         </div>
         <div class="form-group logo-toggle"><label><input v-model="item.has_logo" type="checkbox" @change="toggleLogoMode(item)" /> Có logo / tách sản phẩm chi tiết theo logo</label></div>
         <div v-if="item.has_logo" class="logo-items-box">
@@ -702,5 +743,11 @@ onMounted(loadRows)
         </table>
       </div>
     </RecordDetailModal>
+
+    <ConfirmModal
+      v-bind="confirmState"
+      @cancel="resolveConfirm(false)"
+      @confirm="resolveConfirm(true)"
+    />
   </AppShell>
 </template>

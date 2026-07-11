@@ -9,6 +9,7 @@ const { computePaymentStatus } = useOrderLogic()
 const { appUser, hasPermission } = useAuth()
 const { loadScopedOrders, loadScopedPayments } = useScopedQueries()
 const { showToast, withLoading } = useUi()
+const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -122,7 +123,12 @@ async function savePayment() {
 
 async function removePayment(row: PaymentDoc) {
   if (!hasPermission('payments.delete') && !hasPermission('*')) return showToast('Bạn không có quyền xóa thanh toán.', 'error')
-  if (!confirm(`Xóa thanh toán ${row.order_code}?`)) return
+  const confirmed = await askConfirm({
+    title: 'Xóa thanh toán',
+    message: `Bạn chắc chắn muốn xóa phiếu thanh toán của đơn ${row.order_code}?`,
+    confirmLabel: 'Xóa thanh toán'
+  })
+  if (!confirmed) return
 
   await withLoading(async () => {
     await softDeleteDoc('payments', row.id, `${row.order_code} - ${row.payment_type || ''}`)
@@ -213,6 +219,12 @@ onMounted(() => loadRows())
       :field-order="['id','order_id','order_code','payment_date','payment_type','amount','method','payment_status','cod_status','note','created_by','created_at','updated_at','order_owner_email','order_created_by','order_sale_email','status','active','deleted']"
       :money-fields="['amount']"
       @close="showDetailModal = false"
+    />
+
+    <ConfirmModal
+      v-bind="confirmState"
+      @cancel="resolveConfirm(false)"
+      @confirm="resolveConfirm(true)"
     />
   </AppShell>
 </template>

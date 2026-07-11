@@ -7,6 +7,7 @@ const { saveDoc, softDeleteDoc } = useRepo()
 const { loadScopedOrders, loadScopedShipments } = useScopedQueries()
 const { appUser, hasPermission } = useAuth()
 const { showToast, withLoading } = useUi()
+const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
 const rows = ref<ShipmentDoc[]>([])
 const orders = ref<OrderDoc[]>([])
@@ -103,7 +104,12 @@ async function save() {
 }
 
 async function remove(row: ShipmentDoc) {
-  if (!confirm(`Xóa vận chuyển của đơn ${row.order_code}?`)) return
+  const confirmed = await askConfirm({
+    title: 'Xóa vận chuyển',
+    message: `Bạn chắc chắn muốn xóa vận chuyển của đơn ${row.order_code}?`,
+    confirmLabel: 'Xóa vận chuyển'
+  })
+  if (!confirmed) return
   await withLoading(async () => {
     await softDeleteDoc('shipments', row.id, row.order_code || row.id)
     rows.value = rows.value.filter(item => item.id !== row.id)
@@ -162,6 +168,12 @@ onMounted(() => loadRows())
       :field-order="['id','order_id','order_code','carrier','tracking_code','shipping_status','shipped_date','delivered_date','shipping_fee','cod_amount','receiver_name','receiver_phone','receiver_address','note','created_by','created_at','updated_at','order_owner_email','order_created_by','order_sale_email','status','active','deleted']"
       :money-fields="['shipping_fee','cod_amount']"
       @close="showDetailModal = false"
+    />
+
+    <ConfirmModal
+      v-bind="confirmState"
+      @cancel="resolveConfirm(false)"
+      @confirm="resolveConfirm(true)"
     />
   </AppShell>
 </template>

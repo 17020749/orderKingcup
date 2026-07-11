@@ -7,6 +7,7 @@ const { appUser, hasPermission } = useAuth()
 const { loadProducts } = useScopedQueries()
 const { saveDoc, softDeleteDoc } = useRepo()
 const { showToast, withLoading } = useUi()
+const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -24,8 +25,10 @@ const canEdit = computed(() => hasPermission('*') || hasPermission('products.edi
 const canDelete = computed(() => hasPermission('*') || hasPermission('products.delete'))
 
 const productDetailLabels: Record<string, string> = {
-  product_code: 'Mã sản phẩm', product_name: 'Tên sản phẩm', unit: 'Đơn vị',
-  category: 'Nhóm sản phẩm', packing_standard: 'Quy cách đóng gói',
+  product_code: 'Mã sản phẩm', product_name: 'Tên sản phẩm', name: 'Tên cũ', unit: 'Đơn vị',
+  category: 'Nhóm sản phẩm', product_group: 'Nhóm sản phẩm đồng bộ', packing_standard: 'Quy cách đóng gói',
+  material: 'Chất liệu', color: 'Màu sắc', size: 'Kích thước', description: 'Mô tả',
+  cost_price: 'Giá vốn', selling_price: 'Giá bán', warehouse_source: 'Nguồn đồng bộ',
   out_of_stock_max: 'Hết hàng khi tồn cuối ≤', out_of_stock_threshold: 'Ngưỡng hết hàng cũ',
   sold_out_max: 'Ngưỡng hết hàng đồng bộ', warning_stock_min: 'Cảnh báo từ',
   warning_stock_max: 'Cảnh báo đến', normal_stock_min: 'Bình thường khi tồn cuối ≥',
@@ -160,7 +163,12 @@ async function saveProduct() {
 
 async function removeProduct(row: ProductDoc) {
   if (!canDelete.value) return showToast('Bạn không có quyền xóa sản phẩm.', 'error')
-  if (!confirm(`Xóa sản phẩm ${row.product_code} - ${row.product_name}?\nSản phẩm sẽ được ẩn nhưng dữ liệu cũ trong đơn hàng vẫn được giữ.`)) return
+  const confirmed = await askConfirm({
+    title: 'Xóa sản phẩm',
+    message: `Bạn chắc chắn muốn xóa sản phẩm ${row.product_code} - ${row.product_name}?\nSản phẩm sẽ được ẩn nhưng dữ liệu cũ trong đơn hàng vẫn được giữ.`,
+    confirmLabel: 'Xóa sản phẩm'
+  })
+  if (!confirmed) return
 
   await withLoading(async () => {
     await softDeleteDoc('products', row.id, `${row.product_code} - ${row.product_name}`)
@@ -306,11 +314,18 @@ onMounted(() => loadRows())
       :record="selected"
       :labels="productDetailLabels"
       :field-order="[
-        'id','product_code','product_name','unit','category','packing_standard',
-        'out_of_stock_max','warning_stock_min','warning_stock_max','normal_stock_min',
-        'created_by','owner_email','created_at','updated_at','status','active','deleted','note'
+        'id','firestore_id','product_code','product_name','name','unit','category','product_group','packing_standard',
+        'material','color','size','description','cost_price','selling_price',
+        'out_of_stock_max','out_of_stock_threshold','sold_out_max','warning_stock_min','warning_stock_max','normal_stock_min','normal_stock_threshold',
+        'created_by','owner_email','created_at','updated_at','status','active','deleted','deleted_at','warehouse_source','note'
       ]"
       @close="showDetailModal = false"
+    />
+
+    <ConfirmModal
+      v-bind="confirmState"
+      @cancel="resolveConfirm(false)"
+      @confirm="resolveConfirm(true)"
     />
   </AppShell>
 </template>
