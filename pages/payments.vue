@@ -1,0 +1,218 @@
+<script setup lang="ts">
+import { PAYMENT_METHODS, PAYMENT_STATUSES, PAYMENT_TYPES } from '~/constants/permissions'
+import type { OrderDoc, PaymentDoc } from '~/types/models'
+import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
+import { reportFirebaseError } from '~/utils/firebaseErrors'
+
+const { saveDoc, softDeleteDoc } = useRepo()
+const { computePaymentStatus } = useOrderLogic()
+const { appUser, hasPermission } = useAuth()
+const { loadScopedOrders, loadScopedPayments } = useScopedQueries()
+const { showToast, withLoading } = useUi()
+
+const loading = ref(false)
+const saving = ref(false)
+const search = ref('')
+const rows = ref<PaymentDoc[]>([])
+const orders = ref<OrderDoc[]>([])
+const showModal = ref(false)
+const showDetailModal = ref(false)
+const selectedDetail = ref<PaymentDoc | null>(null)
+const editing = ref<PaymentDoc | null>(null)
+const form = reactive<any>({})
+
+const filtered = computed(() => rows.value.filter(row =>
+  normalizeText(`${row.order_code} ${row.payment_type} ${row.method} ${row.payment_status} ${row.created_by}`)
+    .includes(normalizeText(search.value))
+))
+const canEditPayments = computed(() => hasPermission('*') || hasPermission('payments.edit'))
+const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id || order.order_code === form.order_code))
+
+function applyLocalPaymentSummary(orderId: string) {
+  const order = orders.value.find(item => item.id === orderId)
+  if (!order) return
+  Object.assign(order, computePaymentStatus(
+    order,
+    rows.value.filter(row => row.order_id === orderId && isActive(row))
+  ))
+}
+
+async function loadRows(force = false) {
+  loading.value = true
+  try {
+    orders.value = await loadScopedOrders(force)
+    rows.value = await loadScopedPayments(orders.value, force)
+    orders.value.forEach(order => applyLocalPaymentSummary(order.id))
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không tải được thanh toán.'), 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
+function chooseOrder() {
+  const order = selectedOrder.value
+  if (!order) return
+  form.order_id = order.id
+  form.order_code = order.order_code
+}
+
+function openDetail(row: PaymentDoc) {
+  selectedDetail.value = row
+  showDetailModal.value = true
+}
+
+function openModal(row?: PaymentDoc) {
+  if (row && !canEditPayments.value) return showToast('Bạn không có quyền sửa thanh toán.', 'error')
+  editing.value = row || null
+  Object.assign(form, row ? { ...row } : {
+    id: makeId('pay'),
+    order_id: '',
+    order_code: '',
+    payment_date: todayKey(),
+    payment_type: 'Cọc',
+    amount: 0,
+    method: 'Chuyển khoản',
+    payment_status: 'Chưa nhận',
+    cod_status: '',
+    note: '',
+    status: 'active'
+  })
+  showModal.value = true
+}
+
+async function savePayment() {
+  if (editing.value && !canEditPayments.value) return showToast('Bạn không có quyền sửa thanh toán.', 'error')
+  if (!editing.value && !hasPermission('payments.create') && !hasPermission('*')) return showToast('Bạn không có quyền tạo thanh toán.', 'error')
+  chooseOrder()
+  if (!form.order_id) return showToast('Thiếu đơn hàng.', 'error')
+  const order = selectedOrder.value
+  if (!order) return showToast(`Không tìm thấy đơn hàng với mã: ${form.order_code || form.order_id}`, 'error')
+  if (!String(order.customer_name || '').trim()) return showToast('Đơn hàng chưa có thông tin khách hàng, không thể tạo thanh toán.', 'error')
+
+  const oldOrderId = editing.value?.order_id
+  saving.value = true
+  await withLoading(async () => {
+    const record = await saveDoc('payments', {
+      ...form,
+      amount: toNumber(form.amount),
+      cod_status: '',
+      created_by: editing.value?.created_by || appUser.value?.email || '',
+      order_owner_email: order.owner_email || '',
+      order_created_by: order.created_by || '',
+      order_sale_email: order.sale_email || '',
+      active: true,
+      deleted: false
+    }, form.id, { isCreate: !editing.value }) as PaymentDoc
+
+    const index = rows.value.findIndex(row => row.id === record.id)
+    if (index >= 0) rows.value[index] = { ...rows.value[index], ...record }
+    else rows.value.unshift(record)
+
+    if (oldOrderId && oldOrderId !== form.order_id) applyLocalPaymentSummary(oldOrderId)
+    applyLocalPaymentSummary(form.order_id)
+    showModal.value = false
+    showToast(editing.value ? 'Đã cập nhật thanh toán.' : 'Đã thêm thanh toán.', 'success')
+  }).catch(error => {
+    showToast(reportFirebaseError(error, editing.value ? 'Không cập nhật được thanh toán.' : 'Không tạo được thanh toán.'), 'error')
+  }).finally(() => {
+    saving.value = false
+  })
+}
+
+async function removePayment(row: PaymentDoc) {
+  if (!hasPermission('payments.delete') && !hasPermission('*')) return showToast('Bạn không có quyền xóa thanh toán.', 'error')
+  if (!confirm(`Xóa thanh toán ${row.order_code}?`)) return
+
+  await withLoading(async () => {
+    await softDeleteDoc('payments', row.id, `${row.order_code} - ${row.payment_type || ''}`)
+    rows.value = rows.value.filter(item => item.id !== row.id)
+    applyLocalPaymentSummary(row.order_id)
+    showToast('Đã xóa thanh toán.', 'success')
+  }).catch(error => showToast(reportFirebaseError(error, 'Không xóa được thanh toán.'), 'error'))
+}
+
+onMounted(() => loadRows())
+</script>
+
+<template>
+  <AppShell>
+    <PageHeader title="Thanh toán" subtitle="Trạng thái thanh toán của đơn tự tính từ phiếu đã nhận">
+      <button v-if="hasPermission('payments.create') || hasPermission('*')" class="btn primary" @click="openModal()">+ Thêm thanh toán</button>
+    </PageHeader>
+
+    <div class="card">
+      <div class="toolbar">
+        <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm mã đơn, loại thanh toán..." />
+        <button class="btn" @click="loadRows(true)">Làm mới</button>
+      </div>
+      <LoadingState v-if="loading" />
+      <div v-else class="table-wrap">
+        <table>
+          <thead><tr><th>Mã đơn</th><th>Ngày</th><th>Loại</th><th>Số tiền</th><th>Phương thức</th><th>Trạng thái</th><th>Người tạo</th><th>Thao tác</th></tr></thead>
+          <tbody>
+            <tr v-for="row in filtered" :key="row.id">
+              <td><b>{{ row.order_code }}</b></td>
+              <td>{{ row.payment_date }}</td>
+              <td>{{ row.payment_type }}</td>
+              <td>{{ money(row.amount) }}</td>
+              <td>{{ row.method }}</td>
+              <td><span class="badge green">{{ row.payment_status }}</span></td>
+              <td>{{ row.created_by }}</td>
+              <td><div class="action-buttons"><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button><button v-if="canEditPayments" class="btn-sm" @click="openModal(row)">Sửa</button><button v-if="hasPermission('payments.delete') || hasPermission('*')" class="btn-sm btn-delete" @click="removePayment(row)">Xóa</button></div></td>
+            </tr>
+            <tr v-if="!filtered.length"><td colspan="8" class="empty">Không có thanh toán phù hợp.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <BaseModal
+      v-if="showModal"
+      :title="editing ? 'Sửa thanh toán' : 'Thêm thanh toán'"
+      size="lg"
+      save-label="Lưu"
+      :loading="saving"
+      @close="showModal=false"
+      @save="savePayment"
+    >
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Mã đơn hàng</label>
+          <select v-model="form.order_id" class="select" @change="chooseOrder">
+            <option value="">Chọn đơn</option>
+            <option v-for="order in orders" :key="order.id" :value="order.id">{{ order.order_code }} - {{ order.customer_name }}</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Nhập mã đơn</label>
+          <input v-model="form.order_code" class="input" placeholder="VD: DH-..." @input="form.order_id = ''; chooseOrder()" />
+        </div>
+      </div>
+
+      <div class="detail-grid" style="margin-top:12px">
+        <div class="detail-item"><label>Khách hàng</label><strong>{{ selectedOrder?.customer_name || '-' }}</strong></div>
+        <div class="detail-item"><label>Tổng tiền</label><strong>{{ money(selectedOrder?.actual_revenue || selectedOrder?.total_vat) }}</strong></div>
+        <div class="detail-item"><label>Công nợ hiện tại</label><strong>{{ money(selectedOrder?.debt_amount) }}</strong></div>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-group"><label>Ngày thanh toán</label><input v-model="form.payment_date" class="input" type="date" /></div>
+        <div class="form-group"><label>Loại thanh toán</label><select v-model="form.payment_type" class="select"><option v-for="value in PAYMENT_TYPES" :key="value" :value="value">{{ value }}</option></select></div>
+        <div class="form-group"><label>Số tiền</label><input v-model.number="form.amount" class="input" type="number" min="0" /></div>
+        <div class="form-group"><label>Phương thức</label><select v-model="form.method" class="select"><option v-for="value in PAYMENT_METHODS" :key="value" :value="value">{{ value }}</option></select></div>
+        <div class="form-group"><label>Trạng thái</label><select v-model="form.payment_status" class="select"><option v-for="value in PAYMENT_STATUSES" :key="value" :value="value">{{ value }}</option></select></div>
+      </div>
+      <div class="form-group" style="margin-top:12px"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
+    </BaseModal>
+
+    <RecordDetailModal
+      v-if="showDetailModal && selectedDetail"
+      title="Chi tiết thanh toán"
+      :record="selectedDetail"
+      :field-order="['id','order_id','order_code','payment_date','payment_type','amount','method','payment_status','cod_status','note','created_by','created_at','updated_at','order_owner_email','order_created_by','order_sale_email','status','active','deleted']"
+      :money-fields="['amount']"
+      @close="showDetailModal = false"
+    />
+  </AppShell>
+</template>

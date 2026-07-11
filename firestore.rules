@@ -1,0 +1,963 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------
+    // Authentication and user permissions
+    // ---------------------------------------------------------------------
+
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.email is string;
+    }
+
+    function email() {
+      return request.auth.token.email.lower();
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/users/$(email());
+    }
+
+    function activeUserData(user) {
+      return user.get('deleted', false) != true
+        && (
+          user.get('active', false) == true
+          || user.get('status', '') == 'active'
+          || user.get('status', '') == 'Hoạt động'
+        );
+    }
+
+    function adminUserData(user) {
+      return user.get('is_admin', false) == true
+        || (
+          user.get('permissions_flat', []) is list
+          && '*' in user.get('permissions_flat', [])
+        )
+        || (
+          user.get('roles', []) is list
+          && (
+            'admin' in user.get('roles', [])
+            || 'Admin' in user.get('roles', [])
+            || 'role_admin' in user.get('roles', [])
+          )
+        )
+        || (
+          user.get('role', '') is list
+          && (
+            'admin' in user.get('role', [])
+            || 'Admin' in user.get('role', [])
+            || 'role_admin' in user.get('role', [])
+          )
+        )
+        || user.get('role', '') == 'admin'
+        || user.get('role', '') == 'Admin'
+        || user.get('role', '') == 'role_admin';
+    }
+
+    function activeUser() {
+      let path = userPath();
+      let user = get(path).data;
+      return signedIn()
+        && exists(path)
+        && activeUserData(user);
+    }
+
+    // Keep compatibility with the role formats already used by the project.
+    function isAdmin() {
+      let path = userPath();
+      let user = get(path).data;
+      return signedIn()
+        && exists(path)
+        && activeUserData(user)
+        && adminUserData(user);
+    }
+
+    function hasPerm(permission) {
+      let path = userPath();
+      let user = get(path).data;
+      return signedIn()
+        && exists(path)
+        && activeUserData(user)
+        && (
+          adminUserData(user)
+          || (
+            user.get('permissions_flat', []) is list
+            && permission in user.get('permissions_flat', [])
+          )
+        );
+    }
+
+    function hasAnyPerm(permissions) {
+      let path = userPath();
+      let user = get(path).data;
+      return signedIn()
+        && exists(path)
+        && activeUserData(user)
+        && (
+          adminUserData(user)
+          || (
+            user.get('permissions_flat', []) is list
+            && user.get('permissions_flat', []).hasAny(permissions)
+          )
+        );
+    }
+
+
+    function userHasPermData(user, permission) {
+      return activeUserData(user)
+        && (
+          adminUserData(user)
+          || (
+            user.get('permissions_flat', []) is list
+            && permission in user.get('permissions_flat', [])
+          )
+        );
+    }
+
+    function userHasAnyPermData(user, permissions) {
+      return activeUserData(user)
+        && (
+          adminUserData(user)
+          || (
+            user.get('permissions_flat', []) is list
+            && user.get('permissions_flat', []).hasAny(permissions)
+          )
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Generic data helpers
+    // ---------------------------------------------------------------------
+
+    function emailFieldEquals(data, fieldName, expectedEmail) {
+      return data.get(fieldName, '') is string
+        && expectedEmail is string
+        && data.get(fieldName, '').lower() == expectedEmail.lower();
+    }
+
+    function ownEmailField(data, fieldName) {
+      return emailFieldEquals(data, fieldName, email());
+    }
+
+    function sameEmailField(leftData, rightData, fieldName) {
+      return leftData.get(fieldName, '') is string
+        && rightData.get(fieldName, '') is string
+        && leftData.get(fieldName, '').lower() == rightData.get(fieldName, '').lower();
+    }
+
+    function unchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function onlyChanged(fields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields);
+    }
+
+    function softDeleteOnly() {
+      return onlyChanged([
+        'deleted',
+        'active',
+        'status',
+        'deleted_at',
+        'updated_at'
+      ]);
+    }
+
+    // ---------------------------------------------------------------------
+    // Order ownership helpers
+    // ---------------------------------------------------------------------
+
+    function ownsOrderData(data) {
+      return ownEmailField(data, 'owner_email')
+        || ownEmailField(data, 'created_by')
+        || ownEmailField(data, 'sale_email');
+    }
+
+    function ownsOrderChildData(data) {
+      return ownEmailField(data, 'created_by')
+        || ownEmailField(data, 'requested_by')
+        || ownEmailField(data, 'order_owner_email')
+        || ownEmailField(data, 'order_created_by')
+        || ownEmailField(data, 'order_sale_email');
+    }
+
+    function orderPath(orderId) {
+      return /databases/$(database)/documents/orders/$(orderId);
+    }
+
+    function orderDataIsActive(order) {
+      return order.get('deleted', false) != true;
+    }
+
+    function ownsOrderById(orderId) {
+      let path = orderPath(orderId);
+      let order = get(path).data;
+      return orderId is string
+        && exists(path)
+        && orderDataIsActive(order)
+        && ownsOrderData(order);
+    }
+
+    function canReadOrderById(orderId) {
+      let path = orderPath(orderId);
+      let order = get(path).data;
+      return orderId is string
+        && exists(path)
+        && orderDataIsActive(order)
+        && (
+          hasPerm('orders.view_all')
+          || ownsOrderData(order)
+        );
+    }
+
+    function canMutateOrderById(orderId) {
+      let path = orderPath(orderId);
+      let order = get(path).data;
+      return orderId is string
+        && exists(path)
+        && orderDataIsActive(order)
+        && (
+          isAdmin()
+          || ownsOrderData(order)
+        );
+    }
+
+    // Payment/export/shipment/invoice documents duplicate parent ownership
+    // using order_* fields for scoped queries. These fields must be copied
+    // from owner_email/created_by/sale_email on the real parent order.
+    function requestMatchesOrder(orderId) {
+      let path = orderPath(orderId);
+      let order = get(path).data;
+      return orderId is string
+        && exists(path)
+        && orderDataIsActive(order)
+        && emailFieldEquals(
+          request.resource.data,
+          'order_owner_email',
+          order.get('owner_email', '')
+        )
+        && emailFieldEquals(
+          request.resource.data,
+          'order_created_by',
+          order.get('created_by', '')
+        )
+        && emailFieldEquals(
+          request.resource.data,
+          'order_sale_email',
+          order.get('sale_email', '')
+        );
+    }
+
+
+    function requestMatchesOrderData(order) {
+      return emailFieldEquals(
+          request.resource.data,
+          'order_owner_email',
+          order.get('owner_email', '')
+        )
+        && emailFieldEquals(
+          request.resource.data,
+          'order_created_by',
+          order.get('created_by', '')
+        )
+        && emailFieldEquals(
+          request.resource.data,
+          'order_sale_email',
+          order.get('sale_email', '')
+        );
+    }
+
+    // Order items use the original owner_email/created_by/sale_email names.
+    function requestMatchesOrderItem(orderId) {
+      let path = orderPath(orderId);
+      let order = get(path).data;
+      return orderId is string
+        && exists(path)
+        && orderDataIsActive(order)
+        && sameEmailField(request.resource.data, order, 'owner_email')
+        && sameEmailField(request.resource.data, order, 'created_by')
+        && sameEmailField(request.resource.data, order, 'sale_email');
+    }
+
+    // Existing legacy child documents may not have every duplicated field yet.
+    // An update may keep them unchanged, or replace all of them with values
+    // copied from the real parent order. They can never be client-invented.
+    function childOwnershipSafe(orderId) {
+      return unchanged([
+          'order_owner_email',
+          'order_created_by',
+          'order_sale_email'
+        ])
+        || requestMatchesOrder(orderId);
+    }
+
+    function orderItemOwnershipSafe(orderId) {
+      return unchanged([
+          'owner_email',
+          'created_by',
+          'sale_email'
+        ])
+        || requestMatchesOrderItem(orderId);
+    }
+
+    function orderIdentityUnchanged() {
+      return unchanged([
+        'owner_email',
+        'created_by',
+        'sale_email',
+        'created_at'
+      ]);
+    }
+
+    function childIdentityUnchanged() {
+      return unchanged([
+        'order_id',
+        'created_by',
+        'created_at'
+      ]);
+    }
+
+    function fulfillmentStatus() {
+      return resource.data.get('warehouse_fulfillment_status', 'chua_xuat');
+    }
+
+    function orderCanBeDeleted() {
+      return fulfillmentStatus() != 'da_xuat_1_phan'
+        && fulfillmentStatus() != 'da_xuat_du';
+    }
+
+    function exportRequestEditable() {
+      return resource.data.get('status', '') == 'cho_xu_ly'
+        || resource.data.get('status', '') == 'dang_xu_ly'
+        || resource.data.get('status', '') == 'da_tiep_nhan';
+    }
+
+    function exportRequestCanBeDeleted() {
+      return resource.data.get('status', '') != 'da_xuat'
+        && resource.data.get('warehouse_export_code', '') == '';
+    }
+
+    function onlyPaymentSummaryChanged() {
+      return onlyChanged([
+        'paid_amount',
+        'debt_amount',
+        'computed_payment_status',
+        'payment_status',
+        'payment_count',
+        'deposit_count',
+        'collect_count',
+        'updated_at'
+      ]);
+    }
+
+    function onlyWarehouseSummaryChanged() {
+      return onlyChanged([
+        'warehouse_fulfillment_status',
+        'warehouse_request_status',
+        'updated_at'
+      ]);
+    }
+
+    function onlyInvoiceStatusChanged() {
+      return onlyChanged([
+        'invoice_status',
+        'updated_at'
+      ]);
+    }
+
+    // A normal order edit must not directly forge payment, warehouse,
+    // invoice or deletion state. Those fields are handled by dedicated rules.
+    function normalOrderEditKeepsSystemFields() {
+      return unchanged([
+        'paid_amount',
+        'debt_amount',
+        'computed_payment_status',
+        'payment_status',
+        'payment_count',
+        'deposit_count',
+        'collect_count',
+        'warehouse_fulfillment_status',
+        'warehouse_request_status',
+        'invoice_status',
+        'deleted',
+        'active',
+        'status',
+        'deleted_at'
+      ]);
+    }
+
+
+    function orderWarehouseSummaryUpdateAllowed() {
+      let path = userPath();
+      let user = get(path).data;
+      return signedIn()
+        && exists(path)
+        && activeUserData(user)
+        && onlyWarehouseSummaryChanged()
+        && (
+          adminUserData(user)
+          || (
+            userHasPermData(user, 'orders.warehouse_export')
+            && ownsOrderData(resource.data)
+            && orderIdentityUnchanged()
+          )
+          || userHasPermData(user, 'export_requests.process')
+        );
+    }
+
+    function exportCreateAllowed() {
+      let userPathValue = userPath();
+      let user = get(userPathValue).data;
+      let path = orderPath(request.resource.data.order_id);
+      let order = get(path).data;
+      return signedIn()
+        && request.resource.data.order_id is string
+        && exists(userPathValue)
+        && exists(path)
+        && userHasPermData(user, 'orders.warehouse_export')
+        && orderDataIsActive(order)
+        && (
+          adminUserData(user)
+          || ownsOrderData(order)
+        )
+        && requestMatchesOrderData(order)
+        && ownEmailField(request.resource.data, 'requested_by');
+    }
+
+    function exportSoftDeleteAllowed() {
+      let userPathValue = userPath();
+      let user = get(userPathValue).data;
+      let path = orderPath(resource.data.order_id);
+      let order = get(path).data;
+      return signedIn()
+        && resource.data.order_id is string
+        && exists(userPathValue)
+        && exists(path)
+        && userHasAnyPermData(user, ['export_requests.delete', 'orders.delete'])
+        && orderDataIsActive(order)
+        && exportRequestCanBeDeleted()
+        && (
+          adminUserData(user)
+          || ownsOrderData(order)
+        )
+        && softDeleteOnly();
+    }
+
+    function exportOwnerEditAllowed() {
+      let userPathValue = userPath();
+      let user = get(userPathValue).data;
+      let path = orderPath(resource.data.order_id);
+      let order = get(path).data;
+      return signedIn()
+        && resource.data.order_id is string
+        && exists(userPathValue)
+        && exists(path)
+        && userHasPermData(user, 'orders.warehouse_export')
+        && orderDataIsActive(order)
+        && exportRequestEditable()
+        && (
+          adminUserData(user)
+          || ownEmailField(resource.data, 'requested_by')
+          || ownsOrderChildData(resource.data)
+          || ownsOrderData(order)
+        )
+        && unchanged([
+          'id',
+          'request_id',
+          'order_id',
+          'requested_by',
+          'requested_at',
+          'created_by',
+          'created_at',
+          'status',
+          'active',
+          'deleted',
+          'deleted_at',
+          'warehouse_export_code',
+          'warehouse_handled_by',
+          'warehouse_handled_at',
+          'warehouse_note',
+          'order_owner_email',
+          'order_created_by',
+          'order_sale_email'
+        ]);
+    }
+
+    // ---------------------------------------------------------------------
+    // Users, roles and settings
+    // ---------------------------------------------------------------------
+
+    match /users/{userId} {
+      // A signed-in account can read only its own profile, even when inactive,
+      // so the UI can show the correct disabled-account message.
+      allow get: if signedIn() && userId == email();
+
+      // Only an absolute admin may enumerate or modify identities and grants.
+      // A users.manage permission alone can no longer self-escalate to '*'.
+      allow list, create, update, delete: if isAdmin();
+    }
+
+    match /roles/{roleId} {
+      allow read: if activeUser();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if hasPerm('settings.view') || hasPerm('settings.manage');
+      allow create, update, delete: if hasPerm('settings.manage');
+    }
+
+    // ---------------------------------------------------------------------
+    // Customers and products
+    // ---------------------------------------------------------------------
+
+    match /customers/{docId} {
+      allow read: if isAdmin()
+        || (
+          hasPerm('customers.view')
+          && ownEmailField(resource.data, 'created_by')
+        );
+
+      allow create: if isAdmin()
+        || (
+          hasPerm('customers.create')
+          && ownEmailField(request.resource.data, 'created_by')
+        );
+
+      allow update: if isAdmin()
+        || (
+          ownEmailField(resource.data, 'created_by')
+          && unchanged(['created_by', 'created_at'])
+          && (
+            (
+              hasPerm('customers.edit')
+              && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+            )
+            || (
+              hasPerm('customers.delete')
+              && softDeleteOnly()
+            )
+          )
+        );
+
+      allow delete: if isAdmin()
+        || (
+          hasPerm('customers.delete')
+          && ownEmailField(resource.data, 'created_by')
+        );
+    }
+
+    match /products/{docId} {
+      allow read: if hasPerm('products.view');
+
+      allow create: if isAdmin()
+        || (
+          hasPerm('products.create')
+          && ownEmailField(request.resource.data, 'created_by')
+        );
+
+      allow update: if isAdmin()
+        || (
+          hasPerm('products.edit')
+          && unchanged(['created_at', 'deleted', 'deleted_at'])
+          && (
+            unchanged(['created_by'])
+            || (
+              resource.data.get('created_by', '') == ''
+              && ownEmailField(request.resource.data, 'created_by')
+            )
+          )
+        )
+        || (
+          hasPerm('products.delete')
+          && softDeleteOnly()
+        );
+
+      // Product deletion from the UI is intentionally a soft-delete so old
+      // order items keep their historical product information.
+      allow delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------------
+    // Orders
+    // ---------------------------------------------------------------------
+
+    match /orders/{docId} {
+      allow read: if hasPerm('orders.view_all')
+        || (
+          hasPerm('orders.view')
+          && ownsOrderData(resource.data)
+        );
+
+      allow create: if hasPerm('orders.create')
+        && ownEmailField(request.resource.data, 'created_by')
+        && ownsOrderData(request.resource.data);
+
+      allow update: if orderWarehouseSummaryUpdateAllowed()
+        || isAdmin()
+        || (
+          // Normal business edit by an owner.
+          hasPerm('orders.edit')
+          && ownsOrderData(resource.data)
+          && orderIdentityUnchanged()
+          && normalOrderEditKeepsSystemFields()
+          && (
+            fulfillmentStatus() != 'da_xuat_du'
+            || hasPerm('orders.edit_fulfilled')
+          )
+        )
+        || (
+          // Payment module updates only computed payment fields.
+          hasAnyPerm(['payments.create', 'payments.edit', 'payments.delete'])
+          && ownsOrderData(resource.data)
+          && orderIdentityUnchanged()
+          && onlyPaymentSummaryChanged()
+        )
+        || (
+          // Owner soft-delete before any warehouse fulfillment.
+          hasPerm('orders.delete')
+          && ownsOrderData(resource.data)
+          && orderIdentityUnchanged()
+          && orderCanBeDeleted()
+          && softDeleteOnly()
+        )
+        || (
+          // Invoice module updates only invoice status.
+          hasAnyPerm(['invoices.create', 'invoices.edit', 'invoices.delete'])
+          && ownsOrderData(resource.data)
+          && orderIdentityUnchanged()
+          && onlyInvoiceStatusChanged()
+        );
+
+      allow delete: if isAdmin()
+        || (
+          hasPerm('orders.delete')
+          && ownsOrderData(resource.data)
+          && orderCanBeDeleted()
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Order items
+    // ---------------------------------------------------------------------
+
+    match /order_items/{docId} {
+      allow read: if hasPerm('orders.view_all')
+        || (
+          hasPerm('orders.view')
+          && (
+            ownsOrderData(resource.data)
+            || (
+              resource.data.order_id is string
+              && canReadOrderById(resource.data.order_id)
+            )
+          )
+        );
+
+      allow create: if hasPerm('orders.create')
+        && request.resource.data.order_id is string
+        && canMutateOrderById(request.resource.data.order_id)
+        && requestMatchesOrderItem(request.resource.data.order_id);
+
+      allow update: if isAdmin()
+        || (
+          resource.data.order_id is string
+          && canMutateOrderById(resource.data.order_id)
+          && request.resource.data.order_id == resource.data.order_id
+          && childIdentityUnchanged()
+          && orderItemOwnershipSafe(resource.data.order_id)
+          && (
+            (
+              hasPerm('orders.edit')
+              && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+            )
+            || (
+              hasPerm('orders.delete')
+              && softDeleteOnly()
+            )
+          )
+        );
+
+      allow delete: if isAdmin()
+        || (
+          hasPerm('orders.delete')
+          && resource.data.order_id is string
+          && canMutateOrderById(resource.data.order_id)
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Payments
+    // ---------------------------------------------------------------------
+
+    match /payments/{docId} {
+      allow read: if hasPerm('payments.view_all')
+        || (
+          hasPerm('payments.view')
+          && (
+            ownsOrderChildData(resource.data)
+            || (
+              resource.data.order_id is string
+              && ownsOrderById(resource.data.order_id)
+            )
+          )
+        );
+
+      allow create: if hasPerm('payments.create')
+        && request.resource.data.order_id is string
+        && canMutateOrderById(request.resource.data.order_id)
+        && requestMatchesOrder(request.resource.data.order_id)
+        && ownEmailField(request.resource.data, 'created_by');
+
+      allow update: if isAdmin()
+        || (
+          resource.data.order_id is string
+          && (
+            ownEmailField(resource.data, 'created_by')
+            || ownsOrderById(resource.data.order_id)
+          )
+          && request.resource.data.order_id == resource.data.order_id
+          && childIdentityUnchanged()
+          && childOwnershipSafe(resource.data.order_id)
+          && (
+            (
+              hasPerm('payments.edit')
+              && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+            )
+            || (
+              hasPerm('payments.delete')
+              && softDeleteOnly()
+            )
+          )
+        );
+
+      allow delete: if isAdmin()
+        || (
+          hasPerm('payments.delete')
+          && resource.data.order_id is string
+          && (
+            ownEmailField(resource.data, 'created_by')
+            || ownsOrderById(resource.data.order_id)
+          )
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Warehouse export requests
+    // ---------------------------------------------------------------------
+
+    match /order_export_requests/{docId} {
+      allow read: if hasPerm('export_requests.process')
+        || hasPerm('export_requests.view_all')
+        || (
+          hasAnyPerm(['export_requests.view', 'orders.warehouse_export'])
+          && (
+            ownsOrderChildData(resource.data)
+            || (
+              resource.data.order_id is string
+              && ownsOrderById(resource.data.order_id)
+            )
+          )
+        );
+
+      allow create: if exportCreateAllowed();
+
+      allow update: if exportSoftDeleteAllowed()
+        || exportOwnerEditAllowed()
+        || isAdmin()
+        || (
+          // Warehouse can change only processing fields. The handler email
+          // must be the authenticated warehouse user, not a client claim.
+          hasPerm('export_requests.process')
+          && onlyChanged([
+            'status',
+            'warehouse_export_code',
+            'warehouse_handled_by',
+            'warehouse_handled_at',
+            'warehouse_note',
+            'request_timeline_json',
+            'updated_at'
+          ])
+          && ownEmailField(request.resource.data, 'warehouse_handled_by')
+        );
+
+      allow delete: if isAdmin()
+        || (
+          hasAnyPerm(['export_requests.delete', 'orders.delete'])
+          && exportRequestCanBeDeleted()
+          && resource.data.order_id is string
+          && canMutateOrderById(resource.data.order_id)
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Shipments and invoices
+    // ---------------------------------------------------------------------
+
+    match /shipments/{docId} {
+      allow read: if isAdmin()
+        || (
+          hasPerm('shipments.view')
+          && (
+            ownsOrderChildData(resource.data)
+            || (
+              resource.data.order_id is string
+              && ownsOrderById(resource.data.order_id)
+            )
+          )
+        );
+
+      allow create: if hasPerm('shipments.create')
+        && request.resource.data.order_id is string
+        && canMutateOrderById(request.resource.data.order_id)
+        && requestMatchesOrder(request.resource.data.order_id)
+        && ownEmailField(request.resource.data, 'created_by');
+
+      allow update: if isAdmin()
+        || (
+          hasPerm('shipments.edit')
+          && resource.data.order_id is string
+          && canMutateOrderById(resource.data.order_id)
+          && request.resource.data.order_id == resource.data.order_id
+          && childIdentityUnchanged()
+          && childOwnershipSafe(resource.data.order_id)
+          && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+        )
+        || (
+          hasPerm('shipments.delete')
+          && resource.data.order_id is string
+          && canMutateOrderById(resource.data.order_id)
+          && childIdentityUnchanged()
+          && childOwnershipSafe(resource.data.order_id)
+          && softDeleteOnly()
+        );
+
+      allow delete: if isAdmin()
+        || (
+          hasPerm('shipments.delete')
+          && resource.data.order_id is string
+          && canMutateOrderById(resource.data.order_id)
+        );
+    }
+
+    match /invoices/{docId} {
+      allow read: if isAdmin()
+        || (
+          hasPerm('invoices.view')
+          && (
+            ownsOrderChildData(resource.data)
+            || (
+              resource.data.order_id is string
+              && ownsOrderById(resource.data.order_id)
+            )
+          )
+        );
+
+      allow create: if hasPerm('invoices.create')
+        && request.resource.data.order_id is string
+        && canMutateOrderById(request.resource.data.order_id)
+        && requestMatchesOrder(request.resource.data.order_id)
+        && ownEmailField(request.resource.data, 'created_by');
+
+      allow update: if isAdmin()
+        || (
+          hasPerm('invoices.edit')
+          && resource.data.order_id is string
+          && canMutateOrderById(resource.data.order_id)
+          && request.resource.data.order_id == resource.data.order_id
+          && childIdentityUnchanged()
+          && childOwnershipSafe(resource.data.order_id)
+          && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+        )
+        || (
+          hasPerm('invoices.delete')
+          && resource.data.order_id is string
+          && canMutateOrderById(resource.data.order_id)
+          && childIdentityUnchanged()
+          && childOwnershipSafe(resource.data.order_id)
+          && softDeleteOnly()
+        );
+
+      allow delete: if isAdmin()
+        || (
+          hasPerm('invoices.delete')
+          && resource.data.order_id is string
+          && canMutateOrderById(resource.data.order_id)
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Logs, notifications and cached summaries
+    // ---------------------------------------------------------------------
+
+    match /warehouse_export_logs/{docId} {
+      // Preserve the previous read behavior for active internal users.
+      allow read: if activeUser();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /activity_logs/{docId} {
+      allow read: if hasPerm('activity_logs.view');
+
+      // Rules can guarantee the authenticated actor email. A fully tamper-
+      // proof audit trail still requires a trusted backend trigger.
+      allow create: if signedIn()
+        && ownEmailField(request.resource.data, 'changed_by');
+
+      allow update, delete: if isAdmin();
+    }
+
+    match /notifications/{docId} {
+      allow read: if isAdmin()
+        || (
+          activeUser()
+          && ownEmailField(resource.data, 'to_email')
+        );
+
+      allow create: if activeUser()
+        && ownEmailField(request.resource.data, 'created_by')
+        && request.resource.data.get('to_email', '') is string;
+
+      // Recipient may only mark their own notification as read/seen.
+      allow update: if isAdmin()
+        || (
+          activeUser()
+          && ownEmailField(resource.data, 'to_email')
+          && unchanged(['to_email', 'created_by', 'created_at'])
+          && onlyChanged([
+            'read',
+            'is_read',
+            'read_at',
+            'seen',
+            'seen_at',
+            'status',
+            'updated_at'
+          ])
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    match /dashboard_summaries/{docId} {
+      allow read: if activeUser();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /daily_summaries/{docId} {
+      allow read: if activeUser();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /cache_manifest/{docId} {
+      allow read: if activeUser();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /app_meta/{docId} {
+      allow read: if activeUser();
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}

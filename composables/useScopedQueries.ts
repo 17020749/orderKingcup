@@ -1,0 +1,415 @@
+import {
+  collection,
+  getDocs,
+  or,
+  query,
+  where,
+  type QueryConstraint
+} from 'firebase/firestore'
+import type {
+  AnyDoc,
+  CustomerDoc,
+  InvoiceDoc,
+  OrderDoc,
+  OrderItemDoc,
+  PaymentDoc,
+  ProductDoc,
+  ShipmentDoc
+} from '~/types/models'
+import { isActive } from '~/utils/format'
+import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { permissionDebug } from '~/utils/permissionDebug'
+
+type CacheEntry = {
+  expiresAt: number
+  rows: AnyDoc[]
+}
+
+type ListOptions = {
+  cacheKey?: string
+  ttlMs?: number
+  force?: boolean
+  silent?: boolean
+}
+
+const memoryCache = new Map<string, CacheEntry>()
+const inFlight = new Map<string, Promise<AnyDoc[]>>()
+const STORAGE_PREFIX = 'kingcup.query-cache.v2.'
+
+function uniqueById<T extends AnyDoc>(rows: T[]) {
+  const map = new Map<string, T>()
+  rows.forEach(row => {
+    if (row.id) map.set(row.id, row)
+  })
+  return Array.from(map.values())
+}
+
+function sortNewest<T extends AnyDoc>(rows: T[], fallbackField = 'created_at') {
+  return [...rows].sort((a, b) =>
+    String(b.created_at || b[fallbackField] || '').localeCompare(String(a.created_at || a[fallbackField] || ''))
+  )
+}
+
+function storageKey(key: string) {
+  return `${STORAGE_PREFIX}${key}`
+}
+
+function readCache<T extends AnyDoc>(key: string): T[] | null {
+  const now = Date.now()
+  const memory = memoryCache.get(key)
+  if (memory && memory.expiresAt > now) return memory.rows as T[]
+  if (memory) memoryCache.delete(key)
+
+  if (import.meta.server) return null
+  try {
+    const raw = sessionStorage.getItem(storageKey(key))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as CacheEntry
+    if (!parsed?.expiresAt || parsed.expiresAt <= now || !Array.isArray(parsed.rows)) {
+      sessionStorage.removeItem(storageKey(key))
+      return null
+    }
+    memoryCache.set(key, parsed)
+    return parsed.rows as T[]
+  } catch {
+    return null
+  }
+}
+
+function toSessionValue(value: any): any {
+  if (value == null || typeof value !== 'object') return value
+  if (typeof value.toDate === 'function') {
+    const date = value.toDate()
+    return date instanceof Date && !Number.isNaN(date.getTime()) ? date.toISOString() : String(value)
+  }
+  if (value instanceof Date) return value.toISOString()
+  if (Array.isArray(value)) return value.map(toSessionValue)
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, toSessionValue(item)])
+  )
+}
+
+function writeCache(key: string, rows: AnyDoc[], ttlMs: number) {
+  const entry: CacheEntry = { expiresAt: Date.now() + ttlMs, rows }
+  memoryCache.set(key, entry)
+  if (import.meta.server) return
+  try {
+    // Firestore Timestamp objects are converted to ISO strings only for
+    // sessionStorage. The in-memory cache keeps the original SDK values.
+    sessionStorage.setItem(storageKey(key), JSON.stringify({
+      expiresAt: entry.expiresAt,
+      rows: rows.map(row => toSessionValue(row))
+    }))
+  } catch {
+    // sessionStorage can be full or disabled. Memory cache is enough as fallback.
+  }
+}
+
+export function invalidateScopedCache(collectionName?: string) {
+  const match = collectionName ? `:${collectionName}:` : ''
+  for (const key of Array.from(memoryCache.keys())) {
+    if (!collectionName || key.includes(match)) memoryCache.delete(key)
+  }
+  if (import.meta.server) return
+  try {
+    for (let index = sessionStorage.length - 1; index >= 0; index--) {
+      const key = sessionStorage.key(index)
+      if (!key?.startsWith(STORAGE_PREFIX)) continue
+      if (!collectionName || key.includes(match)) sessionStorage.removeItem(key)
+    }
+  } catch {
+    // Ignore storage cleanup failures.
+  }
+}
+
+export function useScopedQueries() {
+  const { db } = useFirebaseServices()
+  const { appUser, hasPermission } = useAuth()
+  const { showToast } = useUi()
+
+  function email() {
+    return String(appUser.value?.email || '').trim().toLowerCase()
+  }
+
+  function scopePrefix(name: string) {
+    const scope = hasPermission('*') || appUser.value?.is_admin === true ? 'admin' : email()
+    return `${scope}:${name}:`
+  }
+
+  function canAll(permission: string) {
+    return hasPermission('*') || hasPermission(permission)
+  }
+
+  function isAdminUser() {
+    return hasPermission('*') || appUser.value?.is_admin === true
+  }
+
+  async function fetchCollection<T extends AnyDoc>(name: string, constraints: QueryConstraint[] = []) {
+    const snap = await getDocs(query(collection(db, name), ...constraints))
+    return snap.docs.map(d => ({ ...d.data(), id: d.id, firestore_id: d.id } as T))
+  }
+
+  async function listCollection<T extends AnyDoc>(
+    name: string,
+    constraints: QueryConstraint[] = [],
+    options: ListOptions = {}
+  ) {
+    const ttlMs = options.ttlMs ?? 30_000
+    const key = options.cacheKey ? `${scopePrefix(name)}${options.cacheKey}` : ''
+
+    if (key && !options.force) {
+      const cached = readCache<T>(key)
+      if (cached) return cached
+      const pending = inFlight.get(key)
+      if (pending) return pending as Promise<T[]>
+    }
+
+    const task = fetchCollection<T>(name, constraints)
+      .then(rows => {
+        if (key) writeCache(key, rows, ttlMs)
+        return rows
+      })
+      .catch(error => {
+        if (options.silent) throw error
+        permissionDebug({
+          module: name,
+          action: 'query',
+          stage: 'query_denied',
+          userEmail: email(),
+          error,
+          payload: { constraint_count: constraints.length },
+          note: 'Query chính bị Firestore Rules từ chối.'
+        })
+        const message = reportFirebaseError(error, `Không tải được dữ liệu ${name}.`)
+        showToast(message, 'error')
+        return [] as T[]
+      })
+      .finally(() => {
+        if (key) inFlight.delete(key)
+      })
+
+    if (key) inFlight.set(key, task as Promise<AnyDoc[]>)
+    return task
+  }
+
+  async function listByEmailFields<T extends AnyDoc>(
+    name: string,
+    fields: string[],
+    force = false,
+    ttlMs = 30_000
+  ) {
+    const currentEmail = email()
+    if (!currentEmail || !fields.length) return []
+    const cacheKey = `owner:${fields.join('|')}`
+    const fullKey = `${scopePrefix(name)}${cacheKey}`
+
+    if (!force) {
+      const cached = readCache<T>(fullKey)
+      if (cached) return cached.filter(isActive) as T[]
+      const pending = inFlight.get(fullKey)
+      if (pending) return (await pending as T[]).filter(isActive) as T[]
+    }
+
+    const task = (async () => {
+      try {
+        // One OR query is much faster for scoped users than three or four
+        // independent network requests. Firestore still evaluates every
+        // branch against the same ownership rules.
+        const filter = or(...fields.map(field => where(field, '==', currentEmail)))
+        const rows = await fetchCollection<T>(name, [filter])
+        const unique = uniqueById(rows)
+        writeCache(fullKey, unique, ttlMs)
+        return unique
+      } catch (orError) {
+        // Older indexes/projects can reject an OR query. Fall back silently to
+        // parallel equality queries so the UI stays compatible.
+        try {
+          const chunks = await Promise.all(
+            fields.map(field => fetchCollection<T>(name, [where(field, '==', currentEmail)]))
+          )
+          const unique = uniqueById(chunks.flat())
+          writeCache(fullKey, unique, ttlMs)
+          return unique
+        } catch (fallbackError) {
+          permissionDebug({
+            module: name,
+            action: 'scoped_query',
+            stage: 'query_denied',
+            userEmail: currentEmail,
+            error: fallbackError,
+            payload: { fields },
+            note: 'Cả OR query và query fallback đều bị từ chối.'
+          })
+          showToast(reportFirebaseError(fallbackError, `Không tải được dữ liệu ${name}.`), 'error')
+          return [] as T[]
+        }
+      } finally {
+        inFlight.delete(fullKey)
+      }
+    })()
+
+    inFlight.set(fullKey, task as Promise<AnyDoc[]>)
+    return (await task).filter(isActive) as T[]
+  }
+
+  async function loadScopedOrders(force = false) {
+    if (canAll('orders.view_all')) {
+      return sortNewest(
+        (await listCollection<OrderDoc>('orders', [], {
+          cacheKey: 'all', ttlMs: 20_000, force
+        })).filter(isActive) as OrderDoc[],
+        'order_date'
+      )
+    }
+    if (!hasPermission('orders.view')) return []
+    const rows = await listByEmailFields<OrderDoc>('orders', ['owner_email', 'created_by', 'sale_email'], force, 20_000)
+    return sortNewest(rows, 'order_date')
+  }
+
+  async function loadScopedOrderItems(orders: OrderDoc[], force = false) {
+    if (canAll('orders.view_all')) {
+      return (await listCollection<OrderItemDoc>('order_items', [], {
+        cacheKey: 'all', ttlMs: 20_000, force
+      })).filter(isActive) as OrderItemDoc[]
+    }
+    const orderIds = new Set(orders.map(order => order.id).filter(Boolean))
+    if (!orderIds.size) return []
+
+    const byEmail = await listByEmailFields<OrderItemDoc>(
+      'order_items',
+      ['owner_email', 'created_by', 'sale_email'],
+      force,
+      20_000
+    )
+    return uniqueById(byEmail).filter(item => isActive(item) && orderIds.has(item.order_id)) as OrderItemDoc[]
+  }
+
+  async function loadScopedPayments(orders: OrderDoc[] = [], force = false) {
+    if (canAll('payments.view_all')) {
+      return sortNewest(
+        (await listCollection<PaymentDoc>('payments', [], {
+          cacheKey: 'all', ttlMs: 20_000, force
+        })).filter(isActive) as PaymentDoc[],
+        'payment_date'
+      )
+    }
+    if (!hasPermission('payments.view')) return []
+
+    const orderIds = new Set(orders.map(order => order.id).filter(Boolean))
+    const byEmail = await listByEmailFields<PaymentDoc>('payments', [
+      'created_by',
+      'order_owner_email',
+      'order_created_by',
+      'order_sale_email'
+    ], force, 20_000)
+    return sortNewest(uniqueById(byEmail).filter(payment =>
+      isActive(payment)
+      && (payment.created_by === email()
+        || payment.order_owner_email === email()
+        || payment.order_created_by === email()
+        || payment.order_sale_email === email()
+        || orderIds.has(payment.order_id))
+    ) as PaymentDoc[], 'payment_date')
+  }
+
+  async function loadScopedExportRequests(orders: OrderDoc[] = [], force = false) {
+    // Trang Kingcup chỉ tải toàn bộ khi user có quyền view_all rõ ràng.
+    // Quyền export_requests.process được giữ cho nguồn Warehouse xử lý backend,
+    // nhưng không tự động làm lộ phiếu của sale khác trên giao diện Kingcup.
+    if (canAll('export_requests.view_all')) {
+      return sortNewest(
+        (await listCollection<AnyDoc>('order_export_requests', [], {
+          cacheKey: 'all', ttlMs: 15_000, force
+        })).filter(isActive),
+        'requested_at'
+      )
+    }
+    if (!hasPermission('export_requests.view') && !hasPermission('orders.warehouse_export')) return []
+
+    const currentEmail = email()
+    const ownedOrderIds = new Set(orders.map(order => order.id).filter(Boolean))
+    const rows = await listByEmailFields<AnyDoc>('order_export_requests', [
+      'requested_by', 'order_owner_email', 'order_created_by', 'order_sale_email'
+    ], force, 15_000)
+
+    return sortNewest(uniqueById(rows).filter(row =>
+      isActive(row)
+      && (
+        row.requested_by === currentEmail
+        || row.order_owner_email === currentEmail
+        || row.order_created_by === currentEmail
+        || row.order_sale_email === currentEmail
+        || ownedOrderIds.has(row.order_id)
+      )
+    ), 'requested_at')
+  }
+
+  async function loadScopedCustomers(force = false) {
+    if (isAdminUser()) {
+      return (await listCollection<CustomerDoc>('customers', [], {
+        cacheKey: 'all', ttlMs: 60_000, force
+      })).filter(isActive)
+    }
+    if (!hasPermission('customers.view')) return []
+    return sortNewest(
+      await listByEmailFields<CustomerDoc>('customers', ['created_by'], force, 60_000),
+      'updated_at'
+    )
+  }
+
+  async function loadProducts(force = false, includeInactive = false) {
+    if (!hasPermission('products.view') && !hasPermission('*')) return []
+    const rows = await listCollection<ProductDoc>('products', [], {
+      cacheKey: 'all', ttlMs: 300_000, force
+    })
+    const visibleRows = includeInactive
+      ? rows.filter(row => row.deleted !== true && !['deleted', 'da xoa'].includes(String(row.status || '').trim().toLowerCase()))
+      : rows.filter(isActive)
+    return visibleRows.sort((a, b) =>
+      String(a.product_name || '').localeCompare(String(b.product_name || ''), 'vi')
+    )
+  }
+
+  async function loadScopedShipments(force = false) {
+    if (isAdminUser()) {
+      return (await listCollection<ShipmentDoc>('shipments', [], {
+        cacheKey: 'all', ttlMs: 20_000, force
+      })).filter(isActive)
+    }
+    if (!hasPermission('shipments.view')) return []
+    return sortNewest(
+      await listByEmailFields<ShipmentDoc>('shipments', [
+        'created_by', 'order_owner_email', 'order_created_by', 'order_sale_email'
+      ], force, 20_000),
+      'shipped_date'
+    )
+  }
+
+  async function loadScopedInvoices(force = false) {
+    if (isAdminUser()) {
+      return (await listCollection<InvoiceDoc>('invoices', [], {
+        cacheKey: 'all', ttlMs: 20_000, force
+      })).filter(isActive)
+    }
+    if (!hasPermission('invoices.view')) return []
+    return sortNewest(
+      await listByEmailFields<InvoiceDoc>('invoices', [
+        'created_by', 'order_owner_email', 'order_created_by', 'order_sale_email'
+      ], force, 20_000),
+      'invoice_date'
+    )
+  }
+
+  return {
+    listCollection,
+    loadScopedOrders,
+    loadScopedOrderItems,
+    loadScopedPayments,
+    loadScopedExportRequests,
+    loadScopedCustomers,
+    loadProducts,
+    loadScopedShipments,
+    loadScopedInvoices,
+    invalidateScopedCache
+  }
+}
