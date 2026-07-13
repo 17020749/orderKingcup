@@ -1,0 +1,598 @@
+<script setup lang="ts">
+import type {
+  ExportOrderDoc,
+  ExportOrderItemDoc,
+  ProductDoc,
+  WarehouseDoc,
+} from "~/types/models";
+import {
+  formatDateTime,
+  normalizeText,
+  toNumber,
+  todayKey,
+} from "~/utils/format";
+import { reportFirebaseError } from "~/utils/firebaseErrors";
+
+const { loadExportOrders, loadExportOrderItems, loadProducts, loadWarehouses } =
+  useScopedQueries();
+const { createExportOrder } = useWarehouseTransactions();
+const { hasPermission } = useAuth();
+const { showToast } = useUi();
+
+const loading = ref(false);
+const saving = ref(false);
+const search = ref("");
+const destinationFilter = ref("");
+const rows = ref<ExportOrderDoc[]>([]);
+const items = ref<ExportOrderItemDoc[]>([]);
+const products = ref<ProductDoc[]>([]);
+const warehouses = ref<WarehouseDoc[]>([]);
+const selected = ref<ExportOrderDoc | null>(null);
+const showDetailModal = ref(false);
+const showCreateModal = ref(false);
+
+const form = reactive({
+  export_date: todayKey(),
+  destination_type: "customer",
+  from_warehouse_id: "",
+  to_warehouse_id: "",
+  customer_name: "",
+  source_order_code: "",
+  note: "",
+  lines: [newBlankLine()],
+});
+
+const canCreate = computed(
+  () => hasPermission("*") || hasPermission("export.create"),
+);
+
+const productOptions = computed(() =>
+  products.value.map((row) => ({
+    value: row.id,
+    label: `${row.product_code || ""} - ${row.product_name || ""}`,
+    subLabel: row.unit || "",
+    search: `${row.product_code || ""} ${row.product_name || ""} ${row.unit || ""}`,
+  })),
+);
+
+const warehouseOptions = computed(() =>
+  warehouses.value.map((row) => ({
+    value: row.id,
+    label: row.name || row.warehouse_code || row.id,
+    subLabel: row.address || "",
+    search: `${row.name || ""} ${row.warehouse_code || ""} ${row.address || ""}`,
+  })),
+);
+
+const itemsByOrder = computed(() => {
+  const map = new Map<string, ExportOrderItemDoc[]>();
+  items.value.forEach((item) => {
+    const key = String(item.export_order_id || "");
+    if (!key) return;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(item);
+  });
+  return map;
+});
+
+const enrichedRows = computed(() =>
+  rows.value.map((row) => {
+    const orderItems = itemsByOrder.value.get(row.id) || [];
+    return {
+      ...row,
+      item_count: orderItems.length,
+      total_quantity: orderItems.reduce(
+        (sum, item) => sum + toNumber(item.quantity),
+        0,
+      ),
+    };
+  }),
+);
+
+const filtered = computed(() => {
+  const keyword = normalizeText(search.value);
+  return enrichedRows.value.filter((row) => {
+    const matchedDestination =
+      !destinationFilter.value ||
+      row.destination_type === destinationFilter.value;
+    const matchedText =
+      !keyword ||
+      normalizeText(
+        [
+          row.code,
+          row.export_code,
+          row.source_order_code,
+          row.customer_name,
+          row.destination_name,
+          row.created_by,
+          row.status,
+          row.sync_source,
+          row.note,
+        ].join(" "),
+      ).includes(keyword);
+    return matchedDestination && matchedText;
+  });
+});
+
+const summary = computed(() => ({
+  orders: filtered.value.length,
+  lines: filtered.value.reduce((sum, row) => sum + toNumber(row.item_count), 0),
+  quantity: filtered.value.reduce(
+    (sum, row) => sum + toNumber(row.total_quantity),
+    0,
+  ),
+}));
+
+const selectedItems = computed(() =>
+  selected.value ? itemsByOrder.value.get(selected.value.id) || [] : [],
+);
+
+function newBlankLine() {
+  return { product_id: "", logo: "", quantity: 0, unit: "", note: "" };
+}
+
+function findProduct(id: string) {
+  return products.value.find((row) => row.id === id);
+}
+
+function findWarehouse(id: string) {
+  return warehouses.value.find((row) => row.id === id);
+}
+
+function codeOf(row: ExportOrderDoc) {
+  return row.code || row.export_code || row.id;
+}
+
+function quantityText(value: any) {
+  return toNumber(value).toLocaleString("vi-VN");
+}
+
+function destinationLabel(value: any) {
+  if (value === "warehouse") return "Xuất tới kho";
+  if (value === "customer") return "Xuất tới khách";
+  return value || "-";
+}
+
+function openDetail(row: ExportOrderDoc) {
+  selected.value = row;
+  showDetailModal.value = true;
+}
+
+function openCreateModal() {
+  Object.assign(form, {
+    export_date: todayKey(),
+    destination_type: "customer",
+    from_warehouse_id: "",
+    to_warehouse_id: "",
+    customer_name: "",
+    source_order_code: "",
+    note: "",
+    lines: [newBlankLine()],
+  });
+  showCreateModal.value = true;
+}
+
+function addLine() {
+  form.lines.push(newBlankLine());
+}
+
+function removeLine(index: number) {
+  if (form.lines.length <= 1) {
+    form.lines[0] = newBlankLine();
+    return;
+  }
+  form.lines.splice(index, 1);
+}
+
+function onProductChanged(line: any) {
+  const product = findProduct(line.product_id);
+  if (product && !line.unit) line.unit = product.unit || "";
+}
+
+async function saveExportOrder() {
+  if (!form.from_warehouse_id)
+    return showToast("Vui lòng chọn kho xuất.", "error");
+  if (form.destination_type === "warehouse" && !form.to_warehouse_id)
+    return showToast("Vui lòng chọn kho nhận.", "error");
+  if (
+    form.destination_type === "warehouse" &&
+    form.to_warehouse_id === form.from_warehouse_id
+  )
+    return showToast("Kho nhận phải khác kho xuất.", "error");
+
+  const validLines = form.lines.filter(
+    (line) => line.product_id && toNumber(line.quantity) > 0,
+  );
+  if (!validLines.length)
+    return showToast(
+      "Vui lòng nhập ít nhất một dòng sản phẩm và số lượng xuất hợp lệ.",
+      "error",
+    );
+
+  saving.value = true;
+  try {
+    const fromWarehouse = findWarehouse(form.from_warehouse_id);
+    const toWarehouse =
+      form.destination_type === "warehouse"
+        ? findWarehouse(form.to_warehouse_id)
+        : null;
+    const result = await createExportOrder({
+      export_date: form.export_date,
+      destination_type: form.destination_type,
+      source_order_code: form.source_order_code,
+      customer_name: form.customer_name,
+      destination_name:
+        form.destination_type === "warehouse"
+          ? toWarehouse?.name
+          : form.customer_name,
+      toWarehouse,
+      note: form.note,
+      lines: validLines.map((line) => ({
+        product: findProduct(line.product_id),
+        fromWarehouse,
+        logo: line.logo,
+        quantity: toNumber(line.quantity),
+        unit: line.unit || findProduct(line.product_id)?.unit || "",
+        note: line.note,
+      })),
+    });
+    showCreateModal.value = false;
+    showToast(`Đã tạo phiếu xuất ${result.code}.`, "success");
+    await loadRows(true);
+  } catch (error) {
+    showToast(
+      reportFirebaseError(error, "Không tạo được phiếu xuất kho thật."),
+      "error",
+    );
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function loadRows(force = false) {
+  loading.value = true;
+  try {
+    const [orderRows, itemRows, productRows, warehouseRows] = await Promise.all(
+      [
+        loadExportOrders(force),
+        loadExportOrderItems(force),
+        loadProducts(force),
+        loadWarehouses(force),
+      ],
+    );
+    rows.value = orderRows;
+    items.value = itemRows;
+    products.value = productRows;
+    warehouses.value = warehouseRows;
+  } catch (error) {
+    showToast(
+      reportFirebaseError(error, "Không tải được phiếu xuất kho thật."),
+      "error",
+    );
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(() => loadRows());
+</script>
+
+<template>
+  <AppShell>
+    <PageHeader
+      title="Xuất kho thật"
+      subtitle="Phiếu xuất kho thật trên Firestore, có check tồn và trừ tồn bằng transaction"
+    >
+      <button v-if="canCreate" class="btn primary" @click="openCreateModal">
+        + Tạo phiếu xuất
+      </button>
+      <button class="btn" @click="loadRows(true)">Làm mới</button>
+    </PageHeader>
+
+    <div class="summary-grid">
+      <div class="summary-card">
+        <label>Số phiếu</label
+        ><strong>{{ summary.orders.toLocaleString("vi-VN") }}</strong>
+      </div>
+      <div class="summary-card">
+        <label>Số dòng hàng</label
+        ><strong>{{ summary.lines.toLocaleString("vi-VN") }}</strong>
+      </div>
+      <div class="summary-card">
+        <label>Tổng SL xuất</label
+        ><strong>{{ quantityText(summary.quantity) }}</strong>
+      </div>
+      <div class="summary-card">
+        <label>Ghi tồn</label><strong>Transaction</strong>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <input
+          v-model="search"
+          class="input"
+          style="max-width: 520px"
+          placeholder="Tìm mã phiếu, đơn hàng, khách hàng, người tạo..."
+        />
+        <select
+          v-model="destinationFilter"
+          class="select"
+          style="max-width: 220px"
+        >
+          <option value="">Tất cả loại xuất</option>
+          <option value="customer">Xuất tới khách</option>
+          <option value="warehouse">Xuất tới kho</option>
+        </select>
+      </div>
+
+      <LoadingState v-if="loading" />
+      <div v-else class="table-wrap">
+        <table style="min-width: 1180px">
+          <thead>
+            <tr>
+              <th>Mã phiếu</th>
+              <th>Ngày xuất</th>
+              <th>Loại xuất</th>
+              <th>Đích xuất</th>
+              <th>Số dòng</th>
+              <th>Tổng SL</th>
+              <th>Người tạo</th>
+              <th>Trạng thái</th>
+              <th>Thao tác</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in filtered" :key="row.id">
+              <td>
+                <b>{{ codeOf(row) }}</b>
+                <div class="small subtle">
+                  {{ row.source_order_code || row.sync_source || row.id }}
+                </div>
+              </td>
+              <td>{{ formatDateTime(row.export_date || row.created_at) }}</td>
+              <td>{{ destinationLabel(row.destination_type) }}</td>
+              <td>{{ row.destination_name || row.customer_name || "-" }}</td>
+              <td>{{ row.item_count }}</td>
+              <td>
+                <b>{{ quantityText(row.total_quantity) }}</b>
+              </td>
+              <td>{{ row.created_by || "-" }}</td>
+              <td>
+                <span class="badge blue">{{ row.status || "active" }}</span>
+              </td>
+              <td>
+                <button class="btn-sm btn-view" @click="openDetail(row)">
+                  Xem chi tiết
+                </button>
+              </td>
+            </tr>
+            <tr v-if="!filtered.length">
+              <td colspan="9" class="empty">Không có phiếu xuất kho thật.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <BaseModal
+      v-if="showCreateModal"
+      title="Tạo phiếu xuất kho thật"
+      size="xl"
+      :loading="saving"
+      save-label="Tạo phiếu xuất"
+      @close="showCreateModal = false"
+      @save="saveExportOrder"
+    >
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Ngày xuất</label
+          ><input v-model="form.export_date" class="input" type="date" />
+        </div>
+        <div class="form-group">
+          <label>Kho xuất</label>
+          <SearchableSelect
+            v-model="form.from_warehouse_id"
+            :options="warehouseOptions"
+            placeholder="Chọn kho xuất"
+          />
+        </div>
+        <div class="form-group">
+          <label>Loại xuất</label>
+          <select v-model="form.destination_type" class="select">
+            <option value="customer">Xuất tới khách</option>
+            <option value="warehouse">Xuất tới kho</option>
+          </select>
+        </div>
+        <div v-if="form.destination_type === 'warehouse'" class="form-group">
+          <label>Kho nhận</label>
+          <SearchableSelect
+            v-model="form.to_warehouse_id"
+            :options="warehouseOptions"
+            placeholder="Chọn kho nhận"
+          />
+        </div>
+        <div v-else class="form-group">
+          <label>Khách hàng / nơi nhận</label
+          ><input
+            v-model="form.customer_name"
+            class="input"
+            placeholder="Tên khách hàng hoặc nơi nhận"
+          />
+        </div>
+        <div class="form-group">
+          <label>Mã đơn liên quan</label
+          ><input
+            v-model="form.source_order_code"
+            class="input"
+            placeholder="Nếu có"
+          />
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-top: 14px">
+        <table style="min-width: 980px">
+          <thead>
+            <tr>
+              <th>Sản phẩm</th>
+              <th>Logo</th>
+              <th>Đơn vị</th>
+              <th>Số lượng</th>
+              <th>Ghi chú</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(line, index) in form.lines" :key="index">
+              <td>
+                <SearchableSelect
+                  v-model="line.product_id"
+                  :options="productOptions"
+                  placeholder="Chọn sản phẩm"
+                  @change="onProductChanged(line)"
+                />
+              </td>
+              <td>
+                <input
+                  v-model="line.logo"
+                  class="input"
+                  placeholder="Để trống nếu không logo"
+                />
+              </td>
+              <td>
+                <input v-model="line.unit" class="input" placeholder="Đơn vị" />
+              </td>
+              <td>
+                <input
+                  v-model.number="line.quantity"
+                  class="input"
+                  type="number"
+                  min="0"
+                  step="1"
+                />
+              </td>
+              <td>
+                <input
+                  v-model="line.note"
+                  class="input"
+                  placeholder="Ghi chú dòng"
+                />
+              </td>
+              <td>
+                <button
+                  class="btn-sm btn-delete"
+                  type="button"
+                  @click="removeLine(index)"
+                >
+                  Xóa
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <button
+        class="btn"
+        type="button"
+        style="margin-top: 10px"
+        @click="addLine"
+      >
+        + Thêm dòng
+      </button>
+      <div class="form-group" style="margin-top: 12px">
+        <label>Ghi chú phiếu</label
+        ><textarea v-model="form.note" class="textarea" rows="3" />
+      </div>
+      <p class="small subtle">
+        Khi lưu, hệ thống sẽ kiểm tra tồn hiện tại trong
+        <b>inventory_balances</b>. Nếu thiếu tồn, phiếu sẽ không được tạo.
+      </p>
+    </BaseModal>
+
+    <BaseModal
+      v-if="showDetailModal && selected"
+      :title="`Chi tiết xuất kho ${codeOf(selected)}`"
+      size="xl"
+      :show-footer="false"
+      @close="showDetailModal = false"
+    >
+      <div class="detail-grid">
+        <div class="detail-item">
+          <label>Mã phiếu</label><strong>{{ codeOf(selected) }}</strong>
+        </div>
+        <div class="detail-item">
+          <label>Ngày xuất</label
+          ><strong>{{
+            formatDateTime(selected.export_date || selected.created_at)
+          }}</strong>
+        </div>
+        <div class="detail-item">
+          <label>Loại xuất</label
+          ><strong>{{ destinationLabel(selected.destination_type) }}</strong>
+        </div>
+        <div class="detail-item">
+          <label>Đích xuất</label
+          ><strong>{{
+            selected.destination_name || selected.customer_name || "-"
+          }}</strong>
+        </div>
+        <div class="detail-item">
+          <label>Mã đơn liên quan</label
+          ><strong>{{ selected.source_order_code || "-" }}</strong>
+        </div>
+        <div class="detail-item">
+          <label>Nguồn sync</label
+          ><strong>{{ selected.sync_source || selected.source || "-" }}</strong>
+        </div>
+        <div class="detail-item">
+          <label>Người tạo</label
+          ><strong>{{ selected.created_by || "-" }}</strong>
+        </div>
+        <div class="detail-item">
+          <label>Ghi chú</label><strong>{{ selected.note || "-" }}</strong>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table style="min-width: 1040px">
+          <thead>
+            <tr>
+              <th>Sản phẩm</th>
+              <th>Kho xuất</th>
+              <th>Kho nhận</th>
+              <th>Logo</th>
+              <th>Đơn vị</th>
+              <th>Số lượng</th>
+              <th>Ghi chú</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in selectedItems" :key="item.id">
+              <td>
+                <b>{{ item.product_code }}</b>
+                <div class="small subtle">{{ item.product_name }}</div>
+              </td>
+              <td>
+                {{ item.from_warehouse_name || item.from_warehouse_id || "-" }}
+              </td>
+              <td>
+                {{ item.to_warehouse_name || item.destination_name || "-" }}
+              </td>
+              <td>{{ item.logo || "Không logo" }}</td>
+              <td>{{ item.unit || "-" }}</td>
+              <td>
+                <b>{{ quantityText(item.quantity) }}</b>
+              </td>
+              <td>{{ item.note || "-" }}</td>
+            </tr>
+            <tr v-if="!selectedItems.length">
+              <td colspan="7" class="empty">
+                Phiếu này chưa có dòng chi tiết.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </BaseModal>
+  </AppShell>
+</template>

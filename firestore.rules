@@ -360,6 +360,75 @@ service cloud.firestore {
       ]);
     }
 
+
+    // ---------------------------------------------------------------------
+    // Warehouse Core helpers
+    // ---------------------------------------------------------------------
+
+    function canReadWarehouseCatalog() {
+      return hasAnyPerm([
+        'warehouses.view',
+        'warehouses.manage',
+        'suppliers.view',
+        'suppliers.manage',
+        'units.view',
+        'units.manage',
+        'import.view',
+        'export.view',
+        'inventory.view',
+        'export_requests.process'
+      ]);
+    }
+
+    function canWriteWarehouseCatalog() {
+      return hasAnyPerm([
+        'warehouses.manage',
+        'suppliers.manage',
+        'units.manage'
+      ]);
+    }
+
+    function canReadInventoryCore() {
+      return hasAnyPerm([
+        'inventory.view',
+        'import.view',
+        'export.view',
+        'stock_movements.view',
+        'export_requests.process'
+      ]);
+    }
+
+    function canWriteInventoryCore() {
+      return hasAnyPerm([
+        'import.create',
+        'import.edit',
+        'export.create',
+        'export.edit',
+        'inventory.adjust',
+        'export_requests.process'
+      ]);
+    }
+
+    function quantityIsNumber(data) {
+      return data.get('quantity', 0) is int
+        || data.get('quantity', 0) is float;
+    }
+
+    function balanceQuantityIsSafe() {
+      return quantityIsNumber(request.resource.data)
+        && request.resource.data.get('quantity', 0) >= 0;
+    }
+
+    function warehouseDocIdentitySafe() {
+      return unchanged([
+        'id',
+        'legacy_id',
+        'created_at',
+        'created_by',
+        'source'
+      ]);
+    }
+
     function onlyInvoiceStatusChanged() {
       return onlyChanged([
         'invoice_status',
@@ -777,6 +846,13 @@ service cloud.firestore {
             'warehouse_handled_by',
             'warehouse_handled_at',
             'warehouse_note',
+            'warehouse_export_id',
+            'warehouse_export_order_id',
+            'export_order_id',
+            'exported_at',
+            'actual_exported_at',
+            'actual_export_summary_json',
+            'stock_movement_ids',
             'request_timeline_json',
             'updated_at'
           ])
@@ -886,6 +962,151 @@ service cloud.firestore {
           && resource.data.order_id is string
           && canMutateOrderById(resource.data.order_id)
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // Warehouse Core: catalogs, real stock documents and balances
+    // ---------------------------------------------------------------------
+
+    match /warehouses/{docId} {
+      allow read: if canReadWarehouseCatalog();
+      allow create: if hasAnyPerm(['warehouses.manage'])
+        && ownEmailField(request.resource.data, 'created_by');
+      allow update: if hasAnyPerm(['warehouses.manage'])
+        && warehouseDocIdentitySafe();
+      allow delete: if isAdmin();
+    }
+
+    match /suppliers/{docId} {
+      allow read: if canReadWarehouseCatalog();
+      allow create: if hasAnyPerm(['suppliers.manage'])
+        && ownEmailField(request.resource.data, 'created_by');
+      allow update: if hasAnyPerm(['suppliers.manage'])
+        && warehouseDocIdentitySafe();
+      allow delete: if isAdmin();
+    }
+
+    match /units/{docId} {
+      allow read: if canReadWarehouseCatalog();
+      allow create: if hasAnyPerm(['units.manage'])
+        && ownEmailField(request.resource.data, 'created_by');
+      allow update: if hasAnyPerm(['units.manage'])
+        && warehouseDocIdentitySafe();
+      allow delete: if isAdmin();
+    }
+
+    match /import_orders/{docId} {
+      allow read: if hasAnyPerm(['import.view']);
+      allow create: if hasAnyPerm(['import.create'])
+        && ownEmailField(request.resource.data, 'created_by');
+      allow update: if isAdmin()
+        || (
+          hasAnyPerm(['import.edit'])
+          && warehouseDocIdentitySafe()
+          && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+        )
+        || (
+          hasAnyPerm(['import.delete'])
+          && warehouseDocIdentitySafe()
+          && softDeleteOnly()
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /import_order_items/{docId} {
+      allow read: if hasAnyPerm(['import.view']);
+      allow create: if hasAnyPerm(['import.create'])
+        && request.resource.data.import_order_id is string
+        && quantityIsNumber(request.resource.data)
+        && request.resource.data.get('quantity', 0) > 0
+        && ownEmailField(request.resource.data, 'created_by');
+      allow update: if isAdmin()
+        || (
+          hasAnyPerm(['import.edit'])
+          && unchanged(['import_order_id', 'created_at', 'created_by', 'source'])
+          && quantityIsNumber(request.resource.data)
+          && request.resource.data.get('quantity', 0) > 0
+        )
+        || (
+          hasAnyPerm(['import.delete'])
+          && unchanged(['import_order_id', 'created_at', 'created_by', 'source'])
+          && softDeleteOnly()
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /export_orders/{docId} {
+      allow read: if hasAnyPerm(['export.view', 'export_requests.process']);
+      allow create: if hasAnyPerm(['export.create', 'export_requests.process'])
+        && ownEmailField(request.resource.data, 'created_by');
+      allow update: if isAdmin()
+        || (
+          hasAnyPerm(['export.edit'])
+          && warehouseDocIdentitySafe()
+          && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+        )
+        || (
+          hasAnyPerm(['export.delete'])
+          && warehouseDocIdentitySafe()
+          && softDeleteOnly()
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /export_order_items/{docId} {
+      allow read: if hasAnyPerm(['export.view', 'export_requests.process']);
+      allow create: if hasAnyPerm(['export.create', 'export_requests.process'])
+        && request.resource.data.export_order_id is string
+        && quantityIsNumber(request.resource.data)
+        && request.resource.data.get('quantity', 0) > 0
+        && ownEmailField(request.resource.data, 'created_by');
+      allow update: if isAdmin()
+        || (
+          hasAnyPerm(['export.edit'])
+          && unchanged(['export_order_id', 'created_at', 'created_by', 'source'])
+          && quantityIsNumber(request.resource.data)
+          && request.resource.data.get('quantity', 0) > 0
+        )
+        || (
+          hasAnyPerm(['export.delete'])
+          && unchanged(['export_order_id', 'created_at', 'created_by', 'source'])
+          && softDeleteOnly()
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /inventory_adjustments/{docId} {
+      allow read: if hasAnyPerm(['inventory.view', 'inventory.adjust']);
+      allow create: if hasAnyPerm(['inventory.adjust'])
+        && quantityIsNumber(request.resource.data)
+        && request.resource.data.get('quantity', 0) != 0
+        && ownEmailField(request.resource.data, 'created_by');
+      allow update: if isAdmin()
+        || (
+          hasAnyPerm(['inventory.adjust'])
+          && warehouseDocIdentitySafe()
+          && quantityIsNumber(request.resource.data)
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /stock_movements/{docId} {
+      allow read: if canReadInventoryCore();
+      allow create: if canWriteInventoryCore()
+        && quantityIsNumber(request.resource.data)
+        && request.resource.data.get('quantity', 0) != 0
+        && ownEmailField(request.resource.data, 'created_by');
+
+      // Stock movements are append-only from the client. Corrections should
+      // be represented as another adjustment movement, not by rewriting history.
+      allow update, delete: if isAdmin();
+    }
+
+    match /inventory_balances/{docId} {
+      allow read: if canReadInventoryCore();
+      allow create, update: if canWriteInventoryCore()
+        && balanceQuantityIsSafe();
+      allow delete: if isAdmin();
     }
 
     // ---------------------------------------------------------------------

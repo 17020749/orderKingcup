@@ -9,12 +9,22 @@ import {
 import type {
   AnyDoc,
   CustomerDoc,
+  ExportOrderDoc,
+  ExportOrderItemDoc,
+  ImportOrderDoc,
+  ImportOrderItemDoc,
+  InventoryAdjustmentDoc,
+  InventoryBalanceDoc,
   InvoiceDoc,
   OrderDoc,
   OrderItemDoc,
   PaymentDoc,
   ProductDoc,
-  ShipmentDoc
+  ShipmentDoc,
+  StockMovementDoc,
+  SupplierDoc,
+  UnitDoc,
+  WarehouseDoc
 } from '~/types/models'
 import { isActive } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
@@ -48,6 +58,22 @@ function sortNewest<T extends AnyDoc>(rows: T[], fallbackField = 'created_at') {
   return [...rows].sort((a, b) =>
     String(b.created_at || b[fallbackField] || '').localeCompare(String(a.created_at || a[fallbackField] || ''))
   )
+}
+
+function sortByName<T extends AnyDoc>(rows: T[]) {
+  return [...rows].filter(row => row.deleted !== true).sort((a, b) =>
+    String(a.name || a.warehouse_name || a.supplier_name || '').localeCompare(String(b.name || b.warehouse_name || b.supplier_name || ''), 'vi')
+  )
+}
+
+function sortByWarehouseAndProduct<T extends AnyDoc>(rows: T[]) {
+  return [...rows].sort((a, b) => {
+    const warehouseCompare = String(a.warehouse_name || a.warehouse_id || '').localeCompare(String(b.warehouse_name || b.warehouse_id || ''), 'vi')
+    if (warehouseCompare) return warehouseCompare
+    const productCompare = String(a.product_name || a.product_code || '').localeCompare(String(b.product_name || b.product_code || ''), 'vi')
+    if (productCompare) return productCompare
+    return String(a.logo || '').localeCompare(String(b.logo || ''), 'vi')
+  })
 }
 
 function storageKey(key: string) {
@@ -142,6 +168,11 @@ export function useScopedQueries() {
 
   function isAdminUser() {
     return hasPermission('*') || appUser.value?.is_admin === true
+  }
+
+
+  function hasAnyWarehousePermission(keys: string[]) {
+    return isAdminUser() || keys.some(key => hasPermission(key))
   }
 
   async function fetchCollection<T extends AnyDoc>(name: string, constraints: QueryConstraint[] = []) {
@@ -316,7 +347,7 @@ export function useScopedQueries() {
     // Trang Kingcup chỉ tải toàn bộ khi user có quyền view_all rõ ràng.
     // Quyền export_requests.process được giữ cho nguồn Warehouse xử lý backend,
     // nhưng không tự động làm lộ phiếu của sale khác trên giao diện Kingcup.
-    if (canAll('export_requests.view_all')) {
+    if (canAll('export_requests.view_all') || canAll('export_requests.process')) {
       return sortNewest(
         (await listCollection<AnyDoc>('order_export_requests', [], {
           cacheKey: 'all', ttlMs: 15_000, force
@@ -370,6 +401,76 @@ export function useScopedQueries() {
     )
   }
 
+  async function loadWarehouses(force = false) {
+    if (!hasAnyWarehousePermission(['warehouses.view', 'warehouses.manage', 'import.view', 'export.view', 'inventory.view'])) return []
+    return sortByName(await listCollection<WarehouseDoc>('warehouses', [], {
+      cacheKey: 'all', ttlMs: 300_000, force
+    }))
+  }
+
+  async function loadSuppliers(force = false) {
+    if (!hasAnyWarehousePermission(['suppliers.view', 'suppliers.manage', 'import.view'])) return []
+    return sortByName(await listCollection<SupplierDoc>('suppliers', [], {
+      cacheKey: 'all', ttlMs: 300_000, force
+    }))
+  }
+
+  async function loadUnits(force = false) {
+    if (!hasAnyWarehousePermission(['units.view', 'units.manage', 'products.view', 'import.view', 'export.view', 'inventory.view'])) return []
+    return sortByName(await listCollection<UnitDoc>('units', [], {
+      cacheKey: 'all', ttlMs: 300_000, force
+    }))
+  }
+
+  async function loadImportOrders(force = false) {
+    if (!hasPermission('import.view') && !hasPermission('*')) return []
+    return sortNewest((await listCollection<ImportOrderDoc>('import_orders', [], {
+      cacheKey: 'all', ttlMs: 30_000, force
+    })).filter(isActive), 'import_date')
+  }
+
+  async function loadImportOrderItems(force = false) {
+    if (!hasPermission('import.view') && !hasPermission('*')) return []
+    return (await listCollection<ImportOrderItemDoc>('import_order_items', [], {
+      cacheKey: 'all', ttlMs: 30_000, force
+    })).filter(isActive)
+  }
+
+  async function loadExportOrders(force = false) {
+    if (!hasPermission('export.view') && !hasPermission('*')) return []
+    return sortNewest((await listCollection<ExportOrderDoc>('export_orders', [], {
+      cacheKey: 'all', ttlMs: 30_000, force
+    })).filter(isActive), 'export_date')
+  }
+
+  async function loadExportOrderItems(force = false) {
+    if (!hasPermission('export.view') && !hasPermission('*')) return []
+    return (await listCollection<ExportOrderItemDoc>('export_order_items', [], {
+      cacheKey: 'all', ttlMs: 30_000, force
+    })).filter(isActive)
+  }
+
+  async function loadInventoryBalances(force = false) {
+    if (!hasAnyWarehousePermission(['inventory.view', 'import.view', 'export.view'])) return []
+    return sortByWarehouseAndProduct(await listCollection<InventoryBalanceDoc>('inventory_balances', [], {
+      cacheKey: 'all', ttlMs: 15_000, force
+    }))
+  }
+
+  async function loadInventoryAdjustments(force = false) {
+    if (!hasAnyWarehousePermission(['inventory.view', 'inventory.adjust'])) return []
+    return sortNewest((await listCollection<InventoryAdjustmentDoc>('inventory_adjustments', [], {
+      cacheKey: 'all', ttlMs: 30_000, force
+    })).filter(isActive), 'adjustment_date')
+  }
+
+  async function loadStockMovements(force = false) {
+    if (!hasAnyWarehousePermission(['stock_movements.view', 'inventory.view'])) return []
+    return sortNewest(await listCollection<StockMovementDoc>('stock_movements', [], {
+      cacheKey: 'all', ttlMs: 15_000, force
+    }), 'movement_date')
+  }
+
   async function loadScopedShipments(force = false) {
     if (isAdminUser()) {
       return (await listCollection<ShipmentDoc>('shipments', [], {
@@ -408,6 +509,16 @@ export function useScopedQueries() {
     loadScopedExportRequests,
     loadScopedCustomers,
     loadProducts,
+    loadWarehouses,
+    loadSuppliers,
+    loadUnits,
+    loadImportOrders,
+    loadImportOrderItems,
+    loadExportOrders,
+    loadExportOrderItems,
+    loadInventoryBalances,
+    loadInventoryAdjustments,
+    loadStockMovements,
     loadScopedShipments,
     loadScopedInvoices,
     invalidateScopedCache

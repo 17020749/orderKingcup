@@ -4,56 +4,382 @@
       "collectionGroup": "orders",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "owner_email", "order": "ASCENDING" },
-        { "fieldPath": "created_at", "order": "DESCENDING" }
+        {
+          "fieldPath": "owner_email",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "orders",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "created_by", "order": "ASCENDING" },
-        { "fieldPath": "created_at", "order": "DESCENDING" }
+        {
+          "fieldPath": "created_by",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "orders",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "order_status", "order": "ASCENDING" },
-        { "fieldPath": "created_at", "order": "DESCENDING" }
+        {
+          "fieldPath": "order_status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "payments",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "order_id", "order": "ASCENDING" },
-        { "fieldPath": "payment_date", "order": "DESCENDING" }
+        {
+          "fieldPath": "order_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "payment_date",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "payments",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "created_by", "order": "ASCENDING" },
-        { "fieldPath": "payment_date", "order": "DESCENDING" }
+        {
+          "fieldPath": "created_by",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "payment_date",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "order_export_requests",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "requested_by", "order": "ASCENDING" },
-        { "fieldPath": "created_at", "order": "DESCENDING" }
+        {
+          "fieldPath": "requested_by",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "order_export_requests",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "created_at", "order": "DESCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "import_orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "supplier_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "import_date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "import_orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "created_by",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "import_date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "import_order_items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "import_order_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "product_id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "import_order_items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "warehouse_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "product_id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "export_orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "destination_type",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "export_date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "export_orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "source_order_code",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "export_date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "export_orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "sync_source",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "export_date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "export_orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "source_request_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "export_date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "export_order_items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "export_order_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "product_id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "export_order_items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "from_warehouse_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "product_id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "inventory_balances",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "warehouse_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "product_id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "inventory_balances",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "product_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "warehouse_id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "inventory_balances",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "warehouse_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "quantity",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "inventory_balances",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "product_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "logo",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "inventory_adjustments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "warehouse_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adjustment_date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "inventory_adjustments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "product_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adjustment_date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "stock_movements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "warehouse_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "movement_date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "stock_movements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "product_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "movement_date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "stock_movements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "warehouse_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "product_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "movement_date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "stock_movements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "source_collection",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "source_doc_id",
+          "order": "ASCENDING"
+        }
       ]
     }
   ],

@@ -134,6 +134,7 @@ declare global {
   const useModel: typeof import('vue').useModel
   const useNuxtApp: typeof import('../../node_modules/nuxt/dist/app/nuxt').useNuxtApp
   const useNuxtData: typeof import('../../node_modules/nuxt/dist/app/composables/asyncData').useNuxtData
+  const useNuxtDevTools: typeof import('../../node_modules/@nuxt/devtools/dist/runtime/use-nuxt-devtools').useNuxtDevTools
   const useOrderLogic: typeof import('../../composables/useOrderLogic').useOrderLogic
   const usePreviewMode: typeof import('../../node_modules/nuxt/dist/app/composables/preview').usePreviewMode
   const useRepo: typeof import('../../composables/useRepo').useRepo
@@ -190,6 +191,7 @@ declare global {
   const useTransitionState: typeof import('vue').useTransitionState
   const useUi: typeof import('../../composables/useUi').useUi
   const useWarehouseLogic: typeof import('../../composables/useWarehouseLogic').useWarehouseLogic
+  const useWarehouseTransactions: typeof import('../../composables/useWarehouseTransactions').useWarehouseTransactions
   const watch: typeof import('vue').watch
   const watchEffect: typeof import('vue').watchEffect
   const watchPostEffect: typeof import('vue').watchPostEffect
@@ -347,6 +349,7 @@ declare module 'vue' {
     readonly useModel: UnwrapRef<typeof import('vue')['useModel']>
     readonly useNuxtApp: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/nuxt')['useNuxtApp']>
     readonly useNuxtData: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/composables/asyncData')['useNuxtData']>
+    readonly useNuxtDevTools: UnwrapRef<typeof import('../../node_modules/@nuxt/devtools/dist/runtime/use-nuxt-devtools')['useNuxtDevTools']>
     readonly useOrderLogic: UnwrapRef<typeof import('../../composables/useOrderLogic')['useOrderLogic']>
     readonly usePreviewMode: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/composables/preview')['usePreviewMode']>
     readonly useRepo: UnwrapRef<typeof import('../../composables/useRepo')['useRepo']>
@@ -403,6 +406,7 @@ declare module 'vue' {
     readonly useTransitionState: UnwrapRef<typeof import('vue')['useTransitionState']>
     readonly useUi: UnwrapRef<typeof import('../../composables/useUi')['useUi']>
     readonly useWarehouseLogic: UnwrapRef<typeof import('../../composables/useWarehouseLogic')['useWarehouseLogic']>
+    readonly useWarehouseTransactions: UnwrapRef<typeof import('../../composables/useWarehouseTransactions')['useWarehouseTransactions']>
     readonly watch: UnwrapRef<typeof import('vue')['watch']>
     readonly watchEffect: UnwrapRef<typeof import('vue')['watchEffect']>
     readonly watchPostEffect: UnwrapRef<typeof import('vue')['watchPostEffect']>

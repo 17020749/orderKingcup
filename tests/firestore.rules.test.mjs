@@ -27,6 +27,9 @@ const WAREHOUSE = 'warehouse@example.com'
 const LEGACY = 'legacy@example.com'
 const ROLE_ADMIN = 'roleadmin@example.com'
 const EDITOR = 'editor@example.com'
+const STOCK = 'stock@example.com'
+const CATALOG = 'catalog@example.com'
+const INVENTORY_VIEWER = 'inventoryview@example.com'
 let env
 
 const userPermissions = [
@@ -86,7 +89,39 @@ async function seed() {
       setDoc(doc(db, 'customers', 'customer-a'), { customer_name: 'A', created_by: A, active: true }),
       setDoc(doc(db, 'customers', 'customer-b'), { customer_name: 'B', created_by: B, active: true }),
       setDoc(doc(db, 'products', 'product-existing'), { product_code: 'SP001', product_name: 'Sản phẩm cũ', unit: 'Cái', created_by: A, active: true, deleted: false }),
-      setDoc(doc(db, 'notifications', 'notification-a'), { to_email: A, created_by: B, status: 'unread', message: 'Test' })
+      setDoc(doc(db, 'notifications', 'notification-a'), { to_email: A, created_by: B, status: 'unread', message: 'Test' }),
+      setDoc(doc(db, 'users', STOCK), {
+        email: STOCK,
+        active: true,
+        deleted: false,
+        permissions_flat: [
+          'import.view', 'import.create', 'import.edit',
+          'export.view', 'export.create', 'export.edit',
+          'inventory.view', 'inventory.adjust', 'stock_movements.view',
+          'export_requests.process'
+        ]
+      }),
+      setDoc(doc(db, 'users', CATALOG), {
+        email: CATALOG,
+        active: true,
+        deleted: false,
+        permissions_flat: ['warehouses.view', 'warehouses.manage', 'suppliers.view', 'suppliers.manage', 'units.view', 'units.manage']
+      }),
+      setDoc(doc(db, 'users', INVENTORY_VIEWER), {
+        email: INVENTORY_VIEWER,
+        active: true,
+        deleted: false,
+        permissions_flat: ['inventory.view']
+      }),
+      setDoc(doc(db, 'warehouses', 'wh-a'), { id: 'wh-a', name: 'Kho A', created_by: CATALOG, active: true, deleted: false, source: 'test' }),
+      setDoc(doc(db, 'suppliers', 'supplier-a'), { id: 'supplier-a', name: 'NCC A', created_by: CATALOG, active: true, deleted: false, source: 'test' }),
+      setDoc(doc(db, 'units', 'unit-a'), { id: 'unit-a', name: 'Cái', created_by: CATALOG, active: true, deleted: false, source: 'test' }),
+      setDoc(doc(db, 'import_orders', 'import-a'), { id: 'import-a', code: 'PN-A', created_by: STOCK, active: true, deleted: false, source: 'test' }),
+      setDoc(doc(db, 'import_order_items', 'import-item-a'), { import_order_id: 'import-a', product_id: 'product-existing', warehouse_id: 'wh-a', quantity: 5, created_by: STOCK, active: true, deleted: false, source: 'test' }),
+      setDoc(doc(db, 'export_orders', 'export-real-a'), { id: 'export-real-a', code: 'PX-A', created_by: STOCK, active: true, deleted: false, source: 'test' }),
+      setDoc(doc(db, 'export_order_items', 'export-real-item-a'), { export_order_id: 'export-real-a', product_id: 'product-existing', warehouse_id: 'wh-a', quantity: 2, created_by: STOCK, active: true, deleted: false, source: 'test' }),
+      setDoc(doc(db, 'stock_movements', 'move-a'), { id: 'move-a', movement_type: 'import', product_id: 'product-existing', warehouse_id: 'wh-a', quantity: 5, created_by: STOCK, active: true, deleted: false, source: 'test' }),
+      setDoc(doc(db, 'inventory_balances', 'wh-a__product-existing__no_logo'), { id: 'wh-a__product-existing__no_logo', product_id: 'product-existing', warehouse_id: 'wh-a', logo: '', quantity: 10, active: true, deleted: false })
     ])
   })
 }
@@ -435,4 +470,189 @@ test('Xóa mềm phiếu chưa xuất và cập nhật lại tổng hợp đơn 
     deleted: false
   })
   await assertSucceeds(batch.commit())
+})
+
+test('Warehouse catalog: user có quyền quản lý đọc/tạo được, user thường bị chặn', async () => {
+  const catalogDb = env.authenticatedContext(CATALOG, { email: CATALOG }).firestore()
+  const normalDb = env.authenticatedContext(A, { email: A }).firestore()
+
+  await assertSucceeds(getDoc(doc(catalogDb, 'warehouses', 'wh-a')))
+  await assertFails(getDoc(doc(normalDb, 'warehouses', 'wh-a')))
+
+  await assertSucceeds(setDoc(doc(catalogDb, 'warehouses', 'wh-new'), {
+    id: 'wh-new',
+    name: 'Kho mới',
+    created_by: CATALOG,
+    created_at: 'now',
+    updated_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+
+  await assertFails(setDoc(doc(catalogDb, 'warehouses', 'wh-forged'), {
+    id: 'wh-forged',
+    name: 'Kho giả',
+    created_by: A,
+    created_at: 'now',
+    updated_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+})
+
+test('Warehouse catalog: không cho sửa danh tính legacy/source của kho', async () => {
+  const catalogDb = env.authenticatedContext(CATALOG, { email: CATALOG }).firestore()
+
+  await assertSucceeds(updateDoc(doc(catalogDb, 'warehouses', 'wh-a'), {
+    name: 'Kho A đã sửa',
+    updated_at: 'now'
+  }))
+
+  await assertFails(updateDoc(doc(catalogDb, 'warehouses', 'wh-a'), {
+    source: 'forged',
+    created_by: CATALOG,
+    updated_at: 'now'
+  }))
+})
+
+test('Nhập kho Firestore: chỉ user có import.create được tạo phiếu và số lượng phải dương', async () => {
+  const stockDb = env.authenticatedContext(STOCK, { email: STOCK }).firestore()
+  const normalDb = env.authenticatedContext(A, { email: A }).firestore()
+
+  await assertSucceeds(setDoc(doc(stockDb, 'import_orders', 'import-new'), {
+    id: 'import-new',
+    code: 'PN-NEW',
+    created_by: STOCK,
+    created_at: 'now',
+    updated_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+
+  await assertSucceeds(setDoc(doc(stockDb, 'import_order_items', 'import-item-new'), {
+    import_order_id: 'import-new',
+    product_id: 'product-existing',
+    warehouse_id: 'wh-a',
+    logo: '',
+    quantity: 3,
+    created_by: STOCK,
+    created_at: 'now',
+    updated_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+
+  await assertFails(setDoc(doc(stockDb, 'import_order_items', 'import-item-negative'), {
+    import_order_id: 'import-new',
+    product_id: 'product-existing',
+    warehouse_id: 'wh-a',
+    quantity: -3,
+    created_by: STOCK,
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+
+  await assertFails(setDoc(doc(normalDb, 'import_orders', 'import-normal'), {
+    id: 'import-normal',
+    code: 'PN-NORMAL',
+    created_by: A,
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+})
+
+test('Xuất kho thật Firestore: tạo phiếu xuất thật và chi tiết phải có số lượng dương', async () => {
+  const stockDb = env.authenticatedContext(STOCK, { email: STOCK }).firestore()
+
+  await assertSucceeds(setDoc(doc(stockDb, 'export_orders', 'export-real-new'), {
+    id: 'export-real-new',
+    code: 'PX-NEW',
+    created_by: STOCK,
+    created_at: 'now',
+    updated_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+
+  await assertSucceeds(setDoc(doc(stockDb, 'export_order_items', 'export-real-item-new'), {
+    export_order_id: 'export-real-new',
+    product_id: 'product-existing',
+    from_warehouse_id: 'wh-a',
+    logo: '',
+    quantity: 2,
+    created_by: STOCK,
+    created_at: 'now',
+    updated_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+
+  await assertFails(setDoc(doc(stockDb, 'export_order_items', 'export-real-item-zero'), {
+    export_order_id: 'export-real-new',
+    product_id: 'product-existing',
+    from_warehouse_id: 'wh-a',
+    quantity: 0,
+    created_by: STOCK,
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+})
+
+test('Tồn kho Firestore: đọc theo quyền, không cho ghi tồn âm', async () => {
+  const viewerDb = env.authenticatedContext(INVENTORY_VIEWER, { email: INVENTORY_VIEWER }).firestore()
+  const stockDb = env.authenticatedContext(STOCK, { email: STOCK }).firestore()
+  const normalDb = env.authenticatedContext(A, { email: A }).firestore()
+
+  await assertSucceeds(getDoc(doc(viewerDb, 'inventory_balances', 'wh-a__product-existing__no_logo')))
+  await assertSucceeds(getDoc(doc(stockDb, 'inventory_balances', 'wh-a__product-existing__no_logo')))
+  await assertFails(getDoc(doc(normalDb, 'inventory_balances', 'wh-a__product-existing__no_logo')))
+
+  await assertSucceeds(updateDoc(doc(stockDb, 'inventory_balances', 'wh-a__product-existing__no_logo'), {
+    quantity: 7,
+    updated_at: 'now'
+  }))
+
+  await assertFails(updateDoc(doc(stockDb, 'inventory_balances', 'wh-a__product-existing__no_logo'), {
+    quantity: -1,
+    updated_at: 'now'
+  }))
+})
+
+test('Stock movements là append-only với client kho, chỉ admin được sửa lịch sử', async () => {
+  const stockDb = env.authenticatedContext(STOCK, { email: STOCK }).firestore()
+  const adminDb = env.authenticatedContext(ADMIN, { email: ADMIN }).firestore()
+
+  await assertSucceeds(setDoc(doc(stockDb, 'stock_movements', 'move-new'), {
+    id: 'move-new',
+    movement_type: 'import',
+    direction: 'in',
+    product_id: 'product-existing',
+    warehouse_id: 'wh-a',
+    logo: '',
+    quantity: 3,
+    created_by: STOCK,
+    created_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+
+  await assertFails(updateDoc(doc(stockDb, 'stock_movements', 'move-a'), {
+    quantity: 999,
+    updated_at: 'now'
+  }))
+
+  await assertSucceeds(updateDoc(doc(adminDb, 'stock_movements', 'move-a'), {
+    note: 'admin correction note',
+    updated_at: 'now'
+  }))
 })
