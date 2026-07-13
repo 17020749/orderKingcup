@@ -153,6 +153,24 @@ function destinationLabel(value: any) {
   return value || "-";
 }
 
+function detailWarehouseReceiver(row: any) {
+  if (row?.destination_type !== "warehouse") return "-";
+  return row.to_warehouse_name || row.destination_name || "-";
+}
+
+function detailCustomerReceiver(row: any) {
+  if (row?.destination_type === "warehouse") return "-";
+  return row.customer_name || row.destination_name || "-";
+}
+
+function itemWarehouseReceiver(item: any) {
+  return item.to_warehouse_name || item.to_warehouse_id || "-";
+}
+
+function itemCustomerReceiver(item: any) {
+  return item.to_warehouse_id || item.to_warehouse_name ? "-" : (item.destination_name || selected.value?.customer_name || selected.value?.destination_name || "-");
+}
+
 function openDetail(row: ExportOrderDoc) {
   selected.value = row;
   showDetailModal.value = true;
@@ -531,10 +549,10 @@ onMounted(() => loadRows());
           ><strong>{{ destinationLabel(selected.destination_type) }}</strong>
         </div>
         <div class="detail-item">
-          <label>Đích xuất</label
-          ><strong>{{
-            selected.destination_name || selected.customer_name || "-"
-          }}</strong>
+          <label>Kho nhận</label><strong>{{ detailWarehouseReceiver(selected) }}</strong>
+        </div>
+        <div class="detail-item">
+          <label>Khách nhận</label><strong>{{ detailCustomerReceiver(selected) }}</strong>
         </div>
         <div class="detail-item">
           <label>Mã đơn liên quan</label
@@ -560,6 +578,7 @@ onMounted(() => loadRows());
               <th>Sản phẩm</th>
               <th>Kho xuất</th>
               <th>Kho nhận</th>
+              <th>Khách nhận</th>
               <th>Logo</th>
               <th>Đơn vị</th>
               <th>Số lượng</th>
@@ -575,9 +594,8 @@ onMounted(() => loadRows());
               <td>
                 {{ item.from_warehouse_name || item.from_warehouse_id || "-" }}
               </td>
-              <td>
-                {{ item.to_warehouse_name || item.destination_name || "-" }}
-              </td>
+              <td>{{ itemWarehouseReceiver(item) }}</td>
+              <td>{{ itemCustomerReceiver(item) }}</td>
               <td>{{ item.logo || "Không logo" }}</td>
               <td>{{ item.unit || "-" }}</td>
               <td>
@@ -586,7 +604,7 @@ onMounted(() => loadRows());
               <td>{{ item.note || "-" }}</td>
             </tr>
             <tr v-if="!selectedItems.length">
-              <td colspan="7" class="empty">
+              <td colspan="8" class="empty">
                 Phiếu này chưa có dòng chi tiết.
               </td>
             </tr>

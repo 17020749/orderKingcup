@@ -376,6 +376,10 @@ service cloud.firestore {
         'import.view',
         'export.view',
         'inventory.view',
+        'page.warehouse_export_requests',
+        'export_requests.accept',
+        'export_requests.reject',
+        'export_requests.release',
         'export_requests.process'
       ]);
     }
@@ -394,6 +398,7 @@ service cloud.firestore {
         'import.view',
         'export.view',
         'stock_movements.view',
+        'export_requests.release',
         'export_requests.process'
       ]);
     }
@@ -402,9 +407,11 @@ service cloud.firestore {
       return hasAnyPerm([
         'import.create',
         'import.edit',
+        'import.delete',
         'export.create',
         'export.edit',
         'inventory.adjust',
+        'export_requests.release',
         'export_requests.process'
       ]);
     }
@@ -472,7 +479,7 @@ service cloud.firestore {
             && ownsOrderData(resource.data)
             && orderIdentityUnchanged()
           )
-          || userHasPermData(user, 'export_requests.process')
+          || userHasAnyPermData(user, ['export_requests.accept', 'export_requests.reject', 'export_requests.release', 'export_requests.process'])
         );
     }
 
@@ -552,6 +559,56 @@ service cloud.firestore {
           'order_created_by',
           'order_sale_email'
         ]);
+    }
+
+
+    function exportWarehouseProcessAllowed() {
+      let userPathValue = userPath();
+      let user = get(userPathValue).data;
+      return signedIn()
+        && exists(userPathValue)
+        && activeUserData(user)
+        && userHasAnyPermData(user, [
+          'export_requests.accept',
+          'export_requests.reject',
+          'export_requests.release',
+          'export_requests.process'
+        ])
+        && onlyChanged([
+          'status',
+          'warehouse_export_code',
+          'warehouse_handled_by',
+          'warehouse_handled_at',
+          'warehouse_note',
+          'warehouse_export_id',
+          'warehouse_export_order_id',
+          'export_order_id',
+          'exported_at',
+          'actual_exported_at',
+          'actual_export_summary_json',
+          'stock_movement_ids',
+          'request_timeline_json',
+          'updated_at'
+        ])
+        && ownEmailField(request.resource.data, 'warehouse_handled_by')
+        && (
+          userHasPermData(user, 'export_requests.process')
+          || (
+            userHasPermData(user, 'export_requests.accept')
+            && resource.data.get('status', '') in ['cho_xu_ly', 'pending']
+            && request.resource.data.get('status', '') in ['da_tiep_nhan', 'cho_xuat_kho']
+          )
+          || (
+            userHasPermData(user, 'export_requests.reject')
+            && !(resource.data.get('status', '') in ['tu_choi', 'da_xuat'])
+            && request.resource.data.get('status', '') == 'tu_choi'
+          )
+          || (
+            userHasPermData(user, 'export_requests.release')
+            && resource.data.get('status', '') in ['cho_xu_ly', 'pending', 'dang_xu_ly', 'da_tiep_nhan', 'cho_xuat_kho']
+            && request.resource.data.get('status', '') == 'da_xuat'
+          )
+        );
     }
 
     // ---------------------------------------------------------------------
@@ -818,7 +875,13 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
 
     match /order_export_requests/{docId} {
-      allow read: if hasPerm('export_requests.process')
+      allow read: if hasAnyPerm([
+          'page.warehouse_export_requests',
+          'export_requests.accept',
+          'export_requests.reject',
+          'export_requests.release',
+          'export_requests.process'
+        ])
         || hasPerm('export_requests.view_all')
         || (
           hasAnyPerm(['export_requests.view', 'orders.warehouse_export'])
@@ -833,31 +896,10 @@ service cloud.firestore {
 
       allow create: if exportCreateAllowed();
 
-      allow update: if exportSoftDeleteAllowed()
-        || exportOwnerEditAllowed()
-        || isAdmin()
-        || (
-          // Warehouse can change only processing fields. The handler email
-          // must be the authenticated warehouse user, not a client claim.
-          hasPerm('export_requests.process')
-          && onlyChanged([
-            'status',
-            'warehouse_export_code',
-            'warehouse_handled_by',
-            'warehouse_handled_at',
-            'warehouse_note',
-            'warehouse_export_id',
-            'warehouse_export_order_id',
-            'export_order_id',
-            'exported_at',
-            'actual_exported_at',
-            'actual_export_summary_json',
-            'stock_movement_ids',
-            'request_timeline_json',
-            'updated_at'
-          ])
-          && ownEmailField(request.resource.data, 'warehouse_handled_by')
-        );
+      allow update: if isAdmin()
+        || exportWarehouseProcessAllowed()
+        || exportSoftDeleteAllowed()
+        || exportOwnerEditAllowed();
 
       allow delete: if isAdmin()
         || (
@@ -1036,8 +1078,8 @@ service cloud.firestore {
     }
 
     match /export_orders/{docId} {
-      allow read: if hasAnyPerm(['export.view', 'export_requests.process']);
-      allow create: if hasAnyPerm(['export.create', 'export_requests.process'])
+      allow read: if hasAnyPerm(['export.view', 'export_requests.release', 'export_requests.process']);
+      allow create: if hasAnyPerm(['export.create', 'export_requests.release', 'export_requests.process'])
         && ownEmailField(request.resource.data, 'created_by');
       allow update: if isAdmin()
         || (
@@ -1054,8 +1096,8 @@ service cloud.firestore {
     }
 
     match /export_order_items/{docId} {
-      allow read: if hasAnyPerm(['export.view', 'export_requests.process']);
-      allow create: if hasAnyPerm(['export.create', 'export_requests.process'])
+      allow read: if hasAnyPerm(['export.view', 'export_requests.release', 'export_requests.process']);
+      allow create: if hasAnyPerm(['export.create', 'export_requests.release', 'export_requests.process'])
         && request.resource.data.export_order_id is string
         && quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) > 0

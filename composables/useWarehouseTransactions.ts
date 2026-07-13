@@ -345,6 +345,314 @@ export function useWarehouseTransactions() {
     return { id: orderId, code }
   }
 
+
+  function itemProduct(item: any) {
+    const id = normalizeId(item?.product_id || item?.product?.id)
+    if (!id) throw new Error(`Dòng nhập ${item?.id || ''} thiếu product_id, không thể cập nhật tồn an toàn.`)
+    return {
+      id,
+      legacy_id: item.product_legacy_id || item.legacy_product_id || id,
+      product_code: item.product_code || '',
+      product_name: item.product_name || '',
+      unit: item.unit || ''
+    }
+  }
+
+  function itemWarehouse(item: any) {
+    const id = normalizeId(item?.warehouse_id || item?.warehouse?.id)
+    if (!id) throw new Error(`Dòng nhập ${item?.id || ''} thiếu warehouse_id, không thể cập nhật tồn an toàn.`)
+    return {
+      id,
+      legacy_id: item.warehouse_legacy_id || item.legacy_warehouse_id || id,
+      name: item.warehouse_name || item.warehouse_code || id,
+      warehouse_code: item.warehouse_code || ''
+    }
+  }
+
+  async function updateImportOrder(input: {
+    order: any
+    existingItems: any[]
+    import_date?: string
+    supplier?: SupplierDoc | any | null
+    note?: string
+    lines: WarehouseLineInput[]
+  }) {
+    const updatedBy = email()
+    if (!updatedBy) throw new Error('Bạn chưa đăng nhập.')
+    const orderId = normalizeId(input.order?.id)
+    if (!orderId) throw new Error('Thiếu ID phiếu nhập cần sửa.')
+    const oldItems = (input.existingItems || []).filter(item => item && item.deleted !== true && item.active !== false)
+    const rawLines = input.lines.filter(line => toNumber(line.quantity) > 0)
+    if (!rawLines.length) throw new Error('Phiếu nhập phải có ít nhất một dòng hàng.')
+
+    const importDate = input.import_date || input.order?.import_date || todayKey()
+    const supplier = input.supplier || {}
+    const code = input.order?.code || input.order?.import_code || orderId
+
+    const preparedNew = rawLines.map((line, index) => {
+      const product = ensureProduct(line.product)
+      const warehouse = ensureWarehouse(line.warehouse, 'kho nhập')
+      const quantity = ensurePositiveQuantity(line.quantity)
+      const existing = oldItems[index]
+      return {
+        ...line,
+        product,
+        warehouse,
+        quantity,
+        itemId: existing?.id || safeDocId(`${orderId}__${index + 1}`, 'import_item'),
+        movementId: safeDocId(`import_update_apply:${orderId}:${index + 1}:${makeId('mv')}`, 'movement')
+      }
+    })
+
+    const balanceDeltas = new Map<string, BalanceDelta>()
+    for (const item of oldItems) {
+      const product = itemProduct(item)
+      const warehouse = itemWarehouse(item)
+      const id = await inventoryBalanceId(product.id, warehouse.id, item.logo)
+      applyDelta(balanceDeltas, {
+        id,
+        delta: -toNumber(item.quantity),
+        product,
+        warehouse,
+        logo: normalizeLogo(item.logo),
+        unit: item.unit || product.unit || '',
+        movementDate: importDate
+      })
+    }
+    for (const line of preparedNew) {
+      const id = await inventoryBalanceId(line.product.id, line.warehouse.id, line.logo)
+      applyDelta(balanceDeltas, {
+        id,
+        delta: line.quantity,
+        product: line.product,
+        warehouse: line.warehouse,
+        logo: normalizeLogo(line.logo),
+        unit: line.unit || line.product.unit || '',
+        movementDate: importDate
+      })
+    }
+
+    await runTransaction(db, async tx => {
+      const balanceSnaps = new Map<string, any>()
+      for (const delta of balanceDeltas.values()) {
+        balanceSnaps.set(delta.id, await tx.get(doc(db, 'inventory_balances', delta.id)))
+      }
+      for (const delta of balanceDeltas.values()) {
+        const snap = balanceSnaps.get(delta.id)
+        const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
+        const next = current + delta.delta
+        if (next < 0) {
+          throw new Error(`Sửa phiếu nhập làm tồn âm: ${productCode(delta.product)} - ${productName(delta.product)} / ${warehouseName(delta.warehouse)}${delta.logo ? ` / ${delta.logo}` : ''}. Tồn hiện tại ${current}, thay đổi ${delta.delta}.`)
+        }
+      }
+
+      tx.update(doc(db, 'import_orders', orderId), {
+        import_date: importDate,
+        supplier_id: supplier.id || '',
+        supplier_name: supplier.name || supplier.supplier_name || '',
+        note: input.note || '',
+        updated_by: updatedBy,
+        updated_at: serverTimestamp()
+      })
+
+      oldItems.forEach(item => {
+        const product = itemProduct(item)
+        const warehouse = itemWarehouse(item)
+        const movementId = safeDocId(`import_update_reverse:${orderId}:${item.id}:${makeId('mv')}`, 'movement')
+        tx.set(doc(db, 'stock_movements', movementId), movementPayload({
+          id: movementId,
+          type: 'import_update_reverse',
+          direction: 'out',
+          quantity: -toNumber(item.quantity),
+          product,
+          warehouse,
+          logo: item.logo,
+          unit: item.unit,
+          movementDate: importDate,
+          sourceCollection: 'import_orders',
+          sourceDocId: orderId,
+          sourceItemId: item.id,
+          sourceCode: code,
+          reason: 'Đảo tồn trước khi sửa phiếu nhập',
+          createdBy: updatedBy
+        }))
+      })
+
+      preparedNew.forEach((line, index) => {
+        const itemPayload = {
+          id: line.itemId,
+          import_order_id: orderId,
+          product_id: line.product.id,
+          product_code: productCode(line.product),
+          product_name: productName(line.product),
+          warehouse_id: line.warehouse.id,
+          warehouse_name: warehouseName(line.warehouse),
+          logo: normalizeLogo(line.logo),
+          quantity: line.quantity,
+          unit: line.unit || line.product.unit || '',
+          note: line.note || '',
+          legacy_line_key: oldItems[index]?.legacy_line_key || '',
+          status: 'completed',
+          active: true,
+          deleted: false,
+          updated_by: updatedBy,
+          updated_at: serverTimestamp(),
+          source: oldItems[index]?.source || input.order?.source || 'nuxt'
+        }
+        if (oldItems[index]?.id) tx.update(doc(db, 'import_order_items', line.itemId), itemPayload)
+        else tx.set(doc(db, 'import_order_items', line.itemId), {
+          ...itemPayload,
+          created_by: updatedBy,
+          created_at: serverTimestamp()
+        })
+        tx.set(doc(db, 'stock_movements', line.movementId), movementPayload({
+          id: line.movementId,
+          type: 'import_update_apply',
+          direction: 'in',
+          quantity: line.quantity,
+          product: line.product,
+          warehouse: line.warehouse,
+          logo: line.logo,
+          unit: line.unit,
+          movementDate: importDate,
+          sourceCollection: 'import_orders',
+          sourceDocId: orderId,
+          sourceItemId: line.itemId,
+          sourceCode: code,
+          reason: 'Áp tồn sau khi sửa phiếu nhập',
+          createdBy: updatedBy
+        }))
+      })
+
+      oldItems.slice(preparedNew.length).forEach(item => {
+        tx.update(doc(db, 'import_order_items', item.id), {
+          deleted: true,
+          active: false,
+          status: 'deleted',
+          deleted_at: serverTimestamp(),
+          updated_by: updatedBy,
+          updated_at: serverTimestamp()
+        })
+      })
+
+      for (const delta of balanceDeltas.values()) {
+        const snap = balanceSnaps.get(delta.id)
+        const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
+        const next = current + delta.delta
+        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next), { merge: true })
+      }
+
+      tx.set(doc(collection(db, 'activity_logs')), activity('import_orders', 'update', code, {
+        id: orderId,
+        code,
+        import_date: importDate,
+        supplier_id: supplier.id || '',
+        supplier_name: supplier.name || supplier.supplier_name || '',
+        line_count: preparedNew.length
+      }))
+    })
+
+    invalidateWarehouseCaches()
+    return { id: orderId, code }
+  }
+
+  async function deleteImportOrder(input: { order: any; existingItems: any[]; reason?: string }) {
+    const deletedBy = email()
+    if (!deletedBy) throw new Error('Bạn chưa đăng nhập.')
+    const orderId = normalizeId(input.order?.id)
+    if (!orderId) throw new Error('Thiếu ID phiếu nhập cần xóa.')
+    const oldItems = (input.existingItems || []).filter(item => item && item.deleted !== true && item.active !== false)
+    const importDate = input.order?.import_date || todayKey()
+    const code = input.order?.code || input.order?.import_code || orderId
+
+    const balanceDeltas = new Map<string, BalanceDelta>()
+    for (const item of oldItems) {
+      const product = itemProduct(item)
+      const warehouse = itemWarehouse(item)
+      const id = await inventoryBalanceId(product.id, warehouse.id, item.logo)
+      applyDelta(balanceDeltas, {
+        id,
+        delta: -toNumber(item.quantity),
+        product,
+        warehouse,
+        logo: normalizeLogo(item.logo),
+        unit: item.unit || product.unit || '',
+        movementDate: importDate
+      })
+    }
+
+    await runTransaction(db, async tx => {
+      const balanceSnaps = new Map<string, any>()
+      for (const delta of balanceDeltas.values()) {
+        balanceSnaps.set(delta.id, await tx.get(doc(db, 'inventory_balances', delta.id)))
+      }
+      for (const delta of balanceDeltas.values()) {
+        const snap = balanceSnaps.get(delta.id)
+        const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
+        const next = current + delta.delta
+        if (next < 0) {
+          throw new Error(`Xóa phiếu nhập làm tồn âm: ${productCode(delta.product)} - ${productName(delta.product)} / ${warehouseName(delta.warehouse)}${delta.logo ? ` / ${delta.logo}` : ''}. Tồn hiện tại ${current}, cần đảo ${Math.abs(delta.delta)}.`)
+        }
+      }
+
+      tx.update(doc(db, 'import_orders', orderId), {
+        deleted: true,
+        active: false,
+        status: 'deleted',
+        deleted_at: serverTimestamp(),
+        updated_by: deletedBy,
+        updated_at: serverTimestamp()
+      })
+
+      oldItems.forEach(item => {
+        const product = itemProduct(item)
+        const warehouse = itemWarehouse(item)
+        const movementId = safeDocId(`import_delete_reverse:${orderId}:${item.id}:${makeId('mv')}`, 'movement')
+        tx.update(doc(db, 'import_order_items', item.id), {
+          deleted: true,
+          active: false,
+          status: 'deleted',
+          deleted_at: serverTimestamp(),
+          updated_by: deletedBy,
+          updated_at: serverTimestamp()
+        })
+        tx.set(doc(db, 'stock_movements', movementId), movementPayload({
+          id: movementId,
+          type: 'import_delete_reverse',
+          direction: 'out',
+          quantity: -toNumber(item.quantity),
+          product,
+          warehouse,
+          logo: item.logo,
+          unit: item.unit,
+          movementDate: importDate,
+          sourceCollection: 'import_orders',
+          sourceDocId: orderId,
+          sourceItemId: item.id,
+          sourceCode: code,
+          reason: input.reason || 'Đảo tồn do xóa phiếu nhập',
+          createdBy: deletedBy
+        }))
+      })
+
+      for (const delta of balanceDeltas.values()) {
+        const snap = balanceSnaps.get(delta.id)
+        const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
+        const next = current + delta.delta
+        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next), { merge: true })
+      }
+
+      tx.set(doc(collection(db, 'activity_logs')), activity('import_orders', 'delete', code, {
+        id: orderId,
+        code,
+        reason: input.reason || ''
+      }))
+    })
+
+    invalidateWarehouseCaches()
+    return { id: orderId, code }
+  }
+
   async function createExportOrder(input: {
     export_date?: string
     destination_type?: 'customer' | 'warehouse' | string
@@ -704,8 +1012,9 @@ export function useWarehouseTransactions() {
     const timeline = Array.isArray(input.timeline) ? input.timeline : []
     const nextTimeline = [...timeline, {
       action: 'warehouse_export',
-      title: 'Warehouse cho xuất kho trên Firestore',
+      title: 'Kho cho xuất kho',
       actor: handledBy,
+      actor_name: appUser.value?.display_name || handledBy,
       time: handledAt,
       status: 'da_xuat',
       note: input.note || ''
@@ -847,6 +1156,8 @@ export function useWarehouseTransactions() {
 
   return {
     createImportOrder,
+    updateImportOrder,
+    deleteImportOrder,
     createExportOrder,
     createInventoryAdjustment,
     processExportRequestToExportOrder,

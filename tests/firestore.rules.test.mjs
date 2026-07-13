@@ -28,8 +28,13 @@ const LEGACY = 'legacy@example.com'
 const ROLE_ADMIN = 'roleadmin@example.com'
 const EDITOR = 'editor@example.com'
 const STOCK = 'stock@example.com'
+const STOCK_DELETE = 'stockdelete@example.com'
 const CATALOG = 'catalog@example.com'
 const INVENTORY_VIEWER = 'inventoryview@example.com'
+const WAREHOUSE_PAGE = 'warehousepage@example.com'
+const WAREHOUSE_ACCEPT = 'warehouseaccept@example.com'
+const WAREHOUSE_REJECT = 'warehousereject@example.com'
+const WAREHOUSE_RELEASE = 'warehouserelease@example.com'
 let env
 
 const userPermissions = [
@@ -71,6 +76,30 @@ async function seed() {
       setDoc(doc(db, 'users', B), { email: B, active: true, deleted: false, permissions_flat: userPermissions }),
       setDoc(doc(db, 'users', ADMIN), { email: ADMIN, active: true, deleted: false, is_admin: true, permissions_flat: ['*'] }),
       setDoc(doc(db, 'users', WAREHOUSE), { email: WAREHOUSE, active: true, deleted: false, permissions_flat: ['export_requests.process'] }),
+      setDoc(doc(db, 'users', WAREHOUSE_PAGE), {
+        email: WAREHOUSE_PAGE,
+        active: true,
+        deleted: false,
+        permissions_flat: ['page.warehouse_export_requests']
+      }),
+      setDoc(doc(db, 'users', WAREHOUSE_ACCEPT), {
+        email: WAREHOUSE_ACCEPT,
+        active: true,
+        deleted: false,
+        permissions_flat: ['page.warehouse_export_requests', 'export_requests.accept']
+      }),
+      setDoc(doc(db, 'users', WAREHOUSE_REJECT), {
+        email: WAREHOUSE_REJECT,
+        active: true,
+        deleted: false,
+        permissions_flat: ['page.warehouse_export_requests', 'export_requests.reject']
+      }),
+      setDoc(doc(db, 'users', WAREHOUSE_RELEASE), {
+        email: WAREHOUSE_RELEASE,
+        active: true,
+        deleted: false,
+        permissions_flat: ['page.warehouse_export_requests', 'export_requests.release']
+      }),
       setDoc(doc(db, 'users', LEGACY), { email: LEGACY, status: 'Hoạt động', deleted: false, permissions_flat: ['orders.view'] }),
       setDoc(doc(db, 'users', ROLE_ADMIN), { email: ROLE_ADMIN, active: true, deleted: false, role: 'Admin' }),
       setDoc(doc(db, 'users', EDITOR), { email: EDITOR, active: true, deleted: false, permissions_flat: ['orders.view', 'orders.edit'] }),
@@ -95,11 +124,17 @@ async function seed() {
         active: true,
         deleted: false,
         permissions_flat: [
-          'import.view', 'import.create', 'import.edit',
+          'import.view', 'import.create', 'import.edit', 'import.delete',
           'export.view', 'export.create', 'export.edit',
           'inventory.view', 'inventory.adjust', 'stock_movements.view',
           'export_requests.process'
         ]
+      }),
+      setDoc(doc(db, 'users', STOCK_DELETE), {
+        email: STOCK_DELETE,
+        active: true,
+        deleted: false,
+        permissions_flat: ['import.delete']
       }),
       setDoc(doc(db, 'users', CATALOG), {
         email: CATALOG,
@@ -218,6 +253,123 @@ test('Warehouse chỉ sửa field xử lý, không sửa payload phiếu', async
   await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a'), { payload_json: '{"forged":true}' }))
   await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
     status: 'da_tiep_nhan', warehouse_handled_by: A, updated_at: 'now'
+  }))
+})
+
+
+test('Quyền trang Kho xử lý YC xuất chỉ được đọc, không được xử lý', async () => {
+  const db = env.authenticatedContext(WAREHOUSE_PAGE, { email: WAREHOUSE_PAGE }).firestore()
+
+  await assertSucceeds(getDoc(doc(db, 'order_export_requests', 'export-a')))
+  await assertSucceeds(getDoc(doc(db, 'warehouses', 'wh-a')))
+  await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
+    status: 'da_tiep_nhan',
+    warehouse_handled_by: WAREHOUSE_PAGE,
+    updated_at: 'now'
+  }))
+})
+
+test('Quyền tiếp nhận chỉ được tiếp nhận, không được từ chối hoặc cho xuất', async () => {
+  const db = env.authenticatedContext(WAREHOUSE_ACCEPT, { email: WAREHOUSE_ACCEPT }).firestore()
+
+  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
+    status: 'da_tiep_nhan',
+    warehouse_handled_by: WAREHOUSE_ACCEPT,
+    updated_at: 'now'
+  }))
+  await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
+    status: 'tu_choi',
+    warehouse_handled_by: WAREHOUSE_ACCEPT,
+    updated_at: 'now'
+  }))
+  await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
+    status: 'da_xuat',
+    warehouse_handled_by: WAREHOUSE_ACCEPT,
+    export_order_id: 'export-real-from-request',
+    updated_at: 'now'
+  }))
+})
+
+test('Quyền từ chối chỉ được từ chối, không được tiếp nhận hoặc cho xuất', async () => {
+  const db = env.authenticatedContext(WAREHOUSE_REJECT, { email: WAREHOUSE_REJECT }).firestore()
+
+  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
+    status: 'tu_choi',
+    warehouse_handled_by: WAREHOUSE_REJECT,
+    updated_at: 'now'
+  }))
+  await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
+    status: 'da_tiep_nhan',
+    warehouse_handled_by: WAREHOUSE_REJECT,
+    updated_at: 'now'
+  }))
+  await assertFails(setDoc(doc(db, 'export_orders', 'export-by-reject-user'), {
+    id: 'export-by-reject-user',
+    code: 'PX-REJECT',
+    created_by: WAREHOUSE_REJECT,
+    created_at: 'now',
+    updated_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+})
+
+test('Quyền cho xuất được tạo phiếu xuất thật, ghi tồn và cập nhật request/order', async () => {
+  const db = env.authenticatedContext(WAREHOUSE_RELEASE, { email: WAREHOUSE_RELEASE }).firestore()
+
+  await assertSucceeds(setDoc(doc(db, 'export_orders', 'export-real-from-request'), {
+    id: 'export-real-from-request',
+    code: 'PX-YC-001',
+    source_request_id: 'export-a',
+    created_by: WAREHOUSE_RELEASE,
+    created_at: 'now',
+    updated_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+  await assertSucceeds(setDoc(doc(db, 'export_order_items', 'export-real-from-request-item'), {
+    export_order_id: 'export-real-from-request',
+    product_id: 'product-existing',
+    from_warehouse_id: 'wh-a',
+    quantity: 2,
+    created_by: WAREHOUSE_RELEASE,
+    created_at: 'now',
+    updated_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+  await assertSucceeds(setDoc(doc(db, 'stock_movements', 'move-release'), {
+    id: 'move-release',
+    movement_type: 'export_customer',
+    direction: 'out',
+    product_id: 'product-existing',
+    warehouse_id: 'wh-a',
+    quantity: -2,
+    created_by: WAREHOUSE_RELEASE,
+    created_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+  await assertSucceeds(updateDoc(doc(db, 'inventory_balances', 'wh-a__product-existing__no_logo'), {
+    quantity: 3,
+    updated_at: 'now'
+  }))
+  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
+    status: 'da_xuat',
+    warehouse_handled_by: WAREHOUSE_RELEASE,
+    export_order_id: 'export-real-from-request',
+    warehouse_export_order_id: 'export-real-from-request',
+    exported_at: 'now',
+    updated_at: 'now'
+  }))
+  await assertSucceeds(updateDoc(doc(db, 'orders', 'order-a'), {
+    warehouse_fulfillment_status: 'da_xuat_1_phan',
+    warehouse_request_status: 'da_xuat',
+    updated_at: 'now'
   }))
 })
 
@@ -564,6 +716,46 @@ test('Nhập kho Firestore: chỉ user có import.create được tạo phiếu 
     active: true,
     deleted: false,
     source: 'nuxt'
+  }))
+})
+
+test('Xóa mềm phiếu nhập Firestore: import.delete được đảo tồn bằng movement và balance', async () => {
+  const deleteDb = env.authenticatedContext(STOCK_DELETE, { email: STOCK_DELETE }).firestore()
+
+  await assertSucceeds(updateDoc(doc(deleteDb, 'import_orders', 'import-a'), {
+    deleted: true,
+    active: false,
+    status: 'deleted',
+    deleted_at: 'now',
+    updated_at: 'now'
+  }))
+
+  await assertSucceeds(updateDoc(doc(deleteDb, 'import_order_items', 'import-item-a'), {
+    deleted: true,
+    active: false,
+    status: 'deleted',
+    deleted_at: 'now',
+    updated_at: 'now'
+  }))
+
+  await assertSucceeds(setDoc(doc(deleteDb, 'stock_movements', 'move-import-delete'), {
+    id: 'move-import-delete',
+    movement_type: 'import_delete_reverse',
+    direction: 'out',
+    product_id: 'product-existing',
+    warehouse_id: 'wh-a',
+    logo: '',
+    quantity: -5,
+    created_by: STOCK_DELETE,
+    created_at: 'now',
+    active: true,
+    deleted: false,
+    source: 'nuxt'
+  }))
+
+  await assertSucceeds(updateDoc(doc(deleteDb, 'inventory_balances', 'wh-a__product-existing__no_logo'), {
+    quantity: 5,
+    updated_at: 'now'
   }))
 })
 

@@ -1,21 +1,29 @@
 <script setup lang="ts">
+import { collection, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
 import type { SupplierDoc, UnitDoc, WarehouseDoc } from '~/types/models'
-import { formatDateTime, normalizeText } from '~/utils/format'
+import { formatDateTime, makeId, normalizeText } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
 type TabKey = 'warehouses' | 'suppliers' | 'units'
 
-const { loadWarehouses, loadSuppliers, loadUnits } = useScopedQueries()
+const { db } = useFirebaseServices()
+const { appUser, hasPermission } = useAuth()
+const { loadWarehouses, loadSuppliers, loadUnits, invalidateScopedCache } = useScopedQueries()
 const { showToast } = useUi()
+const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
 const loading = ref(false)
+const saving = ref(false)
 const activeTab = ref<TabKey>('warehouses')
 const search = ref('')
 const warehouses = ref<WarehouseDoc[]>([])
 const suppliers = ref<SupplierDoc[]>([])
 const units = ref<UnitDoc[]>([])
 const selected = ref<Record<string, any> | null>(null)
+const editing = ref<Record<string, any> | null>(null)
 const showDetailModal = ref(false)
+const showFormModal = ref(false)
+const form = reactive<Record<string, any>>({})
 
 const tabItems: Array<{ key: TabKey; label: string }> = [
   { key: 'warehouses', label: 'Kho' },
@@ -47,14 +55,141 @@ const filtered = computed(() => {
   ].join(' ')).includes(keyword))
 })
 
+const canManageCurrentTab = computed(() => {
+  if (hasPermission('*')) return true
+  if (activeTab.value === 'warehouses') return hasPermission('warehouses.manage')
+  if (activeTab.value === 'suppliers') return hasPermission('suppliers.manage')
+  return hasPermission('units.manage')
+})
+
+const currentCollection = computed(() => activeTab.value)
+const currentLabel = computed(() => tabItems.find(tab => tab.key === activeTab.value)?.label || 'Danh mục')
+const formTitle = computed(() => `${editing.value ? 'Sửa' : 'Thêm'} ${currentLabel.value.toLowerCase()}`)
+const formSaveLabel = computed(() => editing.value ? 'Lưu' : 'Thêm')
+
 function openDetail(row: Record<string, any>) {
   selected.value = row
   showDetailModal.value = true
 }
 
 function statusLabel(row: Record<string, any>) {
+  if (row.deleted === true) return 'deleted'
   if (row.active === false) return 'inactive'
   return row.status || 'active'
+}
+
+function resetForm(row: Record<string, any> = {}) {
+  Object.keys(form).forEach(key => delete form[key])
+  Object.assign(form, {
+    warehouse_code: row.warehouse_code || '',
+    supplier_code: row.supplier_code || '',
+    unit_code: row.unit_code || '',
+    name: row.name || '',
+    phone: row.phone || '',
+    email: row.email || '',
+    address: row.address || '',
+    manager: row.manager || '',
+    note: row.note || '',
+    status: row.status || 'active',
+    active: row.active !== false
+  })
+}
+
+function openCreateModal() {
+  editing.value = null
+  resetForm()
+  showFormModal.value = true
+}
+
+function openEditModal(row: Record<string, any>) {
+  editing.value = row
+  resetForm(row)
+  showFormModal.value = true
+}
+
+function basePayload() {
+  if (!String(form.name || '').trim()) throw new Error('Vui lòng nhập tên danh mục.')
+  const payload: Record<string, any> = {
+    name: String(form.name || '').trim(),
+    note: form.note || '',
+    status: form.status || 'active',
+    active: form.active !== false,
+    deleted: false,
+    updated_at: serverTimestamp()
+  }
+  if (activeTab.value === 'warehouses') {
+    payload.warehouse_code = form.warehouse_code || ''
+    payload.address = form.address || ''
+    payload.phone = form.phone || ''
+    payload.manager = form.manager || ''
+  }
+  if (activeTab.value === 'suppliers') {
+    payload.supplier_code = form.supplier_code || ''
+    payload.phone = form.phone || ''
+    payload.email = form.email || ''
+    payload.address = form.address || ''
+  }
+  if (activeTab.value === 'units') {
+    payload.unit_code = form.unit_code || ''
+  }
+  return payload
+}
+
+async function saveCatalog() {
+  saving.value = true
+  try {
+    const payload = basePayload()
+    if (editing.value?.id) {
+      await updateDoc(doc(db, currentCollection.value, editing.value.id), payload)
+      showToast(`Đã sửa ${currentLabel.value.toLowerCase()}.`, 'success')
+    } else {
+      const idPrefix = activeTab.value === 'warehouses' ? 'wh' : activeTab.value === 'suppliers' ? 'sup' : 'unit'
+      const id = makeId(idPrefix)
+      await setDoc(doc(collection(db, currentCollection.value), id), {
+        ...payload,
+        id,
+        legacy_id: '',
+        created_by: appUser.value?.email || '',
+        created_at: serverTimestamp(),
+        source: 'nuxt'
+      })
+      showToast(`Đã thêm ${currentLabel.value.toLowerCase()}.`, 'success')
+    }
+    invalidateScopedCache(currentCollection.value)
+    showFormModal.value = false
+    editing.value = null
+    await loadRows(true)
+  } catch (error) {
+    showToast(reportFirebaseError(error, `Không lưu được ${currentLabel.value.toLowerCase()}.`), 'error')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function removeCatalog(row: Record<string, any>) {
+  const confirmed = await askConfirm({
+    title: `Xóa ${currentLabel.value.toLowerCase()}`,
+    message: `Bạn chắc chắn muốn xóa mềm ${row.name || row.id}?`,
+    confirmLabel: 'Xóa'
+  })
+  if (!confirmed) return
+  saving.value = true
+  try {
+    await updateDoc(doc(db, currentCollection.value, row.id), {
+      deleted: true,
+      active: false,
+      status: 'deleted',
+      deleted_at: serverTimestamp(),
+      updated_at: serverTimestamp()
+    })
+    invalidateScopedCache(currentCollection.value)
+    showToast(`Đã xóa ${currentLabel.value.toLowerCase()}.`, 'success')
+    await loadRows(true)
+  } catch (error) {
+    showToast(reportFirebaseError(error, `Không xóa được ${currentLabel.value.toLowerCase()}.`), 'error')
+  } finally {
+    saving.value = false
+  }
 }
 
 async function loadRows(force = false) {
@@ -81,6 +216,7 @@ onMounted(() => loadRows())
 <template>
   <AppShell>
     <PageHeader title="Danh mục kho" subtitle="Kho, nhà cung cấp, đơn vị đã migrate từ Warehouse Sheet sang Firestore">
+      <button v-if="canManageCurrentTab" class="btn primary" @click="openCreateModal">+ Thêm {{ currentLabel.toLowerCase() }}</button>
       <button class="btn" @click="loadRows(true)">Làm mới</button>
     </PageHeader>
 
@@ -100,7 +236,7 @@ onMounted(() => loadRows())
 
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
-        <table v-if="activeTab === 'warehouses'" style="min-width: 980px">
+        <table v-if="activeTab === 'warehouses'" style="min-width: 1080px">
           <thead><tr><th>Mã kho</th><th>Tên kho</th><th>Địa chỉ</th><th>Quản lý/SĐT</th><th>Nguồn</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
@@ -110,13 +246,13 @@ onMounted(() => loadRows())
               <td>{{ row.manager || row.phone || '-' }}</td>
               <td>{{ row.source || '-' }}</td>
               <td><span class="badge blue">{{ statusLabel(row) }}</span></td>
-              <td><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button></td>
+              <td><div class="action-buttons"><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button><button v-if="canManageCurrentTab" class="btn-sm" @click="openEditModal(row)">Sửa</button><button v-if="canManageCurrentTab" class="btn-sm btn-delete" @click="removeCatalog(row)">Xóa</button></div></td>
             </tr>
             <tr v-if="!filtered.length"><td colspan="7" class="empty">Không có danh mục kho.</td></tr>
           </tbody>
         </table>
 
-        <table v-else-if="activeTab === 'suppliers'" style="min-width: 980px">
+        <table v-else-if="activeTab === 'suppliers'" style="min-width: 1080px">
           <thead><tr><th>Mã NCC</th><th>Tên nhà cung cấp</th><th>SĐT</th><th>Email</th><th>Địa chỉ</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
@@ -126,13 +262,13 @@ onMounted(() => loadRows())
               <td>{{ row.email || '-' }}</td>
               <td>{{ row.address || '-' }}</td>
               <td><span class="badge blue">{{ statusLabel(row) }}</span></td>
-              <td><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button></td>
+              <td><div class="action-buttons"><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button><button v-if="canManageCurrentTab" class="btn-sm" @click="openEditModal(row)">Sửa</button><button v-if="canManageCurrentTab" class="btn-sm btn-delete" @click="removeCatalog(row)">Xóa</button></div></td>
             </tr>
             <tr v-if="!filtered.length"><td colspan="7" class="empty">Không có nhà cung cấp.</td></tr>
           </tbody>
         </table>
 
-        <table v-else style="min-width: 760px">
+        <table v-else style="min-width: 860px">
           <thead><tr><th>Mã đơn vị</th><th>Tên đơn vị</th><th>Nguồn</th><th>Cập nhật</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
@@ -141,7 +277,7 @@ onMounted(() => loadRows())
               <td>{{ row.source || '-' }}</td>
               <td>{{ formatDateTime(row.updated_at || row.created_at) }}</td>
               <td><span class="badge blue">{{ statusLabel(row) }}</span></td>
-              <td><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button></td>
+              <td><div class="action-buttons"><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button><button v-if="canManageCurrentTab" class="btn-sm" @click="openEditModal(row)">Sửa</button><button v-if="canManageCurrentTab" class="btn-sm btn-delete" @click="removeCatalog(row)">Xóa</button></div></td>
             </tr>
             <tr v-if="!filtered.length"><td colspan="6" class="empty">Không có đơn vị.</td></tr>
           </tbody>
@@ -149,12 +285,33 @@ onMounted(() => loadRows())
       </div>
     </div>
 
+    <BaseModal v-if="showFormModal" :title="formTitle" size="lg" :loading="saving" :save-label="formSaveLabel" @close="showFormModal = false" @save="saveCatalog">
+      <div class="form-grid">
+        <div v-if="activeTab === 'warehouses'" class="form-group"><label>Mã kho</label><input v-model="form.warehouse_code" class="input" /></div>
+        <div v-if="activeTab === 'suppliers'" class="form-group"><label>Mã NCC</label><input v-model="form.supplier_code" class="input" /></div>
+        <div v-if="activeTab === 'units'" class="form-group"><label>Mã đơn vị</label><input v-model="form.unit_code" class="input" /></div>
+        <div class="form-group"><label>Tên</label><input v-model="form.name" class="input" /></div>
+        <div v-if="activeTab !== 'units'" class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
+        <div v-if="activeTab === 'suppliers'" class="form-group"><label>Email</label><input v-model="form.email" class="input" /></div>
+        <div v-if="activeTab === 'warehouses'" class="form-group"><label>Quản lý</label><input v-model="form.manager" class="input" /></div>
+        <div v-if="activeTab !== 'units'" class="form-group"><label>Địa chỉ</label><input v-model="form.address" class="input" /></div>
+        <div class="form-group"><label>Trạng thái</label><select v-model="form.status" class="select"><option value="active">active</option><option value="inactive">inactive</option></select></div>
+      </div>
+      <div class="form-group" style="margin-top:12px"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
+    </BaseModal>
+
     <RecordDetailModal
       v-if="showDetailModal && selected"
       title="Chi tiết danh mục kho"
       :record="selected"
       :field-order="['id','legacy_id','warehouse_code','supplier_code','unit_code','name','phone','email','address','manager','note','created_by','created_at','updated_at','source','status','active','deleted']"
       @close="showDetailModal = false"
+    />
+
+    <ConfirmModal
+      v-bind="confirmState"
+      @cancel="resolveConfirm(false)"
+      @confirm="resolveConfirm(true)"
     />
   </AppShell>
 </template>

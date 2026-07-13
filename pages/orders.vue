@@ -12,7 +12,7 @@ const { invalidateScopedCache } = useRepo()
 const { loadScopedOrders, loadScopedOrderItems, loadScopedPayments, loadScopedExportRequests, loadScopedCustomers, loadProducts } = useScopedQueries()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
-const { buildFulfillmentRows, orderSummary } = useWarehouseLogic()
+const { buildFulfillmentRows, orderSummary, requestLineProgress } = useWarehouseLogic()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -41,6 +41,57 @@ const selectedDetailRequests = computed(() => selectedDetail.value
   ? exportRequests.value.filter(request => request.order_id === selectedDetail.value?.id && isActive(request))
   : [])
 const selectedDetailProgress = computed(() => buildFulfillmentRows(selectedDetailItems.value, selectedDetailRequests.value))
+const selectedDetailOrderLines = computed(() => selectedDetailItems.value.flatMap((item: any) => {
+  const logos = safeJsonParse(item.logo_json, [])
+  if (Array.isArray(logos) && logos.length) {
+    return logos.map((line: any) => {
+      const quantity = toNumber(line.quantity ?? line.qty)
+      const unitPrice = toNumber(line.unit_price ?? item.unit_price)
+      return {
+        product_code: item.product_code || '',
+        product_name: item.product_name || '',
+        logo: line.logo || '',
+        unit: item.unit || '',
+        quantity,
+        unit_price: unitPrice,
+        line_total: toNumber(line.line_total) || round2(quantity * unitPrice)
+      }
+    })
+  }
+  const quantity = toNumber(item.quantity)
+  const unitPrice = toNumber(item.unit_price)
+  return [{
+    product_code: item.product_code || '',
+    product_name: item.product_name || '',
+    logo: '',
+    unit: item.unit || '',
+    quantity,
+    unit_price: unitPrice,
+    line_total: toNumber(item.line_total) || round2(quantity * unitPrice)
+  }]
+}))
+
+const selectedDetailRequestRows = computed(() => selectedDetailRequests.value.map((request: any) => {
+  const lines = requestLineProgress(request)
+  return {
+    ...request,
+    total_requested_qty: lines.reduce((sum: number, line: any) => sum + toNumber(line.requested_qty), 0),
+    total_processed_qty: lines.reduce((sum: number, line: any) => sum + toNumber(line.processed_qty), 0),
+    total_exported_qty: lines.reduce((sum: number, line: any) => sum + toNumber(line.exported_qty), 0),
+    line_count: lines.length
+  }
+}))
+
+const selectedDetailExportLineRows = computed(() => selectedDetailRequests.value.flatMap((request: any) =>
+  requestLineProgress(request).map((line: any) => ({
+    ...line,
+    request_id: request.request_id || request.id,
+    request_status: request.status || '',
+    request_time: request.requested_at || request.created_at,
+    warehouse_export_code: request.warehouse_export_code || '',
+    warehouse_note: request.warehouse_note || ''
+  }))
+))
 const customerOptions = computed(() => customers.value.map(customer => ({
   value: customer.id,
   label: `${customer.customer_name || 'Khách chưa tên'}${customer.phone ? ` - ${customer.phone}` : ''}`,
@@ -64,6 +115,18 @@ const orderDetailLabels: Record<string, string> = {
   debt_amount: 'Công nợ', payment_status: 'Trạng thái thanh toán', invoice_status: 'Trạng thái hóa đơn',
   warehouse_fulfillment_status: 'Trạng thái xuất kho', warehouse_request_status: 'Trạng thái yêu cầu kho',
   items_count: 'Số dòng sản phẩm'
+}
+
+function warehouseStatusLabel(status: any) {
+  return ({
+    cho_xu_ly: 'Chờ xử lý',
+    dang_xu_ly: 'Đang xử lý',
+    da_tiep_nhan: 'Đã tiếp nhận',
+    cho_xuat_kho: 'Chờ xuất kho',
+    da_xuat: 'Đã xuất kho',
+    tu_choi: 'Từ chối',
+    loi: 'Lỗi xử lý'
+  } as any)[status] || status || '-'
 }
 
 async function loadRows(force = false) {
@@ -739,6 +802,65 @@ onMounted(loadRows)
               <td><span class="badge yellow">{{ line.status }}</span></td>
             </tr>
             <tr v-if="!selectedDetailProgress.length"><td colspan="9" class="empty">Đơn hàng chưa có sản phẩm hợp lệ.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin-top:20px">Các lần yêu cầu/xuất kho</h3>
+      <div class="table-wrap">
+        <table style="min-width:980px">
+          <thead><tr><th>Mã yêu cầu</th><th>Ngày yêu cầu</th><th>Trạng thái</th><th>Phiếu kho</th><th>Số dòng</th><th>SL yêu cầu</th><th>Đã xử lý</th><th>Đã xuất</th></tr></thead>
+          <tbody>
+            <tr v-for="request in selectedDetailRequestRows" :key="request.id">
+              <td><b>{{ request.request_id || request.id }}</b></td>
+              <td>{{ formatDateTime(request.requested_at || request.created_at) }}</td>
+              <td>{{ warehouseStatusLabel(request.status) }}</td>
+              <td>{{ request.warehouse_export_code || '-' }}</td>
+              <td>{{ request.line_count }}</td>
+              <td>{{ request.total_requested_qty }}</td>
+              <td>{{ request.total_processed_qty }}</td>
+              <td>{{ request.total_exported_qty }}</td>
+            </tr>
+            <tr v-if="!selectedDetailRequestRows.length"><td colspan="8" class="empty">Chưa có yêu cầu xuất kho nào.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin-top:20px">Chi tiết từng lần xuất theo sản phẩm</h3>
+      <div class="table-wrap">
+        <table style="min-width:1080px">
+          <thead><tr><th>Mã yêu cầu</th><th>Sản phẩm</th><th>Logo</th><th>Đơn vị</th><th>SL phiếu</th><th>Đã xử lý</th><th>Đã xuất</th><th>Phiếu kho</th><th>Ghi chú kho</th></tr></thead>
+          <tbody>
+            <tr v-for="(line, index) in selectedDetailExportLineRows" :key="`${line.request_id}|${line.product_code}|${line.logo}|${index}`">
+              <td><b>{{ line.request_id }}</b><div class="small subtle">{{ warehouseStatusLabel(line.request_status) }}</div></td>
+              <td><b>{{ line.product_name }}</b><div class="small subtle">{{ line.product_code }}</div></td>
+              <td>{{ line.logo || '-' }}</td>
+              <td>{{ line.unit || '-' }}</td>
+              <td>{{ line.requested_qty }}</td>
+              <td>{{ line.processed_qty }}</td>
+              <td>{{ line.exported_qty }}</td>
+              <td>{{ line.warehouse_export_code || '-' }}</td>
+              <td>{{ line.warehouse_note || '-' }}</td>
+            </tr>
+            <tr v-if="!selectedDetailExportLineRows.length"><td colspan="9" class="empty">Chưa có dòng yêu cầu/xuất kho.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin-top:20px">Sản phẩm trong đơn hàng</h3>
+      <div class="table-wrap">
+        <table style="min-width:860px">
+          <thead><tr><th>Sản phẩm</th><th>Logo</th><th>Đơn vị</th><th>Số lượng đặt</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+          <tbody>
+            <tr v-for="(line, index) in selectedDetailOrderLines" :key="`${line.product_code}|${line.logo}|${index}`">
+              <td><b>{{ line.product_name }}</b><div class="small subtle">{{ line.product_code }}</div></td>
+              <td>{{ line.logo || '-' }}</td>
+              <td>{{ line.unit || '-' }}</td>
+              <td>{{ line.quantity }}</td>
+              <td>{{ money(line.unit_price) }}</td>
+              <td>{{ money(line.line_total) }}</td>
+            </tr>
+            <tr v-if="!selectedDetailOrderLines.length"><td colspan="6" class="empty">Chưa có sản phẩm trong đơn.</td></tr>
           </tbody>
         </table>
       </div>

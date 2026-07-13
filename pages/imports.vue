@@ -21,9 +21,10 @@ const {
   loadWarehouses,
   loadSuppliers,
 } = useScopedQueries();
-const { createImportOrder } = useWarehouseTransactions();
+const { createImportOrder, updateImportOrder, deleteImportOrder } = useWarehouseTransactions();
 const { hasPermission } = useAuth();
 const { showToast } = useUi();
+const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog();
 
 const loading = ref(false);
 const saving = ref(false);
@@ -34,6 +35,7 @@ const products = ref<ProductDoc[]>([]);
 const warehouses = ref<WarehouseDoc[]>([]);
 const suppliers = ref<SupplierDoc[]>([]);
 const selected = ref<ImportOrderDoc | null>(null);
+const editing = ref<ImportOrderDoc | null>(null);
 const showDetailModal = ref(false);
 const showCreateModal = ref(false);
 
@@ -46,6 +48,13 @@ const form = reactive({
 
 const canCreate = computed(
   () => hasPermission("*") || hasPermission("import.create"),
+);
+
+const canEdit = computed(
+  () => hasPermission("*") || hasPermission("import.edit"),
+);
+const canDelete = computed(
+  () => hasPermission("*") || hasPermission("import.delete"),
 );
 
 const supplierOptions = computed(() =>
@@ -130,6 +139,10 @@ const selectedItems = computed(() =>
   selected.value ? itemsByOrder.value.get(selected.value.id) || [] : [],
 );
 
+function itemsForOrder(row: ImportOrderDoc | null) {
+  return row ? itemsByOrder.value.get(row.id) || [] : []
+}
+
 function newBlankLine() {
   return {
     product_id: "",
@@ -167,6 +180,7 @@ function openDetail(row: ImportOrderDoc) {
 }
 
 function openCreateModal() {
+  editing.value = null;
   Object.assign(form, {
     import_date: todayKey(),
     supplier_id: "",
@@ -174,6 +188,52 @@ function openCreateModal() {
     lines: [newBlankLine()],
   });
   showCreateModal.value = true;
+}
+
+function openEditModal(row: ImportOrderDoc) {
+  if (!canEdit.value) return showToast("Bạn không có quyền sửa phiếu nhập kho.", "error");
+  editing.value = row;
+  const orderItems = itemsForOrder(row);
+  Object.assign(form, {
+    import_date: String(row.import_date || todayKey()).slice(0, 10),
+    supplier_id: row.supplier_id || "",
+    note: row.note || "",
+    lines: orderItems.length
+      ? orderItems.map((item) => ({
+          product_id: item.product_id || "",
+          warehouse_id: item.warehouse_id || "",
+          logo: item.logo || "",
+          quantity: toNumber(item.quantity),
+          unit: item.unit || "",
+          note: item.note || "",
+        }))
+      : [newBlankLine()],
+  });
+  showCreateModal.value = true;
+}
+
+async function confirmDeleteImport(row: ImportOrderDoc) {
+  if (!canDelete.value) return showToast("Bạn không có quyền xóa phiếu nhập kho.", "error");
+  const ok = await askConfirm({
+    title: "Xóa phiếu nhập kho",
+    message: `Bạn chắc chắn muốn xóa mềm phiếu ${codeOf(row)}? Hệ thống sẽ đảo tồn các dòng nhập của phiếu này.`,
+    confirmLabel: "Xóa phiếu",
+  });
+  if (!ok) return;
+  saving.value = true;
+  try {
+    const result = await deleteImportOrder({
+      order: row,
+      existingItems: itemsForOrder(row),
+      reason: "Xóa phiếu nhập từ Nuxt",
+    });
+    showToast(`Đã xóa phiếu nhập ${result.code}.`, "success");
+    await loadRows(true);
+  } catch (error) {
+    showToast(reportFirebaseError(error, "Không xóa được phiếu nhập kho."), "error");
+  } finally {
+    saving.value = false;
+  }
 }
 
 function addLine() {
@@ -206,7 +266,7 @@ async function saveImportOrder() {
 
   saving.value = true;
   try {
-    const result = await createImportOrder({
+    const payload = {
       import_date: form.import_date,
       supplier: findSupplier(form.supplier_id) || null,
       note: form.note,
@@ -218,13 +278,21 @@ async function saveImportOrder() {
         unit: line.unit || findProduct(line.product_id)?.unit || "",
         note: line.note,
       })),
-    });
+    };
+    const result = editing.value
+      ? await updateImportOrder({
+          order: editing.value,
+          existingItems: itemsForOrder(editing.value),
+          ...payload,
+        })
+      : await createImportOrder(payload);
     showCreateModal.value = false;
-    showToast(`Đã tạo phiếu nhập ${result.code}.`, "success");
+    showToast(`${editing.value ? "Đã sửa" : "Đã tạo"} phiếu nhập ${result.code}.`, "success");
+    editing.value = null;
     await loadRows(true);
   } catch (error) {
     showToast(
-      reportFirebaseError(error, "Không tạo được phiếu nhập kho."),
+      reportFirebaseError(error, editing.value ? "Không sửa được phiếu nhập kho." : "Không tạo được phiếu nhập kho."),
       "error",
     );
   } finally {
@@ -333,9 +401,11 @@ onMounted(() => loadRows());
                 <span class="badge blue">{{ row.status || "active" }}</span>
               </td>
               <td>
-                <button class="btn-sm btn-view" @click="openDetail(row)">
-                  Xem chi tiết
-                </button>
+                <div class="action-buttons">
+                  <button class="btn-sm btn-view" @click="openDetail(row)">Xem chi tiết</button>
+                  <button v-if="canEdit" class="btn-sm" @click="openEditModal(row)">Sửa</button>
+                  <button v-if="canDelete" class="btn-sm btn-delete" @click="confirmDeleteImport(row)">Xóa</button>
+                </div>
               </td>
             </tr>
             <tr v-if="!filtered.length">
@@ -348,11 +418,11 @@ onMounted(() => loadRows());
 
     <BaseModal
       v-if="showCreateModal"
-      title="Tạo phiếu nhập kho"
+      :title="editing ? `Sửa phiếu nhập ${codeOf(editing)}` : 'Tạo phiếu nhập kho'"
       size="xl"
       :loading="saving"
-      save-label="Tạo phiếu nhập"
-      @close="showCreateModal = false"
+      :save-label="editing ? 'Lưu sửa phiếu nhập' : 'Tạo phiếu nhập'"
+      @close="showCreateModal = false; editing = null"
       @save="saveImportOrder"
     >
       <div class="form-grid">
@@ -520,5 +590,11 @@ onMounted(() => loadRows());
         </table>
       </div>
     </BaseModal>
+
+    <ConfirmModal
+      v-bind="confirmState"
+      @cancel="resolveConfirm(false)"
+      @confirm="resolveConfirm(true)"
+    />
   </AppShell>
 </template>

@@ -214,7 +214,7 @@ function openModal(request?: any) {
     )
   ) {
     return showToast(
-      "Phiếu đã được Warehouse xử lý xong nên không thể sửa.",
+      "Phiếu đã được Kho xử lý xong nên không thể sửa.",
       "error",
     );
   }
@@ -296,9 +296,10 @@ async function saveRequest() {
       {
         action: editing.value ? "update" : "create",
         title: editing.value
-          ? "Kingcup sửa yêu cầu xuất kho"
-          : "Kingcup tạo yêu cầu xuất kho",
+          ? "Sale sửa yêu cầu xuất kho"
+          : "Sale tạo yêu cầu xuất kho",
         actor: appUser.value?.email || "",
+        actor_name: appUser.value?.display_name || order.sale_name || appUser.value?.email || "",
         time: now,
         status: form.status || "cho_xu_ly",
         note: form.note || "",
@@ -397,7 +398,7 @@ async function saveRequest() {
     showToast(
       editing.value
         ? "Đã cập nhật phiếu xuất kho."
-        : "Đã gửi yêu cầu xuất kho sang Warehouse.",
+        : "Đã gửi yêu cầu xuất kho sang kho.",
       "success",
     );
   })
@@ -680,6 +681,28 @@ function timeline(row: any) {
   return Array.isArray(value) ? value : [];
 }
 
+function timelineActorText(step: any, row?: any) {
+  const payload = row ? safeJsonParse(row.payload_json, {}) : {}
+  const actor = String(step?.actor || '').trim()
+  const name = String(step?.actor_name || payload.requested_by_name || row?.requested_by_name || row?.sale_name || '').trim()
+  if (name && actor && name.toLowerCase() !== actor.toLowerCase()) return `${name} · ${actor}`
+  return name || actor || '-'
+}
+
+function timelineNoteText(step: any) {
+  const note = String(step?.note || '').trim()
+  return note ? `Ghi chú: ${note}` : ''
+}
+
+function timelineTitleText(step: any) {
+  return String(step?.title || statusLabel(step?.status))
+    .replace('Kingcup tạo yêu cầu xuất kho', 'Sale tạo yêu cầu xuất kho')
+    .replace('Kingcup sửa yêu cầu xuất kho', 'Sale sửa yêu cầu xuất kho')
+    .replace('Warehouse đã tiếp nhận', 'Kho đã tiếp nhận')
+    .replace('Warehouse đã từ chối', 'Kho đã từ chối')
+    .replace('Warehouse cho xuất kho', 'Kho cho xuất kho')
+}
+
 function detailRequestLines(row: any) {
   const order = orders.value.find((item) => item.id === row?.order_id);
   if (!order) return requestLineProgress(row);
@@ -736,7 +759,7 @@ onMounted(() => loadRows());
   <AppShell>
     <PageHeader
       title="Phiếu xuất kho"
-      subtitle="Yêu cầu xuất kho và trạng thái xử lý Warehouse"
+      subtitle="Yêu cầu xuất kho và trạng thái xử lý kho"
     >
       <button
         v-if="hasPermission('orders.warehouse_export') || hasPermission('*')"
@@ -752,7 +775,7 @@ onMounted(() => loadRows());
         <label>Tổng phiếu</label><strong>{{ summary.total }}</strong>
       </div>
       <div class="summary-card">
-        <label>Chờ Warehouse</label><strong>{{ summary.waiting }}</strong>
+        <label>Chờ kho</label><strong>{{ summary.waiting }}</strong>
       </div>
       <div class="summary-card">
         <label>Đã tiếp nhận</label><strong>{{ summary.accepted }}</strong>
@@ -935,7 +958,7 @@ onMounted(() => loadRows());
         </table>
       </div>
       <div class="form-group" style="margin-top: 12px">
-        <label>Ghi chú gửi Warehouse</label
+        <label>Ghi chú gửi kho</label
         ><textarea v-model="form.note" class="textarea" rows="3" />
       </div>
     </BaseModal>
@@ -991,21 +1014,21 @@ onMounted(() => loadRows());
           ><strong>{{ formatDateTime(selectedRequest.export_date) }}</strong>
         </div>
         <div class="detail-item">
-          <label>Mã phiếu Warehouse</label
+          <label>Mã phiếu kho</label
           ><strong>{{ selectedRequest.warehouse_export_code || "-" }}</strong>
         </div>
         <div class="detail-item">
-          <label>Warehouse xử lý</label
+          <label>Kho xử lý</label
           ><strong>{{ selectedRequest.warehouse_handled_by || "-" }}</strong>
         </div>
         <div class="detail-item">
-          <label>Ngày Warehouse xử lý</label
+          <label>Ngày Kho xử lý</label
           ><strong>{{
             formatDateTime(selectedRequest.warehouse_handled_at) || "-"
           }}</strong>
         </div>
         <div class="detail-item">
-          <label>Ghi chú Warehouse</label
+          <label>Ghi chú kho</label
           ><strong>{{ selectedRequest.warehouse_note || "-" }}</strong>
         </div>
         <div class="detail-item">
@@ -1063,11 +1086,11 @@ onMounted(() => loadRows());
         class="detail-item"
         style="margin-bottom: 8px"
       >
-        <strong>{{ step.title || statusLabel(step.status) }}</strong>
+        <strong>{{ timelineTitleText(step) }}</strong>
         <div class="small subtle">
-          {{ formatDateTime(step.time) }} · {{ step.actor }}
+          {{ formatDateTime(step.time) }} · {{ timelineActorText(step, selectedRequest) }}
         </div>
-        <div>{{ step.note }}</div>
+        <div v-if="timelineNoteText(step)">{{ timelineNoteText(step) }}</div>
       </div>
     </BaseModal>
 
@@ -1141,7 +1164,7 @@ onMounted(() => loadRows());
         </table>
       </div>
       <div class="form-group" style="margin-top: 12px">
-        <label>Ghi chú Warehouse</label
+        <label>Ghi chú kho</label
         ><textarea v-model="processForm.note" class="textarea" rows="3" />
       </div>
       <p class="small subtle">

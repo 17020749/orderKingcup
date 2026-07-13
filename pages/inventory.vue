@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { InventoryBalanceDoc, StockMovementDoc, WarehouseDoc } from '~/types/models'
+import type { ExportOrderDoc, ExportOrderItemDoc, ImportOrderDoc, ImportOrderItemDoc, InventoryBalanceDoc, StockMovementDoc, WarehouseDoc } from '~/types/models'
 import { formatDateTime, normalizeText, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
-const { loadInventoryBalances, loadStockMovements, loadWarehouses } = useScopedQueries()
+const { loadInventoryBalances, loadStockMovements, loadWarehouses, loadImportOrders, loadImportOrderItems, loadExportOrders, loadExportOrderItems } = useScopedQueries()
 const { showToast } = useUi()
 
 const loading = ref(false)
@@ -13,6 +13,10 @@ const logoFilter = ref('')
 const rows = ref<InventoryBalanceDoc[]>([])
 const movements = ref<StockMovementDoc[]>([])
 const warehouses = ref<WarehouseDoc[]>([])
+const importOrders = ref<ImportOrderDoc[]>([])
+const importItems = ref<ImportOrderItemDoc[]>([])
+const exportOrders = ref<ExportOrderDoc[]>([])
+const exportItems = ref<ExportOrderItemDoc[]>([])
 const selected = ref<InventoryBalanceDoc | null>(null)
 const showMovementModal = ref(false)
 
@@ -61,6 +65,47 @@ function movementClass(row: StockMovementDoc) {
   return 'green'
 }
 
+function findImportOrder(id: any) {
+  return importOrders.value.find(row => row.id === id)
+}
+
+function findExportOrder(id: any) {
+  return exportOrders.value.find(row => row.id === id)
+}
+
+function findImportItem(id: any) {
+  return importItems.value.find(row => row.id === id)
+}
+
+function findExportItem(id: any) {
+  return exportItems.value.find(row => row.id === id)
+}
+
+function movementDetail(movement: StockMovementDoc) {
+  const sourceCollection = String(movement.source_collection || '')
+  const type = String(movement.movement_type || '')
+  if (sourceCollection === 'import_orders') {
+    const order = findImportOrder(movement.source_doc_id)
+    const item = findImportItem(movement.source_item_id)
+    const supplier = order?.supplier_name ? ` từ NCC: ${order.supplier_name}` : ''
+    const warehouse = item?.warehouse_name || movement.warehouse_name || ''
+    return `Nhập vào kho ${warehouse || '-'}${supplier}.`
+  }
+  if (sourceCollection === 'export_orders') {
+    const order = findExportOrder(movement.source_doc_id)
+    const item = findExportItem(movement.source_item_id)
+    if (type === 'transfer_in' || movement.direction === 'in') {
+      return `Nhập chuyển kho từ ${item?.from_warehouse_name || 'kho nguồn'} theo phiếu ${order?.code || order?.export_code || movement.source_code || ''}.`
+    }
+    if (item?.to_warehouse_name || order?.destination_type === 'warehouse') {
+      return `Xuất tới kho ${item?.to_warehouse_name || order?.destination_name || '-'}.`
+    }
+    return `Xuất tới khách ${item?.destination_name || order?.customer_name || order?.destination_name || '-'}.`
+  }
+  if (sourceCollection === 'inventory_adjustments') return movement.reason || 'Điều chỉnh tồn kho.'
+  return movement.reason || '-'
+}
+
 function openMovements(row: InventoryBalanceDoc) {
   selected.value = row
   showMovementModal.value = true
@@ -69,14 +114,22 @@ function openMovements(row: InventoryBalanceDoc) {
 async function loadRows(force = false) {
   loading.value = true
   try {
-    const [balanceRows, movementRows, warehouseRows] = await Promise.all([
+    const [balanceRows, movementRows, warehouseRows, importOrderRows, importItemRows, exportOrderRows, exportItemRows] = await Promise.all([
       loadInventoryBalances(force),
       loadStockMovements(force),
-      loadWarehouses(force)
+      loadWarehouses(force),
+      loadImportOrders(force),
+      loadImportOrderItems(force),
+      loadExportOrders(force),
+      loadExportOrderItems(force)
     ])
     rows.value = balanceRows
     movements.value = movementRows
     warehouses.value = warehouseRows
+    importOrders.value = importOrderRows
+    importItems.value = importItemRows
+    exportOrders.value = exportOrderRows
+    exportItems.value = exportItemRows
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được tồn kho.'), 'error')
   } finally {
@@ -156,17 +209,18 @@ onMounted(() => loadRows())
 
       <div class="table-wrap">
         <table style="min-width: 1040px">
-          <thead><tr><th>Thời gian</th><th>Loại</th><th>Mã nguồn</th><th>Số lượng</th><th>Lý do</th><th>Người tạo</th></tr></thead>
+          <thead><tr><th>Thời gian</th><th>Loại</th><th>Mã nguồn</th><th>Số lượng</th><th>Chi tiết biến động</th><th>Lý do gốc</th><th>Người tạo</th></tr></thead>
           <tbody>
             <tr v-for="movement in selectedMovements" :key="movement.id">
               <td>{{ formatDateTime(movement.movement_date || movement.created_at) }}</td>
               <td><span class="badge" :class="movementClass(movement)">{{ movement.movement_type || movement.direction }}</span></td>
               <td><b>{{ movement.source_code || movement.source_doc_id }}</b><div class="small subtle">{{ movement.source_collection }}</div></td>
               <td><b>{{ quantityText(movement.quantity) }}</b></td>
+              <td>{{ movementDetail(movement) }}</td>
               <td>{{ movement.reason || '-' }}</td>
               <td>{{ movement.created_by || '-' }}</td>
             </tr>
-            <tr v-if="!selectedMovements.length"><td colspan="6" class="empty">Chưa có lịch sử biến động cho dòng tồn này.</td></tr>
+            <tr v-if="!selectedMovements.length"><td colspan="7" class="empty">Chưa có lịch sử biến động cho dòng tồn này.</td></tr>
           </tbody>
         </table>
       </div>

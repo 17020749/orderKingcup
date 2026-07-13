@@ -9,6 +9,11 @@ const navItems = [
     label: "Yêu cầu xuất kho",
     perm: "page.export_requests",
   },
+  { 
+    to: '/warehouse-export-requests', 
+    label: 'Kho xử lý YC xuất', 
+    perm: 'page.warehouse_export_requests' 
+  },
   { to: "/imports", label: "Nhập kho", perm: "page.imports" },
   { to: "/exports", label: "Xuất kho thật", perm: "page.exports" },
   { to: "/inventory", label: "Tồn kho", perm: "page.inventory" },

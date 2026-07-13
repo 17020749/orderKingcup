@@ -347,7 +347,7 @@ export function useScopedQueries() {
     // Trang Kingcup chỉ tải toàn bộ khi user có quyền view_all rõ ràng.
     // Quyền export_requests.process được giữ cho nguồn Warehouse xử lý backend,
     // nhưng không tự động làm lộ phiếu của sale khác trên giao diện Kingcup.
-    if (canAll('export_requests.view_all') || canAll('export_requests.process')) {
+    if (canAll('export_requests.view_all')) {
       return sortNewest(
         (await listCollection<AnyDoc>('order_export_requests', [], {
           cacheKey: 'all', ttlMs: 15_000, force
@@ -373,6 +373,23 @@ export function useScopedQueries() {
         || ownedOrderIds.has(row.order_id)
       )
     ), 'requested_at')
+  }
+
+
+  async function loadWarehouseExportRequests(force = false) {
+    if (!hasAnyWarehousePermission([
+      'page.warehouse_export_requests',
+      'export_requests.accept',
+      'export_requests.reject',
+      'export_requests.release',
+      'export_requests.process'
+    ])) return []
+    return sortNewest(
+      (await listCollection<AnyDoc>('order_export_requests', [], {
+        cacheKey: 'warehouse-all', ttlMs: 15_000, force
+      })).filter(isActive),
+      'requested_at'
+    )
   }
 
   async function loadScopedCustomers(force = false) {
@@ -402,7 +419,7 @@ export function useScopedQueries() {
   }
 
   async function loadWarehouses(force = false) {
-    if (!hasAnyWarehousePermission(['warehouses.view', 'warehouses.manage', 'import.view', 'export.view', 'inventory.view'])) return []
+    if (!hasAnyWarehousePermission(['warehouses.view', 'warehouses.manage', 'import.view', 'export.view', 'inventory.view', 'page.warehouse_export_requests', 'export_requests.accept', 'export_requests.release', 'export_requests.process'])) return []
     return sortByName(await listCollection<WarehouseDoc>('warehouses', [], {
       cacheKey: 'all', ttlMs: 300_000, force
     }))
@@ -507,6 +524,7 @@ export function useScopedQueries() {
     loadScopedOrderItems,
     loadScopedPayments,
     loadScopedExportRequests,
+    loadWarehouseExportRequests,
     loadScopedCustomers,
     loadProducts,
     loadWarehouses,

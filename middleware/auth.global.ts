@@ -4,6 +4,7 @@ const ROUTE_PERMISSIONS: Array<[string, string]> = [
   ['/dashboard', 'page.dashboard'],
   ['/orders', 'page.orders'],
   ['/export-requests', 'page.export_requests'],
+  ['/warehouse-export-requests', 'page.warehouse_export_requests'],
   ['/imports', 'page.imports'],
   ['/exports', 'page.exports'],
   ['/inventory', 'page.inventory'],
