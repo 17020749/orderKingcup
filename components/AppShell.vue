@@ -42,6 +42,36 @@ const visibleNav = computed(() =>
       : hasPermission(item.perm) || hasPermission("*"),
   ),
 );
+
+const navElement = ref<HTMLElement | null>(null);
+const navScrollTop = useState<number>("app-shell.nav-scroll-top", () => 0);
+
+function saveNavScroll() {
+  if (navElement.value) {
+    navScrollTop.value = navElement.value.scrollTop;
+  }
+}
+
+function restoreNavScroll() {
+  if (navElement.value) {
+    navElement.value.scrollTop = navScrollTop.value;
+  }
+}
+
+onMounted(async () => {
+  await nextTick();
+  restoreNavScroll();
+});
+
+watch(
+  () => visibleNav.value.length,
+  async () => {
+    await nextTick();
+    restoreNavScroll();
+  },
+);
+
+onBeforeUnmount(saveNavScroll);
 </script>
 
 <template>
@@ -54,7 +84,7 @@ const visibleNav = computed(() =>
           <div class="small subtle">Nuxt + Firestore</div>
         </div>
       </div>
-      <nav class="nav">
+      <nav ref="navElement" class="nav" @scroll.passive="saveNavScroll">
         <NuxtLink v-for="item in visibleNav" :key="item.to" :to="item.to"
           ><span>{{ item.label }}</span></NuxtLink
         >
