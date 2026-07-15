@@ -1,0 +1,13 @@
+components/OrderPrintModal.vue: expected one match, found 0
+--- expected ---
+  const itemRows = padRows(rows).map((item: any, index) => item ? `
+  <tr>
+    <td class="center">${index + 1}</td>
+    <td>${escapeHtml(productDisplayName(item))}</td>
+    <td class="center">${escapeHtml(item.unit || '')}</td>
+    <td class="right">${formatNumber(item.quantity)}</td>
+    <td class="right">${formatMoney(item.unitPrice)}</td>
+    <td class="right">${formatMoney(item.lineTotal)}</td>
+  </tr>` : `
+  <tr><td class="center">${index + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`).join('')
+
