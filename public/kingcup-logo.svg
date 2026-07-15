@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 250" role="img" aria-labelledby="title desc">
+  <title id="title">KINGCUP</title>
+  <desc id="desc">Điểm chạm thương hiệu trên mọi bao bì</desc>
+  <rect width="760" height="250" fill="#ffffff"/>
+  <g font-family="Georgia, 'Times New Roman', serif" font-weight="700">
+    <text x="22" y="150" font-size="142" fill="#17234b" letter-spacing="-8">KING</text>
+    <text x="398" y="150" font-size="142" fill="#f58220" letter-spacing="-8">CUP</text>
+  </g>
+  <path d="M375 82l8 17 18 8-18 8-8 18-8-18-18-8 18-8z" fill="#f4bf1a"/>
+  <text x="30" y="220" font-family="Georgia, 'Times New Roman', serif" font-size="32" fill="#17234b">Điểm chạm thương hiệu trên mọi bao bì</text>
+</svg>
