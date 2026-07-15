@@ -193,7 +193,7 @@ onMounted(() => loadRows());
   <AppShell>
     <PageHeader
       title="Điều chỉnh tồn"
-      subtitle="Điều chỉnh tăng/giảm tồn kho trên Firestore, có ghi stock_movements"
+      subtitle="Điều chỉnh tăng hoặc giảm tồn kho"
     >
       <button v-if="canAdjust" class="btn primary" @click="openCreateModal">
         + Điều chỉnh tồn
@@ -220,7 +220,7 @@ onMounted(() => loadRows());
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input
           v-model="search"

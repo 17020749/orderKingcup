@@ -739,7 +739,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input
           v-model="search"
@@ -917,7 +917,7 @@ onBeforeUnmount(() => {
     >
       <div class="detail-grid">
         <div class="detail-item">
-          <label>ID Firestore</label><strong>{{ selectedRequest.id }}</strong>
+          <label>ID hệ thống</label><strong>{{ selectedRequest.id }}</strong>
         </div>
         <div class="detail-item">
           <label>Mã phiếu</label

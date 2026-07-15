@@ -266,7 +266,7 @@ onMounted(() => loadRows())
       <div class="summary-card"><label>Dòng bị lệch</label><strong>{{ summary.mismatches.toLocaleString('vi-VN') }}</strong></div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width: 420px" placeholder="Tìm mã/tên sản phẩm, kho, logo..." />
         <select v-model="warehouseFilter" class="select" style="max-width: 220px">

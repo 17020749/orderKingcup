@@ -383,12 +383,12 @@ onMounted(() => loadRows())
 
 <template>
   <AppShell>
-    <PageHeader title="Danh mục kho" subtitle="Kho, nhà cung cấp, đơn vị đã migrate từ Warehouse Sheet sang Firestore">
+    <PageHeader title="Danh mục kho" subtitle="Kho, nhà cung cấp và đơn vị">
       <button v-if="canManageCurrentTab" class="btn primary" @click="openCreateModal">+ Thêm {{ currentLabel.toLowerCase() }}</button>
       <button class="btn" @click="loadRows(true)">Làm mới</button>
     </PageHeader>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <div class="row">
           <button

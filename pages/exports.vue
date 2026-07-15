@@ -415,7 +415,7 @@ onMounted(() => loadRows());
   <AppShell>
     <PageHeader
       title="Xuất kho thật"
-      subtitle="Phiếu xuất kho thật trên Firestore, có check tồn và trừ tồn bằng transaction"
+      subtitle="Quản lý phiếu xuất kho và cập nhật tồn"
     >
       <button v-if="canCreate" class="btn primary" @click="openCreateModal">
         + Tạo phiếu xuất
@@ -441,7 +441,7 @@ onMounted(() => loadRows());
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input
           v-model="search"

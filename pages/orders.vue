@@ -645,7 +645,7 @@ onMounted(loadRows)
       <button v-if="hasPermission('orders.create')" class="btn primary" @click="openModal()">+ Tạo đơn hàng</button>
     </PageHeader>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm mã đơn, khách hàng, SĐT..." />
         <button class="btn" @click="loadRows(true)">Làm mới</button>

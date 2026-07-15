@@ -225,7 +225,7 @@ async function confirmDeleteImport(row: ImportOrderDoc) {
     const result = await deleteImportOrder({
       order: row,
       existingItems: itemsForOrder(row),
-      reason: "Xóa phiếu nhập từ Nuxt",
+      reason: "Xóa phiếu nhập kho",
     });
     showToast(`Đã xóa phiếu nhập ${result.code}.`, "success");
     await loadRows(true);
@@ -333,7 +333,7 @@ onMounted(() => loadRows());
   <AppShell>
     <PageHeader
       title="Nhập kho"
-      subtitle="Phiếu nhập kho thật trên Firestore, có cập nhật tồn bằng transaction"
+      subtitle="Quản lý phiếu nhập kho và cập nhật tồn"
     >
       <button v-if="canCreate" class="btn primary" @click="openCreateModal">
         + Tạo phiếu nhập
@@ -359,7 +359,7 @@ onMounted(() => loadRows());
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input
           v-model="search"

@@ -143,7 +143,7 @@ onMounted(() => loadRows())
     <PageHeader title="Hóa đơn" subtitle="Theo dõi yêu cầu và trạng thái xuất hóa đơn">
       <button v-if="hasPermission('invoices.create') || hasPermission('*')" class="btn primary" @click="openModal()">+ Thêm hóa đơn</button>
     </PageHeader>
-    <div class="card">
+    <div class="card" style="padding: 24px;">
       <div class="toolbar"><input v-model="search" class="input" placeholder="Tìm đơn, số hóa đơn, công ty..."/><button class="btn" @click="loadRows(true)">Làm mới</button></div>
       <LoadingState v-if="loading"/>
       <div v-else class="table-wrap">

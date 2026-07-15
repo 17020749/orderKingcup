@@ -1,6 +1,5 @@
 <script setup lang="ts">
 const { appUser, firebaseUser, logout, hasPermission, isAdmin } = useAuth();
-const config = useRuntimeConfig().public;
 const route = useRoute();
 
 type NavItem = { to: string; label: string; perm: string };
@@ -133,10 +132,8 @@ onBeforeUnmount(saveNavScroll);
   <div class="app-layout">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-badge">K</div>
-        <div>
-          <div>{{ config.appName }}</div>
-          <div class="small subtle">Nuxt + Firestore</div>
+        <div class="brand-wordmark" aria-label="KINGCUP">
+          <span class="brand-wordmark-king">KING</span><span class="brand-wordmark-cup">CUP</span>
         </div>
       </div>
       <nav ref="navElement" class="nav" @scroll.passive="saveNavScroll">
@@ -175,7 +172,7 @@ onBeforeUnmount(saveNavScroll);
         <div>{{ appUser?.email }}</div>
         <button
           class="btn ghost"
-          style="margin-top: 12px; color: #e2e8f0"
+          style="margin-top: 12px"
           @click="logout"
         >
           Đăng xuất

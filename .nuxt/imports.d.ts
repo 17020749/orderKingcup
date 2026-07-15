@@ -43,3 +43,4 @@ export { useWarehouseTransactions } from '../composables/useWarehouseTransaction
 export { firebaseErrorMessage, reportFirebaseError } from '../utils/firebaseErrors';
 export { normalizeText, normalizeEmail, toNumber, round2, money, todayKey, nowDateTimeLocal, dateTimeLocal, formatDateTime, monthKey, makeId, makeCode, isActive, safeJsonParse } from '../utils/format';
 export { permissionDebug } from '../utils/permissionDebug';
+export { useNuxtDevTools } from '../node_modules/@nuxt/devtools/dist/runtime/use-nuxt-devtools';

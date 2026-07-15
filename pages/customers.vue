@@ -71,10 +71,10 @@ onMounted(() => loadRows())
 
 <template>
   <AppShell>
-    <PageHeader title="Khách hàng" subtitle="Dữ liệu từ Firestore collection customers">
+    <PageHeader title="Khách hàng" subtitle="Quản lý thông tin khách hàng">
       <button v-if="hasPermission('customers.create')" class="btn primary" @click="openModal()">+ Thêm khách hàng</button>
     </PageHeader>
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width:420px" placeholder="Tìm khách hàng, SĐT, email..." />
         <button class="btn" @click="loadRows(true)">Làm mới</button>
@@ -86,7 +86,7 @@ onMounted(() => loadRows())
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
               <td>{{ row.customer_code || row.id }}</td><td><b>{{ row.customer_name }}</b></td><td>{{ row.company_name }}</td><td>{{ row.phone }}</td><td>{{ row.email }}</td>
-              <td><span class="badge green">{{ row.status || 'active' }}</span></td>
+              <td><span class="badge green">{{ row.status || 'Hoạt động' }}</span></td>
               <td class="row">
                 <button class="btn" @click="openDetail(row)">Xem</button>
                 <button v-if="hasPermission('customers.edit')" class="btn" @click="openModal(row)">Sửa</button>
@@ -108,7 +108,7 @@ onMounted(() => loadRows())
         <div class="form-group"><label>Địa chỉ hóa đơn</label><input v-model="form.billing_address" class="input" /></div>
         <div class="form-group"><label>Địa chỉ giao hàng</label><input v-model="form.shipping_address" class="input" /></div>
         <div class="form-group"><label>Nguồn</label><input v-model="form.source" class="input" /></div>
-        <div class="form-group"><label>Trạng thái</label><select v-model="form.status" class="select"><option value="active">active</option><option value="inactive">inactive</option></select></div>
+        <div class="form-group"><label>Trạng thái</label><select v-model="form.status" class="select"><option value="active">Hoạt động</option><option value="inactive">Không hoạt động</option></select></div>
       </div>
       <div class="form-group" style="margin-top:12px"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
     </BaseModal>

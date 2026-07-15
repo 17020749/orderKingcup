@@ -368,7 +368,7 @@ async function submitRelease(row: any) {
 
   const missing = lines.filter((line: any) => !findProductByCode(line.product_code))
   if (missing.length) {
-    return showToast(`Chưa map được sản phẩm Firestore cho mã: ${missing.map((line: any) => line.product_code).join(', ')}. Kiểm tra quyền products.view và mã sản phẩm.`, 'error')
+    return showToast(`Chưa tìm thấy sản phẩm cho mã: ${missing.map((line: any) => line.product_code).join(', ')}. Kiểm tra quyền truy cập và mã sản phẩm.`, 'error')
   }
 
   const result = await processExportRequestToExportOrder({
@@ -514,7 +514,7 @@ onBeforeUnmount(() => {
       <div class="summary-card"><label>Đã xuất kho</label><strong>{{ summary.exported.toLocaleString('vi-VN') }}</strong></div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width:420px" placeholder="Tìm mã yêu cầu, đơn hàng, khách hàng..." />
         <select v-model="statusFilter" class="input" style="max-width:220px">

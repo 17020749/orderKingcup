@@ -63,19 +63,19 @@ onMounted(() => loadDashboard())
     </PageHeader>
     <LoadingState v-if="loading" />
     <template v-else>
-      <div class="grid grid-4" style="margin-bottom: 16px">
+      <div class="grid grid-4" style="margin-bottom: 16px; padding-left: 24px; padding-right: 24px;">
         <div class="kpi"><div class="subtle">Doanh thu</div><div class="kpi-value">{{ money(stats.revenue) }}</div></div>
         <div class="kpi"><div class="subtle">Đã thu</div><div class="kpi-value">{{ money(stats.paid) }}</div></div>
         <div class="kpi"><div class="subtle">Công nợ</div><div class="kpi-value">{{ money(stats.debt) }}</div></div>
         <div class="kpi"><div class="subtle">Lợi nhuận</div><div class="kpi-value">{{ money(stats.profit) }}</div></div>
       </div>
-      <div class="grid grid-4" style="margin-bottom: 16px">
+      <div class="dashboard grid grid-4" style="margin-bottom: 16px; padding-left: 24px; padding-right: 24px;">
         <div class="summary-card"><label>Đơn hàng</label><strong>{{ stats.orders }}</strong></div>
         <div class="summary-card"><label>Khách hàng</label><strong>{{ stats.customers }}</strong></div>
         <div class="summary-card"><label>Sản phẩm</label><strong>{{ stats.products }}</strong></div>
         <div class="summary-card"><label>Phiếu xuất kho</label><strong>{{ stats.exportRequests }}</strong></div>
       </div>
-      <div class="grid grid-2">
+      <div class="grid grid-2" style="padding-left: 24px;padding-right: 24px;">
         <div class="card">
           <h3 style="margin-top: 0">Đơn hàng gần đây</h3>
           <div class="table-wrap">

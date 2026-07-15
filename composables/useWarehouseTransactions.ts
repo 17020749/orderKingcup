@@ -81,13 +81,13 @@ async function inventoryBalanceId(productId: string, warehouseId: string, logo: 
 
 function ensureProduct(product: any) {
   const id = normalizeId(product?.id || product?.firestore_id)
-  if (!id) throw new Error('Thiếu sản phẩm hoặc sản phẩm chưa có Firestore ID.')
+  if (!id) throw new Error('Thiếu sản phẩm hoặc sản phẩm chưa có ID hệ thống.')
   return { ...product, id }
 }
 
 function ensureWarehouse(warehouse: any, label = 'kho') {
   const id = normalizeId(warehouse?.id || warehouse?.firestore_id)
-  if (!id) throw new Error(`Thiếu ${label} hoặc ${label} chưa có Firestore ID.`)
+  if (!id) throw new Error(`Thiếu ${label} hoặc ${label} chưa có ID hệ thống.`)
   return { ...warehouse, id }
 }
 

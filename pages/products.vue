@@ -182,12 +182,12 @@ onMounted(() => loadRows())
 
 <template>
   <AppShell>
-    <PageHeader title="Quản lý sản phẩm" subtitle="Dữ liệu sản phẩm dùng chung từ Firestore">
+    <PageHeader title="Quản lý sản phẩm" subtitle="Danh mục sản phẩm dùng chung">
       <button class="btn" @click="loadRows(true)">Làm mới</button>
       <button v-if="canCreate" class="btn primary" @click="openModal()">+ Thêm sản phẩm</button>
     </PageHeader>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width: 680px" placeholder="Tìm mã hoặc tên sản phẩm..." />
         <select v-model="statusFilter" class="select" style="max-width: 180px">

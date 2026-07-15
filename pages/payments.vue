@@ -147,7 +147,7 @@ onMounted(() => loadRows())
       <button v-if="hasPermission('payments.create') || hasPermission('*')" class="btn primary" @click="openModal()">+ Thêm thanh toán</button>
     </PageHeader>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm mã đơn, loại thanh toán..." />
         <button class="btn" @click="loadRows(true)">Làm mới</button>
