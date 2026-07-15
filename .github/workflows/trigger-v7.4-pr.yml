@@ -83,47 +83,78 @@ jobs:
           """
           if old_helper not in script:
               raise SystemExit('Không tìm thấy helper replace_once trong patch nguồn.')
-          script = script.replace(old_helper, new_helper, 1)
-          Path('/tmp/apply-v7.4.py').write_text(script, encoding='utf-8')
+          Path('/tmp/apply-v7.4.py').write_text(script.replace(old_helper, new_helper, 1), encoding='utf-8')
           PY
             python /tmp/apply-v7.4.py
-          } > /tmp/v7.4-patch.log 2>&1
+          } > /tmp/v7.4-check.log 2>&1
           code=$?
-          cat /tmp/v7.4-patch.log
+          cat /tmp/v7.4-check.log
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Commit patch diagnostic
-        if: steps.patch.outputs.exit_code != '0'
+      - name: Install dependencies
+        id: install
+        if: steps.patch.outputs.exit_code == '0'
+        shell: bash
+        run: |
+          set +e
+          timeout 600 npm ci --ignore-scripts --no-audit --no-fund --prefer-offline >> /tmp/v7.4-check.log 2>&1
+          code=$?
+          cat /tmp/v7.4-check.log
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Build
+        id: build
+        if: steps.patch.outputs.exit_code == '0' && steps.install.outputs.exit_code == '0'
+        shell: bash
+        run: |
+          set +e
+          npm run build >> /tmp/v7.4-check.log 2>&1
+          code=$?
+          cat /tmp/v7.4-check.log
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Generate static output
+        id: generate
+        if: steps.patch.outputs.exit_code == '0' && steps.install.outputs.exit_code == '0' && steps.build.outputs.exit_code == '0'
+        shell: bash
+        run: |
+          set +e
+          npm run generate >> /tmp/v7.4-check.log 2>&1
+          code=$?
+          cat /tmp/v7.4-check.log
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Firestore rules tests
+        id: rules
+        if: steps.patch.outputs.exit_code == '0' && steps.install.outputs.exit_code == '0' && steps.build.outputs.exit_code == '0' && steps.generate.outputs.exit_code == '0'
+        shell: bash
+        run: |
+          set +e
+          npm run test:rules >> /tmp/v7.4-check.log 2>&1
+          code=$?
+          cat /tmp/v7.4-check.log
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Commit verification diagnostic
+        if: always() && (steps.patch.outputs.exit_code != '0' || steps.install.outputs.exit_code != '0' || steps.build.outputs.exit_code != '0' || steps.generate.outputs.exit_code != '0' || steps.rules.outputs.exit_code != '0')
         shell: bash
         run: |
           git reset --hard HEAD
-          cp /tmp/v7.4-patch.log v7.4-patch-error.log
+          cp /tmp/v7.4-check.log v7.4-patch-error.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f v7.4-patch-error.log
-          git commit -m "chore: record v7.4 patch failure"
+          git commit -m "chore: record v7.4 verification failure"
           git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
           exit 1
 
-      - name: Install dependencies
-        if: steps.patch.outputs.exit_code == '0'
-        run: npm ci
-
-      - name: Build
-        if: steps.patch.outputs.exit_code == '0'
-        run: npm run build
-
-      - name: Generate static output
-        if: steps.patch.outputs.exit_code == '0'
-        run: npm run generate
-
-      - name: Firestore rules tests
-        if: steps.patch.outputs.exit_code == '0'
-        run: npm run test:rules
-
       - name: Commit verified V7.4 changes
-        if: steps.patch.outputs.exit_code == '0'
+        if: steps.patch.outputs.exit_code == '0' && steps.install.outputs.exit_code == '0' && steps.build.outputs.exit_code == '0' && steps.generate.outputs.exit_code == '0' && steps.rules.outputs.exit_code == '0'
         shell: bash
         run: |
           rm -f .github/workflows/apply-v7.4.yml .github/workflows/trigger-v7.4-pr.yml v7.4-patch-error.log
