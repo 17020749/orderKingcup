@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { collection, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
 import type { SupplierDoc, UnitDoc, WarehouseDoc } from '~/types/models'
-import { formatDateTime, makeId, normalizeText } from '~/utils/format'
+import { formatDateTime, makeCode, makeId, normalizeText } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
 type TabKey = 'warehouses' | 'suppliers' | 'units'
@@ -98,29 +98,93 @@ function activeDoc(row: any) {
   return row && row.deleted !== true && row.active !== false
 }
 
+function codeFieldForTab(tab: TabKey = activeTab.value) {
+  if (tab === 'warehouses') return 'warehouse_code'
+  if (tab === 'suppliers') return 'supplier_code'
+  return 'unit_code'
+}
+
+function codePrefixForTab(tab: TabKey = activeTab.value) {
+  if (tab === 'warehouses') return 'KHO'
+  if (tab === 'suppliers') return 'NCC'
+  return 'DV'
+}
+
+function nextCatalogCode(tab: TabKey = activeTab.value) {
+  const field = codeFieldForTab(tab)
+  const usedCodes = new Set(currentRows.value
+    .filter(row => row.id !== editing.value?.id && activeDoc(row))
+    .map(row => normalizeText(row[field] || ''))
+    .filter(Boolean))
+
+  let code = ''
+  let attempts = 0
+  do {
+    code = makeCode(codePrefixForTab(tab))
+    attempts += 1
+  } while (usedCodes.has(normalizeText(code)) && attempts < 10)
+  return code
+}
+
+function catalogReferenceKeys(row: Record<string, any>) {
+  const values = [row.id, row.legacy_id]
+  if (activeTab.value === 'warehouses') values.push(row.warehouse_code)
+  if (activeTab.value === 'suppliers') values.push(row.supplier_code)
+  if (activeTab.value === 'units') values.push(row.unit_code, row.name)
+  return new Set(values.map(value => normalizeText(value || '')).filter(Boolean))
+}
+
+function matchesCatalogReference(row: Record<string, any>, values: any[]) {
+  const keys = catalogReferenceKeys(row)
+  return values.some(value => {
+    const normalized = normalizeText(value || '')
+    return normalized && keys.has(normalized)
+  })
+}
+
 function catalogUsage(row: Record<string, any>) {
-  const id = String(row.id || '').trim()
-  const legacyId = String(row.legacy_id || '').trim()
   const names = new Set([
     normalizeText(row.name || ''),
     normalizeText(row.unit_code || ''),
-    normalizeText(id),
-    normalizeText(legacyId)
   ].filter(Boolean))
 
   if (activeTab.value === 'warehouses') {
-    const importCount = importItems.value.filter(item => activeDoc(item) && [id, legacyId].includes(String(item.warehouse_id || item.warehouse_legacy_id || ''))).length
+    const importCount = importItems.value.filter(item => activeDoc(item) && matchesCatalogReference(row, [
+      item.warehouse_id,
+      item.warehouse_legacy_id,
+      item.warehouse_code,
+    ])).length
     const exportCount = exportItems.value.filter(item => activeDoc(item) && (
-      [id, legacyId].includes(String(item.from_warehouse_id || item.from_warehouse_legacy_id || ''))
-      || [id, legacyId].includes(String(item.to_warehouse_id || item.to_warehouse_legacy_id || ''))
+      matchesCatalogReference(row, [
+        item.from_warehouse_id,
+        item.from_warehouse_legacy_id,
+        item.from_warehouse_code,
+      ])
+      || matchesCatalogReference(row, [
+        item.to_warehouse_id,
+        item.to_warehouse_legacy_id,
+        item.to_warehouse_code,
+      ])
     )).length
-    const balanceCount = inventoryBalances.value.filter(item => [id, legacyId].includes(String(item.warehouse_id || item.warehouse_legacy_id || ''))).length
-    const adjustmentCount = inventoryAdjustments.value.filter(item => activeDoc(item) && [id, legacyId].includes(String(item.warehouse_id || item.warehouse_legacy_id || ''))).length
+    const balanceCount = inventoryBalances.value.filter(item => matchesCatalogReference(row, [
+      item.warehouse_id,
+      item.warehouse_legacy_id,
+      item.warehouse_code,
+    ])).length
+    const adjustmentCount = inventoryAdjustments.value.filter(item => activeDoc(item) && matchesCatalogReference(row, [
+      item.warehouse_id,
+      item.warehouse_legacy_id,
+      item.warehouse_code,
+    ])).length
     return { total: importCount + exportCount + balanceCount + adjustmentCount, detail: `nhập ${importCount}, xuất ${exportCount}, tồn ${balanceCount}, điều chỉnh ${adjustmentCount}` }
   }
 
   if (activeTab.value === 'suppliers') {
-    const count = importOrders.value.filter(order => activeDoc(order) && [id, legacyId].includes(String(order.supplier_id || order.supplier_legacy_id || ''))).length
+    const count = importOrders.value.filter(order => activeDoc(order) && matchesCatalogReference(row, [
+      order.supplier_id,
+      order.supplier_legacy_id,
+      order.supplier_code,
+    ])).length
     return { total: count, detail: `${count} phiếu nhập` }
   }
 
@@ -145,9 +209,6 @@ function statusLabel(row: Record<string, any>) {
 function resetForm(row: Record<string, any> = {}) {
   Object.keys(form).forEach(key => delete form[key])
   Object.assign(form, {
-    warehouse_code: row.warehouse_code || '',
-    supplier_code: row.supplier_code || '',
-    unit_code: row.unit_code || '',
     name: row.name || '',
     phone: row.phone || '',
     email: row.email || '',
@@ -181,20 +242,18 @@ function basePayload() {
     deleted: false,
     updated_at: serverTimestamp()
   }
+  const codeField = codeFieldForTab()
+  const existingCode = String(editing.value?.[codeField] || '').trim()
+  payload[codeField] = existingCode || nextCatalogCode()
   if (activeTab.value === 'warehouses') {
-    payload.warehouse_code = form.warehouse_code || ''
     payload.address = form.address || ''
     payload.phone = form.phone || ''
     payload.manager = form.manager || ''
   }
   if (activeTab.value === 'suppliers') {
-    payload.supplier_code = form.supplier_code || ''
     payload.phone = form.phone || ''
     payload.email = form.email || ''
     payload.address = form.address || ''
-  }
-  if (activeTab.value === 'units') {
-    payload.unit_code = form.unit_code || ''
   }
   return payload
 }
@@ -203,11 +262,7 @@ async function saveCatalog() {
   saving.value = true
   try {
     const payload = basePayload()
-    const codeField = activeTab.value === 'warehouses'
-      ? 'warehouse_code'
-      : activeTab.value === 'suppliers'
-        ? 'supplier_code'
-        : 'unit_code'
+    const codeField = codeFieldForTab()
     const normalizedCode = normalizeText(payload[codeField] || '')
     if (normalizedCode) {
       const duplicated = currentRows.value.some(row =>
@@ -354,10 +409,10 @@ onMounted(() => loadRows())
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
         <table v-if="activeTab === 'warehouses'" style="min-width: 1080px">
-          <thead><tr><th>Mã kho</th><th>Tên kho</th><th>Địa chỉ</th><th>Quản lý/SĐT</th><th>Nguồn</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+          <thead><tr><th>STT</th><th>Tên kho</th><th>Địa chỉ</th><th>Quản lý/SĐT</th><th>Nguồn</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
-            <tr v-for="row in filtered" :key="row.id">
-              <td><b>{{ row.warehouse_code || row.legacy_id || row.id }}</b></td>
+            <tr v-for="(row, index) in filtered" :key="row.id">
+              <td>{{ index + 1 }}</td>
               <td>{{ row.name }}</td>
               <td>{{ row.address || '-' }}</td>
               <td>{{ row.manager || row.phone || '-' }}</td>
@@ -370,10 +425,10 @@ onMounted(() => loadRows())
         </table>
 
         <table v-else-if="activeTab === 'suppliers'" style="min-width: 1080px">
-          <thead><tr><th>Mã NCC</th><th>Tên nhà cung cấp</th><th>SĐT</th><th>Email</th><th>Địa chỉ</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+          <thead><tr><th>STT</th><th>Tên nhà cung cấp</th><th>SĐT</th><th>Email</th><th>Địa chỉ</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
-            <tr v-for="row in filtered" :key="row.id">
-              <td><b>{{ row.supplier_code || row.legacy_id || row.id }}</b></td>
+            <tr v-for="(row, index) in filtered" :key="row.id">
+              <td>{{ index + 1 }}</td>
               <td>{{ row.name }}</td>
               <td>{{ row.phone || '-' }}</td>
               <td>{{ row.email || '-' }}</td>
@@ -386,10 +441,10 @@ onMounted(() => loadRows())
         </table>
 
         <table v-else style="min-width: 860px">
-          <thead><tr><th>Mã đơn vị</th><th>Tên đơn vị</th><th>Nguồn</th><th>Cập nhật</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+          <thead><tr><th>STT</th><th>Tên đơn vị</th><th>Nguồn</th><th>Cập nhật</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
-            <tr v-for="row in filtered" :key="row.id">
-              <td><b>{{ row.unit_code || row.legacy_id || row.id }}</b></td>
+            <tr v-for="(row, index) in filtered" :key="row.id">
+              <td>{{ index + 1 }}</td>
               <td>{{ row.name }}</td>
               <td>{{ row.source || '-' }}</td>
               <td>{{ formatDateTime(row.updated_at || row.created_at) }}</td>
@@ -404,9 +459,6 @@ onMounted(() => loadRows())
 
     <BaseModal v-if="showFormModal" :title="formTitle" size="lg" :loading="saving" :save-label="formSaveLabel" @close="showFormModal = false" @save="saveCatalog">
       <div class="form-grid">
-        <div v-if="activeTab === 'warehouses'" class="form-group"><label>Mã kho</label><input v-model="form.warehouse_code" class="input" /></div>
-        <div v-if="activeTab === 'suppliers'" class="form-group"><label>Mã NCC</label><input v-model="form.supplier_code" class="input" /></div>
-        <div v-if="activeTab === 'units'" class="form-group"><label>Mã đơn vị</label><input v-model="form.unit_code" class="input" /></div>
         <div class="form-group"><label>Tên</label><input v-model="form.name" class="input" /></div>
         <div v-if="activeTab !== 'units'" class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
         <div v-if="activeTab === 'suppliers'" class="form-group"><label>Email</label><input v-model="form.email" class="input" /></div>
