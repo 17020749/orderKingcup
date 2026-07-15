@@ -8,7 +8,10 @@ import {
 import type { ProductDoc, SupplierDoc, WarehouseDoc } from '~/types/models'
 import { makeCode, makeId, normalizeEmail, toNumber, todayKey } from '~/utils/format'
 import { invalidateScopedCache } from '~/composables/useScopedQueries'
-import { buildNotificationPayload } from '~/composables/useNotifications'
+import {
+  buildNotificationPayload,
+  resolveSaleNotificationRecipients,
+} from '~/composables/useNotifications'
 
 type WarehouseLineInput = {
   product: ProductDoc | any
@@ -1462,6 +1465,7 @@ export function useWarehouseTransactions() {
     note?: string
     export_date?: string
     timeline?: any[]
+    notification_recipients?: string[]
     lines: Array<{ product: ProductDoc | any; logo?: string; quantity: number; unit?: string; note?: string }>
   }) {
     const createdBy = email()
@@ -1532,10 +1536,10 @@ export function useWarehouseTransactions() {
 
     const handledBy = createdBy
     const handledAt = new Date().toISOString()
-    const saleRecipients = Array.from(new Set([
-      normalizeEmail(request.requested_by || ''),
-      normalizeEmail(request.order_sale_email || ''),
-    ].filter(Boolean))).filter(recipient => recipient !== handledBy)
+    const saleRecipients = Array.isArray(input.notification_recipients)
+      ? Array.from(new Set(input.notification_recipients.map(normalizeEmail).filter(Boolean)))
+        .filter(recipient => recipient !== handledBy)
+      : resolveSaleNotificationRecipients({ request, actorEmail: handledBy })
     const notificationRefs = saleRecipients.map(() => doc(collection(db, 'notifications')))
     const timeline = Array.isArray(input.timeline) ? input.timeline : []
     const nextTimeline = [...timeline, {
@@ -1688,7 +1692,13 @@ export function useWarehouseTransactions() {
     })
 
     invalidateWarehouseCaches()
-    return { id: orderId, code, stockMovementIds, alreadyProcessed }
+    return {
+      id: orderId,
+      code,
+      stockMovementIds,
+      alreadyProcessed,
+      notificationCount: alreadyProcessed ? 0 : saleRecipients.length,
+    }
   }
 
   async function getInventoryBalanceId(productId: string, warehouseId: string, logo?: string) {

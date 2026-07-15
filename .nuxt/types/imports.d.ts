@@ -95,6 +95,7 @@ declare global {
   const reportFirebaseError: typeof import('../../utils/firebaseErrors').reportFirebaseError
   const requestIdleCallback: typeof import('../../node_modules/nuxt/dist/app/compat/idle-callback').requestIdleCallback
   const resolveComponent: typeof import('vue').resolveComponent
+  const resolveSaleNotificationRecipients: typeof import('../../composables/useNotifications').resolveSaleNotificationRecipients
   const round2: typeof import('../../utils/format').round2
   const safeJsonParse: typeof import('../../utils/format').safeJsonParse
   const setInterval: typeof import('../../node_modules/nuxt/dist/app/compat/interval').setInterval
@@ -211,7 +212,7 @@ declare global {
   export type { Component, ComponentPublicInstance, ComputedRef, DirectiveBinding, ExtractDefaultPropTypes, ExtractPropTypes, ExtractPublicPropTypes, InjectionKey, PropType, Ref, MaybeRef, MaybeRefOrGetter, VNode, WritableComputedRef } from 'vue'
   import('vue')
   // @ts-ignore
-  export type { NotificationPayloadInput } from '../../composables/useNotifications'
+  export type { NotificationPayloadInput, SaleNotificationRecipientInput } from '../../composables/useNotifications'
   import('../../composables/useNotifications')
   // @ts-ignore
   export type { FulfillmentRow } from '../../composables/useWarehouseLogic'
@@ -315,6 +316,7 @@ declare module 'vue' {
     readonly reportFirebaseError: UnwrapRef<typeof import('../../utils/firebaseErrors')['reportFirebaseError']>
     readonly requestIdleCallback: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/compat/idle-callback')['requestIdleCallback']>
     readonly resolveComponent: UnwrapRef<typeof import('vue')['resolveComponent']>
+    readonly resolveSaleNotificationRecipients: UnwrapRef<typeof import('../../composables/useNotifications')['resolveSaleNotificationRecipients']>
     readonly round2: UnwrapRef<typeof import('../../utils/format')['round2']>
     readonly safeJsonParse: UnwrapRef<typeof import('../../utils/format')['safeJsonParse']>
     readonly setInterval: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/compat/interval')['setInterval']>

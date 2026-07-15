@@ -5,10 +5,10 @@ const open = ref(false)
 const busy = ref(false)
 const panel = ref<HTMLElement | null>(null)
 const { appUser } = useAuth()
-const { items, unreadCount, loading, error, start, stop, markRead, markAllRead } = useNotifications()
+const { items, unreadCount, loading, error, start, stop, markRead, markAllRead, rulePermissions } = useNotifications()
 
 watch(
-  () => [appUser.value?.email, JSON.stringify(appUser.value?.permissions_flat || [])],
+  () => [appUser.value?.email, rulePermissions.value.slice().sort().join(',')],
   () => start(),
   { immediate: true },
 )
@@ -63,9 +63,9 @@ onBeforeUnmount(() => document.removeEventListener('click', closeOnOutside))
           </button>
         </div>
 
+        <div v-if="error" class="notification-empty">{{ error }}</div>
         <div v-if="loading && !items.length" class="notification-empty">Đang tải...</div>
-        <div v-else-if="error && !items.length" class="notification-empty">{{ error }}</div>
-        <div v-else-if="!items.length" class="notification-empty">Chưa có thông báo.</div>
+        <div v-else-if="!items.length && !error" class="notification-empty">Chưa có thông báo.</div>
         <div v-else class="notification-list">
           <button
             v-for="item in items"

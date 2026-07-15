@@ -530,8 +530,9 @@ test('Query customer theo created_by được phép, query toàn bộ bị chặ
 
 
 
-test('OR query ownership cho order và phiếu xuất được phép', async () => {
+test('Query realtime Sale theo ownership và Kho theo toàn bộ phiếu được phép', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
+  const warehouseDb = env.authenticatedContext(WAREHOUSE_ACCEPT, { email: WAREHOUSE_ACCEPT }).firestore()
   await assertSucceeds(getDocs(query(
     collection(db, 'orders'),
     or(
@@ -549,6 +550,7 @@ test('OR query ownership cho order và phiếu xuất được phép', async () 
       where('order_sale_email', '==', A)
     )
   )))
+  await assertSucceeds(getDocs(query(collection(warehouseDb, 'order_export_requests'))))
 })
 
 test('Admin đọc và sửa dữ liệu của mọi user', async () => {
@@ -1204,5 +1206,28 @@ test('Mỗi user chỉ được tạo và đọc trạng thái đã đọc của
     active: true,
     deleted: false
   }))
+})
+
+test('Sale sửa yêu cầu được gửi broadcast cập nhật cho đúng nhóm Kho xử lý', async () => {
+  const saleDb = env.authenticatedContext(A, { email: A }).firestore()
+  const acceptDb = env.authenticatedContext(WAREHOUSE_ACCEPT, { email: WAREHOUSE_ACCEPT }).firestore()
+  const pageOnlyDb = env.authenticatedContext(WAREHOUSE_PAGE, { email: WAREHOUSE_PAGE }).firestore()
+  const notificationId = 'notification-sale-updated-request'
+
+  await assertSucceeds(setDoc(doc(saleDb, 'notifications', notificationId), {
+    type: 'warehouse_export_request_updated',
+    title: 'Yêu cầu xuất kho vừa được cập nhật',
+    message: 'YCXK-UPDATED',
+    created_by: A,
+    to_email: '',
+    audience: 'warehouse_export',
+    audience_permissions: ['export_requests.accept', 'export_requests.reject', 'export_requests.release'],
+    status: 'unread',
+    active: true,
+    deleted: false
+  }))
+
+  await assertSucceeds(getDoc(doc(acceptDb, 'notifications', notificationId)))
+  await assertFails(getDoc(doc(pageOnlyDb, 'notifications', notificationId)))
 })
 
