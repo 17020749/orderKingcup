@@ -16,30 +16,30 @@ import process from 'node:process'
 const sourcePath = fileURLToPath(new URL('./cleanup-test-order-data.mjs', import.meta.url))
 const temporaryPath = join(tmpdir(), `cleanup-test-order-data-${process.pid}-${Date.now()}.mjs`)
 
-const activityLogCollectionLine = '    activity_logs: plan.selectedActivityLogs,\n'
-const summaryAnchor = '    inventory_balances_rebuild: plan.balanceRebuilds.length,\n'
-const backupAnchor = '    selected_documents: selected,\n'
+const activityLogCollectionPattern = /^\s{4}activity_logs:\s*plan\.selectedActivityLogs,\s*$/m
+const summaryPattern = /^(\s{4}inventory_balances_rebuild:\s*plan\.balanceRebuilds\.length,\s*)$/m
+const backupPattern = /^(\s{4}selected_documents:\s*selected,\s*)$/m
 
 let source = readFileSync(sourcePath, 'utf8')
 
-if (!source.includes(activityLogCollectionLine)) {
+if (!activityLogCollectionPattern.test(source)) {
   throw new Error('Không tìm thấy điểm vá activity_logs trong cleanup-test-order-data.mjs. Dừng để tránh chạy sai phiên bản.')
 }
-if (!source.includes(summaryAnchor)) {
+if (!summaryPattern.test(source)) {
   throw new Error('Không tìm thấy điểm vá summary trong cleanup-test-order-data.mjs. Dừng để tránh chạy sai phiên bản.')
 }
-if (!source.includes(backupAnchor)) {
+if (!backupPattern.test(source)) {
   throw new Error('Không tìm thấy điểm vá backup trong cleanup-test-order-data.mjs. Dừng để tránh chạy sai phiên bản.')
 }
 
-source = source.replace(activityLogCollectionLine, '')
+source = source.replace(activityLogCollectionPattern, '')
 source = source.replace(
-  summaryAnchor,
-  `    activity_logs_preserved: plan.selectedActivityLogs.length,\n${summaryAnchor}`,
+  summaryPattern,
+  '    activity_logs_preserved: plan.selectedActivityLogs.length,\n$1',
 )
 source = source.replace(
-  backupAnchor,
-  `${backupAnchor}    preserved_activity_logs: plan.selectedActivityLogs.map(row => row.raw),\n`,
+  backupPattern,
+  '$1\n    preserved_activity_logs: plan.selectedActivityLogs.map(row => row.raw),',
 )
 
 writeFileSync(temporaryPath, source, 'utf8')
