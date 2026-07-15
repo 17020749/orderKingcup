@@ -50,7 +50,41 @@ jobs:
               raise SystemExit('Không tìm thấy khối patch V7.4 trong workflow nguồn.')
           block = source.split(start, 1)[1].split(end, 1)[0]
           lines = [line[10:] if line.startswith('          ') else line for line in block.splitlines()]
-          Path('/tmp/apply-v7.4.py').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          script = '\n'.join(lines) + '\n'
+          old_helper = """from pathlib import Path
+
+          def replace_once(path, old, new):
+              file_path = Path(path)
+              text = file_path.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, found {count}\\n--- expected ---\\n{old}')
+              file_path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          """
+          new_helper = """from pathlib import Path
+          import re
+
+          def replace_once(path, old, new):
+              file_path = Path(path)
+              text = file_path.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count == 1:
+                  file_path.write_text(text.replace(old, new, 1), encoding='utf-8')
+                  return
+              if count == 0:
+                  parts = [re.escape(part) for part in re.split(r'\\s+', old.strip()) if part]
+                  pattern = r'\\s+'.join(parts)
+                  matches = list(re.finditer(pattern, text, flags=re.MULTILINE))
+                  if len(matches) == 1:
+                      match = matches[0]
+                      file_path.write_text(text[:match.start()] + new + text[match.end():], encoding='utf-8')
+                      return
+              raise SystemExit(f'{path}: expected one match, found {count}\\n--- expected ---\\n{old}')
+          """
+          if old_helper not in script:
+              raise SystemExit('Không tìm thấy helper replace_once trong patch nguồn.')
+          script = script.replace(old_helper, new_helper, 1)
+          Path('/tmp/apply-v7.4.py').write_text(script, encoding='utf-8')
           PY
             python /tmp/apply-v7.4.py
           } > /tmp/v7.4-patch.log 2>&1
