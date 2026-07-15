@@ -34,6 +34,8 @@ async function loadDashboard(force = false) {
       ...order,
       ...computePaymentStatus(order, paymentMap[order.id] || [])
     }))
+    const activeOrderIds = new Set(ordersWithPayment.map((order: any) => order.id).filter(Boolean))
+    const validItems = itemsSnap.filter((item: any) => isActive(item) && activeOrderIds.has(item.order_id))
     stats.value = {
       orders: ordersWithPayment.length,
       customers: customersSnap.filter(isActive).length,
@@ -41,7 +43,7 @@ async function loadDashboard(force = false) {
       revenue: ordersWithPayment.reduce((s: number, o: any) => s + toNumber(o.actual_revenue || o.total_vat), 0),
       paid: receivedPayments.reduce((s: number, p: any) => s + toNumber(p.amount), 0),
       debt: ordersWithPayment.reduce((s: number, o: any) => s + toNumber(o.debt_amount), 0),
-      profit: itemsSnap.filter(isActive).reduce((s: number, item: any) => s + toNumber(item.line_profit), 0),
+      profit: validItems.reduce((s: number, item: any) => s + toNumber(item.line_profit), 0),
       exportRequests: requestsSnap.filter(isActive).length
     }
     recentOrders.value = ordersWithPayment.sort((a: any, b: any) => String(b.created_at || b.order_date || '').localeCompare(String(a.created_at || a.order_date || ''))).slice(0, 8)
