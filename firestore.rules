@@ -499,21 +499,24 @@ service cloud.firestore {
     // invoice or deletion state. Those fields are handled by dedicated rules.
     function normalOrderEditKeepsSystemFields() {
       return unchanged([
-        'paid_amount',
-        'debt_amount',
-        'computed_payment_status',
-        'payment_status',
-        'payment_count',
-        'deposit_count',
-        'collect_count',
-        'warehouse_fulfillment_status',
-        'warehouse_request_status',
-        'invoice_status',
-        'deleted',
-        'active',
-        'status',
-        'deleted_at'
-      ]);
+          'paid_amount',
+          'debt_amount',
+          'computed_payment_status',
+          'payment_status',
+          'payment_count',
+          'deposit_count',
+          'collect_count',
+          'warehouse_fulfillment_status',
+          'warehouse_request_status',
+          'deleted',
+          'active',
+          'status',
+          'deleted_at'
+        ])
+        && (
+          unchanged(['invoice_status'])
+          || hasAnyPerm(['invoices.create', 'invoices.edit', 'invoices.delete'])
+        );
     }
 
 
@@ -686,15 +689,13 @@ service cloud.firestore {
           )
         );
 
-      allow delete: if isAdmin()
-        || (
-          hasPerm('customers.delete')
-          && ownEmailField(resource.data, 'created_by')
-        );
+            // Customers are always removed through soft-delete updates.
+      allow delete: if false;
+
     }
 
     match /products/{docId} {
-      allow read: if hasPerm('products.view');
+      allow read: if hasAnyPerm(['products.view', 'inventory.view']);
 
       allow create: if isAdmin()
         || (
@@ -719,9 +720,9 @@ service cloud.firestore {
           && softDeleteOnly()
         );
 
-      // Product deletion from the UI is intentionally a soft-delete so old
-      // order items keep their historical product information.
-      allow delete: if isAdmin();
+      // Products are always removed through soft-delete updates so old order
+      // and inventory history keeps its original product reference.
+      allow delete: if false;
     }
 
     // ---------------------------------------------------------------------

@@ -609,7 +609,7 @@ export function useScopedQueries() {
   }
 
   async function loadProducts(force = false, includeInactive = false) {
-    if (!hasPermission('products.view') && !hasPermission('*')) return []
+    if (!hasPermission('products.view') && !hasPermission('inventory.view') && !hasPermission('*')) return []
     const rows = await listCollection<ProductDoc>('products', [], {
       cacheKey: 'all', ttlMs: 300_000, force
     })

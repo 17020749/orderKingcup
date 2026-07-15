@@ -13,7 +13,6 @@ type InventoryAuditRow = InventoryBalanceDoc & {
 }
 
 const { loadInventoryBalances, loadStockMovements, loadWarehouses, loadProducts, loadImportOrders, loadImportOrderItems, loadExportOrders, loadExportOrderItems } = useScopedQueries()
-const { hasPermission } = useAuth()
 const { showToast } = useUi()
 
 const loading = ref(false)
@@ -32,7 +31,6 @@ const exportItems = ref<ExportOrderItemDoc[]>([])
 const selected = ref<InventoryAuditRow | null>(null)
 const showMovementModal = ref(false)
 
-const canValidateProducts = computed(() => hasPermission('*') || hasPermission('products.view'))
 const activeProductIds = computed(() => new Set(products.value.map(row => String(row.id || '').trim()).filter(Boolean)))
 
 function inventoryKey(row: any) {
@@ -44,7 +42,6 @@ function inventoryKey(row: any) {
 }
 
 function productIsVisible(row: any) {
-  if (!canValidateProducts.value) return true
   return activeProductIds.value.has(String(row?.product_id || '').trim())
 }
 
@@ -258,7 +255,7 @@ async function loadRows(force = false) {
     rows.value = balanceRows
     movements.value = movementRows
     warehouses.value = warehouseRows
-    products.value = productRows
+    products.value = productRows.filter(row => row.deleted !== true && row.active !== false && String(row.status || '').trim().toLowerCase() !== 'deleted')
     importOrders.value = importOrderRows
     importItems.value = importItemRows
     exportOrders.value = exportOrderRows

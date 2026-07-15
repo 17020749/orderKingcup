@@ -124,10 +124,6 @@ function productDisplayName(item: any) {
   return item.logo ? `${base} - Logo: ${item.logo}` : base
 }
 
-function padRows<T>(rows: T[], minRows = 15) {
-  return [...rows, ...Array.from({ length: Math.max(0, minRows - rows.length) }, () => null)]
-}
-
 function packingNumber(value: any) {
   const match = String(value || '').replace(/,/g, '').match(/\d+(?:\.\d+)?/)
   return match ? toNumber(match[0]) : 0
@@ -248,16 +244,16 @@ function commercialDocument(kind: 'quotation' | 'order') {
   const dateLabel = kind === 'quotation' ? 'Ngày BG' : 'Ngày ĐH'
   const codeLabel = kind === 'quotation' ? 'Số BG' : 'Số ĐH'
 
-  const itemRows = padRows(rows).map((item: any, index) => item ? `
-    <tr>
-      <td class="center">${index + 1}</td>
-      <td>${escapeHtml(productDisplayName(item))}</td>
-      <td class="center">${escapeHtml(item.unit || '')}</td>
-      <td class="right">${formatNumber(item.quantity)}</td>
-      <td class="right">${formatMoney(item.unitPrice)}</td>
-      <td class="right">${formatMoney(item.lineTotal)}</td>
-    </tr>` : `
-    <tr><td class="center">${index + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`).join('')
+    const itemRows = rows.map((item: any, index) => `
+  <tr>
+    <td class="center">${index + 1}</td>
+    <td>${escapeHtml(productDisplayName(item))}</td>
+    <td class="center">${escapeHtml(item.unit || '')}</td>
+    <td class="right">${formatNumber(item.quantity)}</td>
+    <td class="right">${formatMoney(item.unitPrice)}</td>
+    <td class="right">${formatMoney(item.lineTotal)}</td>
+  </tr>`).join('')
+
 
   return pageShell(`${title} - ${order.order_code || ''}`, `
     <section class="sheet">
@@ -315,8 +311,8 @@ function deliveryDocument() {
   const customerInfo = customerData()
   const rows = flattenItems()
   const warehouseName = resolveWarehouseName()
-  const itemRows = padRows(rows).map((item: any, index) => {
-    if (!item) return `<tr><td class="center">${index + 1}</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`
+    const itemRows = rows.map((item: any, index) => {
+
     const standard = packingNumber(item.packingStandard)
     const boxes = item.boxQuantity || (standard > 0 ? Math.floor(item.quantity / standard) : 0)
     const odd = item.oddQuantity || (standard > 0 ? item.quantity % standard : 0)

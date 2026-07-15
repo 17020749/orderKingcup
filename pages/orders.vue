@@ -34,6 +34,10 @@ const filtered = computed(() => rows.value.filter(row =>
   normalizeText(`${row.order_code} ${row.customer_name} ${row.phone} ${row.order_status} ${row.payment_status} ${row.invoice_status}`).includes(normalizeText(search.value))
 ))
 const canEditOrders = computed(() => hasPermission('orders.edit'))
+const canManageInvoiceStatus = computed(() => editing.value
+  ? hasPermission('invoices.edit')
+  : hasPermission('invoices.create')
+)
 const itemCount = computed(() => `${formItems.value.length} dòng`)
 const modalTotals = computed(() => calcItems(formItems.value, form))
 const selectedDetailItems = computed(() => selectedDetail.value ? (itemsByOrder.value[selectedDetail.value.id] || []) : [])
@@ -426,15 +430,16 @@ async function saveOrder() {
 
     const baseOrder: any = { ...form, ...totals }
     if (editing.value) {
-      // These fields are maintained by their dedicated modules. Omitting them
-      // prevents a normal order edit from overwriting payment/warehouse/invoice
-      // state or reviving a soft-deleted document.
-      ;[
+      // Payment, warehouse and deletion state remain protected. Invoice status
+      // may be included only when the current user has the dedicated permission.
+      const protectedFields = [
         'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
         'payment_count', 'deposit_count', 'collect_count',
         'warehouse_fulfillment_status', 'warehouse_request_status',
-        'invoice_status', 'deleted', 'active', 'status', 'deleted_at', 'created_at'
-      ].forEach(key => delete baseOrder[key])
+        'deleted', 'active', 'status', 'deleted_at', 'created_at'
+      ]
+      if (!canManageInvoiceStatus.value) protectedFields.push('invoice_status')
+      protectedFields.forEach(key => delete baseOrder[key])
     }
 
     const paymentSummary = editing.value
@@ -533,6 +538,9 @@ async function saveOrder() {
       owner_email: ownerEmail,
       sale_email: saleEmail,
       created_by: createdBy,
+      invoice_status: editing.value && !canManageInvoiceStatus.value
+        ? (editing.value.invoice_status || 'Không xuất')
+        : (form.invoice_status || 'Không xuất'),
       items_count: localItems.length,
       active: true,
       deleted: false,
@@ -714,7 +722,13 @@ onMounted(loadRows)
         </div>
         <div class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
         <div class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
-        <div class="form-group"><label>Hóa đơn</label><select v-model="form.invoice_status" class="select"><option v-for="s in INVOICE_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
+        <div class="form-group">
+        <label>Hóa đơn</label>
+        <select v-model="form.invoice_status" class="select" :disabled="!canManageInvoiceStatus">
+          <option v-for="s in INVOICE_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option>
+        </select>
+        <div v-if="!canManageInvoiceStatus" class="small subtle">Bạn không có quyền thay đổi trạng thái hóa đơn.</div>
+      </div>
         <div class="form-group"><label>VAT %</label><select v-model.number="form.vat_rate" class="select"><option v-for="s in VAT_RATE_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
       </div>
       <div class="form-group" style="margin-top:12px"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
