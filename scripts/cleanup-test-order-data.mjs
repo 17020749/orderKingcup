@@ -345,10 +345,12 @@ function selectPlan(all, args) {
     const deterministicRequestId = document.id.startsWith('request_export__')
       ? document.id.slice('request_export__'.length)
       : ''
-    return requestIds.has(sourceRequestId)
+    const linkedToSelectedRequest = requestIds.has(sourceRequestId)
       || requestDocIds.has(deterministicRequestId)
-      || source === 'kingcup_firestore'
-      || syncSource.startsWith('kingcup_firestore:')
+      || (syncSource.startsWith('kingcup_firestore:') && requestIds.has(syncSource.slice('kingcup_firestore:'.length)))
+    const generatedOrderInFullCleanup = args.scope === 'all-orders'
+      && (source === 'kingcup_firestore' || syncSource.startsWith('kingcup_firestore:'))
+    return linkedToSelectedRequest || generatedOrderInFullCleanup
   })
 
   const exportOrderIds = collectIdentityValues(selectedExportOrders, ['id', 'export_code', 'code'])
