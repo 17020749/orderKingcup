@@ -19,6 +19,21 @@ const editing = ref<CustomerDoc | null>(null)
 const form = reactive<any>({})
 
 const filtered = computed(() => rows.value.filter(r => normalizeText(`${r.customer_code} ${r.customer_name} ${r.company_name} ${r.phone} ${r.email}`).includes(normalizeText(search.value))))
+const selectedDetailDisplay = computed(() => selectedDetail.value ? {
+  ...selectedDetail.value,
+  status: customerStatusLabel(selectedDetail.value.status)
+} : null)
+
+function customerStatusLabel(value: any) {
+  const status = String(value || 'active').trim().toLowerCase()
+  if (status === 'inactive') return 'Không hoạt động'
+  if (status === 'active') return 'Hoạt động'
+  return String(value || 'Hoạt động')
+}
+
+function customerStatusClass(value: any) {
+  return String(value || 'active').trim().toLowerCase() === 'inactive' ? 'red' : 'green'
+}
 
 async function loadRows(force = false) {
   loading.value = true
@@ -86,7 +101,7 @@ onMounted(() => loadRows())
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
               <td>{{ row.customer_code || row.id }}</td><td><b>{{ row.customer_name }}</b></td><td>{{ row.company_name }}</td><td>{{ row.phone }}</td><td>{{ row.email }}</td>
-              <td><span class="badge green">{{ row.status || 'Hoạt động' }}</span></td>
+              <td><span class="badge" :class="customerStatusClass(row.status)">{{ customerStatusLabel(row.status) }}</span></td>
               <td class="row">
                 <button class="btn" @click="openDetail(row)">Xem</button>
                 <button v-if="hasPermission('customers.edit')" class="btn" @click="openModal(row)">Sửa</button>
@@ -114,9 +129,9 @@ onMounted(() => loadRows())
     </BaseModal>
 
     <RecordDetailModal
-      v-if="showDetailModal && selectedDetail"
+      v-if="showDetailModal && selectedDetailDisplay"
       title="Chi tiết khách hàng"
-      :record="selectedDetail"
+      :record="selectedDetailDisplay"
       :field-order="['id','customer_code','customer_name','company_name','phone','email','tax_code','billing_address','shipping_address','source','note','created_by','created_at','updated_at','status','active','deleted']"
       @close="showDetailModal = false"
     />
