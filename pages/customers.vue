@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import type { CustomerDoc } from '~/types/models'
-import { isActive, makeId, normalizeText } from '~/utils/format'
+import { makeId, normalizeText } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
-const { saveDoc, softDeleteDoc } = useRepo()
-const { loadScopedCustomers } = useScopedQueries()
-const { hasPermission } = useAuth()
+const { saveDoc, softDeleteDoc, listDocs, q } = useRepo()
+const { appUser, hasPermission, isAdmin } = useAuth()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const loading = ref(false)
@@ -18,7 +17,7 @@ const selectedDetail = ref<CustomerDoc | null>(null)
 const editing = ref<CustomerDoc | null>(null)
 const form = reactive<any>({})
 
-const filtered = computed(() => rows.value.filter(r => normalizeText(`${r.customer_code} ${r.customer_name} ${r.company_name} ${r.phone} ${r.email}`).includes(normalizeText(search.value))))
+const filtered = computed(() => rows.value.filter(r => normalizeText(`${r.customer_code} ${r.customer_name} ${r.company_name} ${r.phone} ${r.email} ${customerStatusLabel(r.status)}`).includes(normalizeText(search.value))))
 const selectedDetailDisplay = computed(() => selectedDetail.value ? {
   ...selectedDetail.value,
   status: customerStatusLabel(selectedDetail.value.status)
@@ -35,10 +34,26 @@ function customerStatusClass(value: any) {
   return String(value || 'active').trim().toLowerCase() === 'inactive' ? 'red' : 'green'
 }
 
+function isCustomerNotDeleted(row: any) {
+  if (!row || row.deleted === true) return false
+  const status = normalizeText(row.status)
+  return !['deleted', 'da xoa'].includes(status)
+}
+
 async function loadRows(force = false) {
   loading.value = true
   try {
-    rows.value = (await loadScopedCustomers(force)).filter(isActive)
+    const currentEmail = String(appUser.value?.email || '').trim().toLowerCase()
+    const constraints = isAdmin.value || hasPermission('*')
+      ? []
+      : currentEmail
+        ? [q.where('created_by', '==', currentEmail)]
+        : []
+
+    // Trang quản lý khách hàng phải hiển thị cả active và inactive. Chỉ loại
+    // bản ghi đã xóa mềm; giá trị status trong Firestore vẫn giữ nguyên.
+    rows.value = (await listDocs('customers', constraints) as CustomerDoc[])
+      .filter(isCustomerNotDeleted)
       .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))
   } catch (error) { showToast(reportFirebaseError(error, 'Không tải được khách hàng.'), 'error') }
   finally { loading.value = false }
@@ -54,7 +69,7 @@ function openModal(row?: CustomerDoc) {
   showModal.value = true
 }
 async function saveCustomer() {
-  if (!form.customer_name) return alert('Thiếu tên khách hàng')
+  if (!form.customer_name) return showToast('Thiếu tên khách hàng', 'error')
   saving.value = true
   try {
     const record = await saveDoc('customers', {
@@ -66,6 +81,7 @@ async function saveCustomer() {
     if (index >= 0) rows.value[index] = { ...rows.value[index], ...record } as CustomerDoc
     else rows.value.unshift(record as CustomerDoc)
     showModal.value = false
+    showToast(editing.value ? 'Đã cập nhật khách hàng' : 'Đã thêm khách hàng', 'success')
   } catch (error) { showToast(reportFirebaseError(error, 'Không lưu được khách hàng.'), 'error') }
   finally { saving.value = false }
 }
@@ -91,7 +107,7 @@ onMounted(() => loadRows())
     </PageHeader>
     <div class="card" style="margin: 24px;">
       <div class="toolbar">
-        <input v-model="search" class="input" style="max-width:420px" placeholder="Tìm khách hàng, SĐT, email..." />
+        <input v-model="search" class="input" style="max-width:420px" placeholder="Tìm khách hàng, SĐT, email, trạng thái..." />
         <button class="btn" @click="loadRows(true)">Làm mới</button>
       </div>
       <LoadingState v-if="loading" />
@@ -108,6 +124,7 @@ onMounted(() => loadRows())
                 <button v-if="hasPermission('customers.delete')" class="btn danger" @click="removeCustomer(row)">Xóa</button>
               </td>
             </tr>
+            <tr v-if="!filtered.length"><td colspan="7" class="empty">Không có khách hàng phù hợp.</td></tr>
           </tbody>
         </table>
       </div>
