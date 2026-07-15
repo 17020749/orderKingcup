@@ -319,6 +319,13 @@ export interface ExportOrderDoc {
   created_at?: any
   updated_at?: any
   created_by?: string
+  updated_by?: string
+  deleted_at?: any
+  deleted_by?: string
+  deleted_reason?: string
+  cancelled_at?: any
+  cancelled_by?: string
+  cancel_reason?: string
   source?: string
 }
 
@@ -346,6 +353,10 @@ export interface ExportOrderItemDoc {
   created_at?: any
   updated_at?: any
   created_by?: string
+  updated_by?: string
+  deleted_at?: any
+  deleted_by?: string
+  deleted_reason?: string
   source?: string
 }
 
@@ -409,3 +420,37 @@ export interface InventoryBalanceDoc {
   last_movement_at?: any
   source?: string
 }
+
+export interface NotificationDoc {
+  id: string
+  type?: string
+  title?: string
+  message?: string
+  route?: string
+  entity_collection?: string
+  entity_id?: string
+  entity_code?: string
+  created_by?: string
+  to_email?: string
+  audience?: string
+  audience_permissions?: string[]
+  metadata_json?: string
+  status?: string
+  read?: boolean
+  active?: boolean
+  deleted?: boolean
+  created_at?: any
+  updated_at?: any
+}
+
+export interface NotificationReadDoc {
+  id: string
+  notification_id: string
+  user_email: string
+  read_at?: any
+  created_at?: any
+  updated_at?: any
+  active?: boolean
+  deleted?: boolean
+}
+

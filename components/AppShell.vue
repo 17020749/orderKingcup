@@ -90,7 +90,8 @@ onBeforeUnmount(saveNavScroll);
         >
       </nav>
       <div class="sidebar-footer">
-        <div>
+        <NotificationCenter />
+        <div style="margin-top: 12px">
           <b>{{
             appUser?.display_name || firebaseUser?.displayName || appUser?.email
           }}</b>

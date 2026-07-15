@@ -19,6 +19,7 @@ interface _GlobalComponents {
   ConfirmModal: typeof import("../../components/ConfirmModal.vue")['default']
   GlobalLoading: typeof import("../../components/GlobalLoading.vue")['default']
   LoadingState: typeof import("../../components/LoadingState.vue")['default']
+  NotificationCenter: typeof import("../../components/NotificationCenter.vue")['default']
   PageHeader: typeof import("../../components/PageHeader.vue")['default']
   RecordDetailModal: typeof import("../../components/RecordDetailModal.vue")['default']
   SearchableSelect: typeof import("../../components/SearchableSelect.vue")['default']
@@ -51,6 +52,7 @@ interface _GlobalComponents {
   LazyConfirmModal: LazyComponent<typeof import("../../components/ConfirmModal.vue")['default']>
   LazyGlobalLoading: LazyComponent<typeof import("../../components/GlobalLoading.vue")['default']>
   LazyLoadingState: LazyComponent<typeof import("../../components/LoadingState.vue")['default']>
+  LazyNotificationCenter: LazyComponent<typeof import("../../components/NotificationCenter.vue")['default']>
   LazyPageHeader: LazyComponent<typeof import("../../components/PageHeader.vue")['default']>
   LazyRecordDetailModal: LazyComponent<typeof import("../../components/RecordDetailModal.vue")['default']>
   LazySearchableSelect: LazyComponent<typeof import("../../components/SearchableSelect.vue")['default']>

@@ -8,6 +8,7 @@ import {
 import type { ProductDoc, SupplierDoc, WarehouseDoc } from '~/types/models'
 import { makeCode, makeId, normalizeEmail, toNumber, todayKey } from '~/utils/format'
 import { invalidateScopedCache } from '~/composables/useScopedQueries'
+import { buildNotificationPayload } from '~/composables/useNotifications'
 
 type WarehouseLineInput = {
   product: ProductDoc | any
@@ -367,6 +368,49 @@ export function useWarehouseTransactions() {
       name: item.warehouse_name || item.warehouse_code || id,
       warehouse_code: item.warehouse_code || ''
     }
+  }
+
+
+  function exportItemProduct(item: any) {
+    const id = normalizeId(item?.product_id || item?.product?.id)
+    if (!id) throw new Error(`Dòng xuất ${item?.id || ''} thiếu product_id, không thể cập nhật tồn an toàn.`)
+    return {
+      id,
+      legacy_id: item.product_legacy_id || item.legacy_product_id || id,
+      product_code: item.product_code || '',
+      product_name: item.product_name || '',
+      unit: item.unit || ''
+    }
+  }
+
+  function exportItemFromWarehouse(item: any) {
+    const id = normalizeId(item?.from_warehouse_id || item?.warehouse_id || item?.fromWarehouse?.id)
+    if (!id) throw new Error(`Dòng xuất ${item?.id || ''} thiếu kho xuất, không thể cập nhật tồn an toàn.`)
+    return {
+      id,
+      legacy_id: item.from_warehouse_legacy_id || item.warehouse_legacy_id || id,
+      name: item.from_warehouse_name || item.warehouse_name || id,
+      warehouse_code: item.from_warehouse_code || item.warehouse_code || ''
+    }
+  }
+
+  function exportItemToWarehouse(item: any) {
+    const id = normalizeId(item?.to_warehouse_id || item?.toWarehouse?.id)
+    if (!id) return null
+    return {
+      id,
+      legacy_id: item.to_warehouse_legacy_id || id,
+      name: item.to_warehouse_name || id,
+      warehouse_code: item.to_warehouse_code || ''
+    }
+  }
+
+  function isRequestGeneratedExport(order: any) {
+    return Boolean(
+      normalizeId(order?.source_request_id)
+      || String(order?.source || '').trim() === 'kingcup_firestore'
+      || String(order?.sync_source || '').trim().startsWith('kingcup_firestore:')
+    )
   }
 
   async function updateImportOrder(input: {
@@ -847,6 +891,485 @@ export function useWarehouseTransactions() {
     return { id: orderId, code, stockMovementIds }
   }
 
+
+  async function updateExportOrder(input: {
+    order: any
+    existingItems: any[]
+    export_date?: string
+    destination_type?: 'customer' | 'warehouse' | string
+    source_order_code?: string
+    customer_name?: string
+    destination_name?: string
+    toWarehouse?: WarehouseDoc | any | null
+    note?: string
+    lines: WarehouseLineInput[]
+  }) {
+    const updatedBy = email()
+    if (!updatedBy) throw new Error('Bạn chưa đăng nhập.')
+    const order = input.order || {}
+    const orderId = normalizeId(order.id)
+    if (!orderId) throw new Error('Thiếu ID phiếu xuất cần sửa.')
+    if (isRequestGeneratedExport(order)) {
+      throw new Error('Phiếu xuất sinh từ yêu cầu sale chỉ được xem, không được sửa trực tiếp tại trang Xuất kho thật.')
+    }
+    if (order.deleted === true || order.active === false || ['cancelled', 'deleted'].includes(String(order.status || ''))) {
+      throw new Error('Phiếu xuất đã hủy/xóa, không thể sửa.')
+    }
+
+    const oldItems = (input.existingItems || []).filter(item => item && item.deleted !== true && item.active !== false)
+    if (!oldItems.length) throw new Error('Phiếu xuất không có chi tiết cũ để cập nhật tồn an toàn.')
+
+    const destinationType = input.destination_type || order.destination_type || 'customer'
+    const exportDate = input.export_date || order.export_date || todayKey()
+    const code = order.code || order.export_code || orderId
+    const rawLines = input.lines.filter(line => toNumber(line.quantity) > 0)
+    if (!rawLines.length) throw new Error('Phiếu xuất phải có ít nhất một dòng hàng.')
+
+    const defaultToWarehouse = destinationType === 'warehouse' && input.toWarehouse
+      ? ensureWarehouse(input.toWarehouse, 'kho nhận')
+      : null
+    const preparedNew = rawLines.map((line, index) => {
+      const product = ensureProduct(line.product)
+      const fromWarehouse = ensureWarehouse(line.fromWarehouse || line.warehouse, 'kho xuất')
+      const toWarehouse = destinationType === 'warehouse'
+        ? ensureWarehouse(line.toWarehouse || defaultToWarehouse, 'kho nhận')
+        : null
+      if (toWarehouse && toWarehouse.id === fromWarehouse.id) throw new Error('Kho nhận phải khác kho xuất.')
+      const quantity = ensurePositiveQuantity(line.quantity)
+      const existing = oldItems[index]
+      return {
+        ...line,
+        product,
+        fromWarehouse,
+        warehouse: fromWarehouse,
+        toWarehouse,
+        quantity,
+        itemId: existing?.id || safeDocId(`${orderId}__${index + 1}`, 'export_item'),
+        outMovementId: safeDocId(`export_update_apply_out:${orderId}:${index + 1}:${makeId('mv')}`, 'movement'),
+        inMovementId: safeDocId(`export_update_apply_in:${orderId}:${index + 1}:${makeId('mv')}`, 'movement')
+      }
+    })
+
+    const balanceDeltas = new Map<string, BalanceDelta>()
+
+    for (const item of oldItems) {
+      const product = exportItemProduct(item)
+      const fromWarehouse = exportItemFromWarehouse(item)
+      const toWarehouse = exportItemToWarehouse(item)
+      const quantity = ensurePositiveQuantity(item.quantity, 'Số lượng cũ')
+      const sourceId = await inventoryBalanceId(product.id, fromWarehouse.id, item.logo)
+      applyDelta(balanceDeltas, {
+        id: sourceId,
+        delta: quantity,
+        product,
+        warehouse: fromWarehouse,
+        logo: normalizeLogo(item.logo),
+        unit: item.unit || product.unit || '',
+        movementDate: exportDate
+      })
+      if (toWarehouse) {
+        const destinationId = await inventoryBalanceId(product.id, toWarehouse.id, item.logo)
+        applyDelta(balanceDeltas, {
+          id: destinationId,
+          delta: -quantity,
+          product,
+          warehouse: toWarehouse,
+          logo: normalizeLogo(item.logo),
+          unit: item.unit || product.unit || '',
+          movementDate: exportDate
+        })
+      }
+    }
+
+    for (const line of preparedNew) {
+      const sourceId = await inventoryBalanceId(line.product.id, line.fromWarehouse.id, line.logo)
+      applyDelta(balanceDeltas, {
+        id: sourceId,
+        delta: -line.quantity,
+        product: line.product,
+        warehouse: line.fromWarehouse,
+        logo: normalizeLogo(line.logo),
+        unit: line.unit || line.product.unit || '',
+        movementDate: exportDate
+      })
+      if (line.toWarehouse) {
+        const destinationId = await inventoryBalanceId(line.product.id, line.toWarehouse.id, line.logo)
+        applyDelta(balanceDeltas, {
+          id: destinationId,
+          delta: line.quantity,
+          product: line.product,
+          warehouse: line.toWarehouse,
+          logo: normalizeLogo(line.logo),
+          unit: line.unit || line.product.unit || '',
+          movementDate: exportDate
+        })
+      }
+    }
+
+    const firstToWarehouse = preparedNew.find(line => line.toWarehouse)?.toWarehouse || defaultToWarehouse
+    const nextDestinationName = destinationType === 'warehouse'
+      ? warehouseName(firstToWarehouse)
+      : (input.destination_name || input.customer_name || '')
+
+    await runTransaction(db, async tx => {
+      const orderRef = doc(db, 'export_orders', orderId)
+      const currentOrderSnap = await tx.get(orderRef)
+      if (!currentOrderSnap.exists()) throw new Error('Phiếu xuất không còn tồn tại.')
+      if (isRequestGeneratedExport(currentOrderSnap.data())) {
+        throw new Error('Phiếu xuất sinh từ yêu cầu sale không được sửa trực tiếp.')
+      }
+
+      const balanceSnaps = new Map<string, any>()
+      for (const delta of balanceDeltas.values()) {
+        balanceSnaps.set(delta.id, await tx.get(doc(db, 'inventory_balances', delta.id)))
+      }
+
+      for (const delta of balanceDeltas.values()) {
+        const snap = balanceSnaps.get(delta.id)
+        const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
+        const next = current + delta.delta
+        if (next < 0) {
+          throw new Error(`Sửa phiếu xuất làm tồn âm: ${productCode(delta.product)} - ${productName(delta.product)} / ${warehouseName(delta.warehouse)}${delta.logo ? ` / ${delta.logo}` : ''}. Tồn hiện tại ${current}, thay đổi ${delta.delta}.`)
+        }
+      }
+
+      tx.update(orderRef, {
+        export_date: exportDate,
+        destination_type: destinationType,
+        source_order_code: input.source_order_code || '',
+        customer_name: destinationType === 'warehouse' ? '' : (input.customer_name || ''),
+        destination_name: nextDestinationName,
+        to_warehouse_id: firstToWarehouse?.id || '',
+        to_warehouse_name: firstToWarehouse ? warehouseName(firstToWarehouse) : '',
+        note: input.note || '',
+        updated_by: updatedBy,
+        updated_at: serverTimestamp()
+      })
+
+      oldItems.forEach(item => {
+        const product = exportItemProduct(item)
+        const fromWarehouse = exportItemFromWarehouse(item)
+        const toWarehouse = exportItemToWarehouse(item)
+        const quantity = toNumber(item.quantity)
+
+        const sourceReverseId = safeDocId(`export_update_reverse_source:${orderId}:${item.id}:${makeId('mv')}`, 'movement')
+        tx.set(doc(db, 'stock_movements', sourceReverseId), movementPayload({
+          id: sourceReverseId,
+          type: 'export_update_reverse_source',
+          direction: 'in',
+          quantity,
+          product,
+          warehouse: fromWarehouse,
+          logo: item.logo,
+          unit: item.unit,
+          movementDate: exportDate,
+          sourceCollection: 'export_orders',
+          sourceDocId: orderId,
+          sourceItemId: item.id,
+          sourceCode: code,
+          reason: 'Hoàn biến động kho nguồn trước khi sửa phiếu xuất',
+          createdBy: updatedBy
+        }))
+
+        if (toWarehouse) {
+          const destinationReverseId = safeDocId(`export_update_reverse_destination:${orderId}:${item.id}:${makeId('mv')}`, 'movement')
+          tx.set(doc(db, 'stock_movements', destinationReverseId), movementPayload({
+            id: destinationReverseId,
+            type: 'export_update_reverse_destination',
+            direction: 'out',
+            quantity: -quantity,
+            product,
+            warehouse: toWarehouse,
+            logo: item.logo,
+            unit: item.unit,
+            movementDate: exportDate,
+            sourceCollection: 'export_orders',
+            sourceDocId: orderId,
+            sourceItemId: item.id,
+            sourceCode: code,
+            reason: 'Đảo biến động kho nhận trước khi sửa phiếu chuyển kho',
+            createdBy: updatedBy
+          }))
+        }
+      })
+
+      preparedNew.forEach((line, index) => {
+        const oldItem = oldItems[index]
+        const itemPayload = {
+          id: line.itemId,
+          export_order_id: orderId,
+          product_id: line.product.id,
+          product_code: productCode(line.product),
+          product_name: productName(line.product),
+          from_warehouse_id: line.fromWarehouse.id,
+          from_warehouse_name: warehouseName(line.fromWarehouse),
+          to_warehouse_id: line.toWarehouse?.id || '',
+          to_warehouse_name: line.toWarehouse ? warehouseName(line.toWarehouse) : '',
+          destination_name: nextDestinationName,
+          logo: normalizeLogo(line.logo),
+          quantity: line.quantity,
+          unit: line.unit || line.product.unit || '',
+          note: line.note || '',
+          legacy_line_key: oldItem?.legacy_line_key || '',
+          status: 'completed',
+          active: true,
+          deleted: false,
+          updated_by: updatedBy,
+          updated_at: serverTimestamp(),
+          source: oldItem?.source || order.source || 'nuxt'
+        }
+
+        if (oldItem?.id) {
+          const { source: _source, ...mutableItemPayload } = itemPayload
+          tx.update(doc(db, 'export_order_items', line.itemId), mutableItemPayload)
+        } else {
+          tx.set(doc(db, 'export_order_items', line.itemId), {
+            ...itemPayload,
+            created_by: updatedBy,
+            created_at: serverTimestamp()
+          })
+        }
+
+        tx.set(doc(db, 'stock_movements', line.outMovementId), movementPayload({
+          id: line.outMovementId,
+          type: line.toWarehouse ? 'export_transfer_out' : 'export_customer',
+          direction: 'out',
+          quantity: -line.quantity,
+          product: line.product,
+          warehouse: line.fromWarehouse,
+          logo: line.logo,
+          unit: line.unit,
+          movementDate: exportDate,
+          sourceCollection: 'export_orders',
+          sourceDocId: orderId,
+          sourceItemId: line.itemId,
+          sourceCode: code,
+          reason: line.toWarehouse ? 'Áp lại xuất chuyển kho sau khi sửa' : 'Áp lại xuất tới khách sau khi sửa',
+          createdBy: updatedBy
+        }))
+
+        if (line.toWarehouse) {
+          tx.set(doc(db, 'stock_movements', line.inMovementId), movementPayload({
+            id: line.inMovementId,
+            type: 'export_transfer_in',
+            direction: 'in',
+            quantity: line.quantity,
+            product: line.product,
+            warehouse: line.toWarehouse,
+            logo: line.logo,
+            unit: line.unit,
+            movementDate: exportDate,
+            sourceCollection: 'export_orders',
+            sourceDocId: orderId,
+            sourceItemId: line.itemId,
+            sourceCode: code,
+            reason: 'Áp lại nhập chuyển kho sau khi sửa',
+            createdBy: updatedBy
+          }))
+        }
+      })
+
+      oldItems.slice(preparedNew.length).forEach(item => {
+        tx.update(doc(db, 'export_order_items', item.id), {
+          deleted: true,
+          active: false,
+          status: 'deleted',
+          deleted_at: serverTimestamp(),
+          deleted_by: updatedBy,
+          updated_by: updatedBy,
+          updated_at: serverTimestamp()
+        })
+      })
+
+      for (const delta of balanceDeltas.values()) {
+        const snap = balanceSnaps.get(delta.id)
+        const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
+        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, current + delta.delta), { merge: true })
+      }
+
+      tx.set(doc(collection(db, 'activity_logs')), activity('export_orders', 'update', code, {
+        id: orderId,
+        code,
+        destination_type: destinationType,
+        line_count: preparedNew.length
+      }))
+    })
+
+    invalidateWarehouseCaches()
+    return { id: orderId, code }
+  }
+
+  async function deleteExportOrder(input: {
+    order: any
+    existingItems: any[]
+    reason?: string
+  }) {
+    const deletedBy = email()
+    if (!deletedBy) throw new Error('Bạn chưa đăng nhập.')
+    const order = input.order || {}
+    const orderId = normalizeId(order.id)
+    if (!orderId) throw new Error('Thiếu ID phiếu xuất cần hủy.')
+    if (isRequestGeneratedExport(order)) {
+      throw new Error('Phiếu xuất sinh từ yêu cầu sale không được hủy tại trang Xuất kho thật. Phải xử lý bằng luồng yêu cầu xuất riêng.')
+    }
+    if (order.deleted === true || order.active === false || ['cancelled', 'deleted'].includes(String(order.status || ''))) {
+      throw new Error('Phiếu xuất đã được hủy trước đó.')
+    }
+
+    const oldItems = (input.existingItems || []).filter(item => item && item.deleted !== true && item.active !== false)
+    if (!oldItems.length) throw new Error('Phiếu xuất không có chi tiết để hoàn tồn.')
+    const exportDate = order.export_date || todayKey()
+    const code = order.code || order.export_code || orderId
+    const reason = String(input.reason || '').trim() || 'Hủy phiếu xuất kho'
+
+    const balanceDeltas = new Map<string, BalanceDelta>()
+    for (const item of oldItems) {
+      const product = exportItemProduct(item)
+      const fromWarehouse = exportItemFromWarehouse(item)
+      const toWarehouse = exportItemToWarehouse(item)
+      const quantity = ensurePositiveQuantity(item.quantity)
+
+      const sourceId = await inventoryBalanceId(product.id, fromWarehouse.id, item.logo)
+      applyDelta(balanceDeltas, {
+        id: sourceId,
+        delta: quantity,
+        product,
+        warehouse: fromWarehouse,
+        logo: normalizeLogo(item.logo),
+        unit: item.unit || product.unit || '',
+        movementDate: exportDate
+      })
+
+      if (toWarehouse) {
+        const destinationId = await inventoryBalanceId(product.id, toWarehouse.id, item.logo)
+        applyDelta(balanceDeltas, {
+          id: destinationId,
+          delta: -quantity,
+          product,
+          warehouse: toWarehouse,
+          logo: normalizeLogo(item.logo),
+          unit: item.unit || product.unit || '',
+          movementDate: exportDate
+        })
+      }
+    }
+
+    await runTransaction(db, async tx => {
+      const orderRef = doc(db, 'export_orders', orderId)
+      const currentOrderSnap = await tx.get(orderRef)
+      if (!currentOrderSnap.exists()) throw new Error('Phiếu xuất không còn tồn tại.')
+      const currentOrder = currentOrderSnap.data() || {}
+      if (isRequestGeneratedExport(currentOrder)) {
+        throw new Error('Phiếu xuất sinh từ yêu cầu sale không được hủy trực tiếp.')
+      }
+      if (currentOrder.deleted === true || currentOrder.active === false) {
+        throw new Error('Phiếu xuất đã được hủy trước đó.')
+      }
+
+      const balanceSnaps = new Map<string, any>()
+      for (const delta of balanceDeltas.values()) {
+        balanceSnaps.set(delta.id, await tx.get(doc(db, 'inventory_balances', delta.id)))
+      }
+
+      for (const delta of balanceDeltas.values()) {
+        const snap = balanceSnaps.get(delta.id)
+        const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
+        const next = current + delta.delta
+        if (next < 0) {
+          throw new Error(`Không thể hủy phiếu vì kho nhận đã sử dụng hàng: ${productCode(delta.product)} - ${productName(delta.product)} / ${warehouseName(delta.warehouse)}${delta.logo ? ` / ${delta.logo}` : ''}. Tồn hiện tại ${current}, cần hoàn ${Math.abs(delta.delta)}.`)
+        }
+      }
+
+      tx.update(orderRef, {
+        deleted: true,
+        active: false,
+        status: 'cancelled',
+        deleted_at: serverTimestamp(),
+        deleted_by: deletedBy,
+        deleted_reason: reason,
+        cancelled_at: serverTimestamp(),
+        cancelled_by: deletedBy,
+        cancel_reason: reason,
+        updated_by: deletedBy,
+        updated_at: serverTimestamp()
+      })
+
+      oldItems.forEach(item => {
+        const product = exportItemProduct(item)
+        const fromWarehouse = exportItemFromWarehouse(item)
+        const toWarehouse = exportItemToWarehouse(item)
+        const quantity = toNumber(item.quantity)
+
+        tx.update(doc(db, 'export_order_items', item.id), {
+          deleted: true,
+          active: false,
+          status: 'cancelled',
+          deleted_at: serverTimestamp(),
+          deleted_by: deletedBy,
+          deleted_reason: reason,
+          updated_by: deletedBy,
+          updated_at: serverTimestamp()
+        })
+
+        const sourceReverseId = safeDocId(`export_cancel_reverse_source:${orderId}:${item.id}:${makeId('mv')}`, 'movement')
+        tx.set(doc(db, 'stock_movements', sourceReverseId), movementPayload({
+          id: sourceReverseId,
+          type: 'export_cancel_reverse_source',
+          direction: 'in',
+          quantity,
+          product,
+          warehouse: fromWarehouse,
+          logo: item.logo,
+          unit: item.unit,
+          movementDate: exportDate,
+          sourceCollection: 'export_orders',
+          sourceDocId: orderId,
+          sourceItemId: item.id,
+          sourceCode: code,
+          reason,
+          createdBy: deletedBy
+        }))
+
+        if (toWarehouse) {
+          const destinationReverseId = safeDocId(`export_cancel_reverse_destination:${orderId}:${item.id}:${makeId('mv')}`, 'movement')
+          tx.set(doc(db, 'stock_movements', destinationReverseId), movementPayload({
+            id: destinationReverseId,
+            type: 'export_cancel_reverse_destination',
+            direction: 'out',
+            quantity: -quantity,
+            product,
+            warehouse: toWarehouse,
+            logo: item.logo,
+            unit: item.unit,
+            movementDate: exportDate,
+            sourceCollection: 'export_orders',
+            sourceDocId: orderId,
+            sourceItemId: item.id,
+            sourceCode: code,
+            reason,
+            createdBy: deletedBy
+          }))
+        }
+      })
+
+      for (const delta of balanceDeltas.values()) {
+        const snap = balanceSnaps.get(delta.id)
+        const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
+        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, current + delta.delta), { merge: true })
+      }
+
+      tx.set(doc(collection(db, 'activity_logs')), activity('export_orders', 'cancel', code, {
+        id: orderId,
+        code,
+        reason
+      }))
+    })
+
+    invalidateWarehouseCaches()
+    return { id: orderId, code }
+  }
+
+
   async function createInventoryAdjustment(input: {
     adjustment_date?: string
     product: ProductDoc | any
@@ -1009,6 +1532,11 @@ export function useWarehouseTransactions() {
 
     const handledBy = createdBy
     const handledAt = new Date().toISOString()
+    const saleRecipients = Array.from(new Set([
+      normalizeEmail(request.requested_by || ''),
+      normalizeEmail(request.order_sale_email || ''),
+    ].filter(Boolean))).filter(recipient => recipient !== handledBy)
+    const notificationRefs = saleRecipients.map(() => doc(collection(db, 'notifications')))
     const timeline = Array.isArray(input.timeline) ? input.timeline : []
     const nextTimeline = [...timeline, {
       action: 'warehouse_export',
@@ -1137,6 +1665,25 @@ export function useWarehouseTransactions() {
           export_order_id: orderId,
           export_code: code
         }))
+        notificationRefs.forEach((notificationRef, index) => {
+          tx.set(notificationRef, buildNotificationPayload({
+            type: 'warehouse_export_request_released',
+            title: 'Kho đã cho xuất hàng',
+            message: `${request.request_id || requestDocId} · Đã tạo phiếu xuất ${code}.`,
+            route: '/export-requests',
+            entity_collection: 'order_export_requests',
+            entity_id: requestDocId,
+            entity_code: request.request_id || requestDocId,
+            created_by: handledBy,
+            to_email: saleRecipients[index],
+            metadata: {
+              order_id: request.order_id || '',
+              order_code: request.order_code || '',
+              export_order_id: orderId,
+              export_code: code,
+            },
+          }))
+        })
       }
     })
 
@@ -1159,6 +1706,8 @@ export function useWarehouseTransactions() {
     updateImportOrder,
     deleteImportOrder,
     createExportOrder,
+    updateExportOrder,
+    deleteExportOrder,
     createInventoryAdjustment,
     processExportRequestToExportOrder,
     getInventoryBalanceId,

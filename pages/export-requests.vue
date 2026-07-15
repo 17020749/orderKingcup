@@ -9,8 +9,6 @@ import type { FulfillmentRow } from "~/composables/useWarehouseLogic";
 import type {
   OrderDoc,
   OrderItemDoc,
-  ProductDoc,
-  WarehouseDoc,
 } from "~/types/models";
 import {
   formatDateTime,
@@ -23,6 +21,10 @@ import {
   toNumber,
 } from "~/utils/format";
 import { reportFirebaseError } from "~/utils/firebaseErrors";
+import {
+  buildNotificationPayload,
+  WAREHOUSE_NOTIFICATION_PERMISSIONS,
+} from "~/composables/useNotifications";
 
 const { db } = useFirebaseServices();
 const { appUser, hasPermission } = useAuth();
@@ -30,8 +32,6 @@ const {
   loadScopedOrders,
   loadScopedOrderItems,
   loadScopedExportRequests,
-  loadProducts,
-  loadWarehouses,
 } = useScopedQueries();
 const {
   buildFulfillmentRows,
@@ -40,34 +40,23 @@ const {
   requestLineProgress,
 } = useWarehouseLogic();
 const { showToast, withLoading } = useUi();
-const { processExportRequestToExportOrder } = useWarehouseTransactions();
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog();
 const { invalidateScopedCache } = useRepo();
 
 const loading = ref(false);
 const saving = ref(false);
-const processing = ref(false);
 const search = ref("");
 const rows = ref<any[]>([]);
 const orders = ref<OrderDoc[]>([]);
-const products = ref<ProductDoc[]>([]);
-const warehouses = ref<WarehouseDoc[]>([]);
 const itemsByOrder = ref<Record<string, OrderItemDoc[]>>({});
 const showModal = ref(false);
 const showDetailModal = ref(false);
-const showProcessModal = ref(false);
 const selectedRequest = ref<any>(null);
-const processRequest = ref<any>(null);
 const editing = ref<any>(null);
 const exportLines = ref<Array<FulfillmentRow & { export_quantity: number }>>(
   [],
 );
 const form = reactive<any>({});
-const processForm = reactive({
-  warehouse_id: "",
-  note: "",
-  export_date: todayKey(),
-});
 
 const filtered = computed(() =>
   rows.value.filter((row) =>
@@ -99,6 +88,12 @@ const canDeletePermission = computed(
     hasPermission("export_requests.delete") ||
     hasPermission("orders.delete"),
 );
+
+const SALE_MUTABLE_STATUSES = new Set(["cho_xu_ly", "dang_xu_ly", "pending"]);
+
+function saleCanModifyRequest(row: any) {
+  return SALE_MUTABLE_STATUSES.has(String(row?.status || ""));
+}
 const orderOptions = computed(() =>
   orders.value.map((order) => ({
     value: order.id,
@@ -108,29 +103,16 @@ const orderOptions = computed(() =>
   })),
 );
 
-const warehouseOptions = computed(() =>
-  warehouses.value.map((warehouse) => ({
-    value: warehouse.id,
-    label: warehouse.name || warehouse.warehouse_code || warehouse.id,
-    subLabel: warehouse.address || "",
-    search: `${warehouse.name || ""} ${warehouse.warehouse_code || ""} ${warehouse.address || ""}`,
-  })),
-);
-
 async function loadRows(force = false) {
   loading.value = true;
   try {
     const loadedOrders = await loadScopedOrders(force);
     orders.value = loadedOrders.filter(isActive);
-    const [requests, items, productRows, warehouseRows] = await Promise.all([
+    const [requests, items] = await Promise.all([
       loadScopedExportRequests(orders.value, force),
       loadScopedOrderItems(orders.value, force),
-      loadProducts(force),
-      loadWarehouses(force),
     ]);
     rows.value = requests.filter(isActive);
-    products.value = productRows;
-    warehouses.value = warehouseRows;
 
     itemsByOrder.value = items.reduce(
       (map, item) => {
@@ -144,7 +126,7 @@ async function loadRows(force = false) {
     applyAllLocalOrderSummaries();
   } catch (error) {
     showToast(
-      reportFirebaseError(error, "Không tải được phiếu xuất kho."),
+      reportFirebaseError(error, "Không tải được yêu cầu xuất kho."),
       "error",
     );
   } finally {
@@ -203,18 +185,13 @@ function prepareLines() {
 function openModal(request?: any) {
   if (!hasPermission("orders.warehouse_export") && !hasPermission("*")) {
     return showToast(
-      "Bạn không có quyền tạo hoặc sửa phiếu xuất kho.",
+      "Bạn không có quyền tạo hoặc sửa yêu cầu xuất kho.",
       "error",
     );
   }
-  if (
-    request &&
-    !["cho_xu_ly", "dang_xu_ly", "da_tiep_nhan"].includes(
-      String(request.status),
-    )
-  ) {
+  if (request && !saleCanModifyRequest(request)) {
     return showToast(
-      "Phiếu đã được Kho xử lý xong nên không thể sửa.",
+      "Kho đã tiếp nhận hoặc xử lý phiếu nên Sale không thể sửa.",
       "error",
     );
   }
@@ -361,15 +338,26 @@ async function saveRequest() {
     );
 
     const batch = writeBatch(db);
-    batch.set(
-      doc(db, "order_export_requests", form.id),
-      {
-        ...record,
+    const requestRef = doc(db, "order_export_requests", form.id);
+    if (editing.value) {
+      // Chỉ cập nhật các field nghiệp vụ Sale được phép sửa. Không gửi lại
+      // identity/status/field xử lý kho để tránh Rules hiểu là thay đổi quyền sở hữu.
+      batch.update(requestRef, {
+        order_code: record.order_code,
+        customer_name: record.customer_name,
+        export_date: record.export_date,
+        updated_by: record.updated_by,
+        payload_json: record.payload_json,
+        request_timeline_json: record.request_timeline_json,
         updated_at: serverTimestamp(),
-        ...(!editing.value ? { created_at: serverTimestamp() } : {}),
-      },
-      { merge: true },
-    );
+      });
+    } else {
+      batch.set(requestRef, {
+        ...record,
+        created_at: serverTimestamp(),
+        updated_at: serverTimestamp(),
+      });
+    }
     batch.update(doc(db, "orders", order.id), {
       ...nextSummary,
       updated_at: serverTimestamp(),
@@ -385,6 +373,28 @@ async function saveRequest() {
       active: true,
       deleted: false,
     });
+    if (!editing.value) {
+      batch.set(
+        doc(collection(db, "notifications")),
+        buildNotificationPayload({
+          type: "warehouse_export_request_created",
+          title: "Có yêu cầu xuất kho mới",
+          message: `${form.request_id} · Đơn ${order.order_code || "-"} · ${order.customer_name || "Khách hàng"}`,
+          route: "/warehouse-export-requests",
+          entity_collection: "order_export_requests",
+          entity_id: form.id,
+          entity_code: form.request_id,
+          created_by: appUser.value?.email || "",
+          audience: "warehouse_export",
+          audience_permissions: WAREHOUSE_NOTIFICATION_PERMISSIONS,
+          metadata: {
+            order_id: order.id,
+            order_code: order.order_code || "",
+            customer_name: order.customer_name || "",
+          },
+        }),
+      );
+    }
     await batch.commit();
 
     const index = rows.value.findIndex((row) => row.id === form.id);
@@ -397,7 +407,7 @@ async function saveRequest() {
     showModal.value = false;
     showToast(
       editing.value
-        ? "Đã cập nhật phiếu xuất kho."
+        ? "Đã cập nhật yêu cầu xuất kho."
         : "Đã gửi yêu cầu xuất kho sang kho.",
       "success",
     );
@@ -407,8 +417,8 @@ async function saveRequest() {
         reportFirebaseError(
           error,
           editing.value
-            ? "Không cập nhật được phiếu xuất kho."
-            : "Không tạo được phiếu xuất kho.",
+            ? "Không cập nhật được yêu cầu xuất kho."
+            : "Không tạo được yêu cầu xuất kho.",
         ),
         "error",
       );
@@ -439,160 +449,22 @@ function requestHasExported(row: any) {
 function canDeleteRequest(row: any) {
   return (
     canDeletePermission.value &&
+    saleCanModifyRequest(row) &&
     !requestHasExported(row) &&
     !String(row.warehouse_export_code || "").trim()
   );
 }
 
-function canProcessRequest(row: any) {
-  return (
-    (hasPermission("*") || hasPermission("export_requests.process")) &&
-    !requestHasExported(row) &&
-    ["cho_xu_ly", "dang_xu_ly", "da_tiep_nhan", "cho_xuat_kho"].includes(
-      String(row.status || ""),
-    )
-  );
-}
-
-function normalizeCode(value: any) {
-  return String(value || "")
-    .trim()
-    .toUpperCase();
-}
-
-function findProductByCode(code: any) {
-  const wanted = normalizeCode(code);
-  return products.value.find(
-    (product) =>
-      normalizeCode(product.product_code) === wanted ||
-      normalizeCode((product as any).code) === wanted,
-  );
-}
-
-function findWarehouse(id: string) {
-  return warehouses.value.find((warehouse) => warehouse.id === id);
-}
-
-function openProcessModal(row: any) {
-  if (!canProcessRequest(row))
-    return showToast(
-      "Phiếu này không còn ở trạng thái có thể cho xuất.",
-      "error",
-    );
-  processRequest.value = row;
-  Object.assign(processForm, {
-    warehouse_id: warehouses.value[0]?.id || "",
-    note: "",
-    export_date: row.export_date || todayKey(),
-  });
-  showProcessModal.value = true;
-}
-
-function buildProcessedOrderSummary(row: any) {
-  const order = orders.value.find((item) => item.id === row.order_id);
-  if (!order) return {};
-  const nextRows = rows.value
-    .map((item) =>
-      item.id === row.id
-        ? {
-            ...item,
-            status: "da_xuat",
-            warehouse_export_code:
-              item.warehouse_export_code || "pending_firestore",
-          }
-        : item,
-    )
-    .filter((item) => item.order_id === row.order_id && isActive(item));
-  return orderSummary(
-    buildFulfillmentRows(itemsByOrder.value[row.order_id] || [], nextRows),
-    nextRows,
-  );
-}
-
-async function processToRealExport() {
-  const row = processRequest.value;
-  if (!row) return;
-  const warehouse = findWarehouse(processForm.warehouse_id);
-  if (!warehouse) return showToast("Vui lòng chọn kho xuất.", "error");
-
-  const lines = requestLineProgress(row).filter(
-    (line: any) => toNumber(line.requested_qty) > 0,
-  );
-  if (!lines.length)
-    return showToast("Yêu cầu xuất kho chưa có dòng hàng hợp lệ.", "error");
-
-  const missing = lines.filter(
-    (line: any) => !findProductByCode(line.product_code),
-  );
-  if (missing.length) {
-    return showToast(
-      `Chưa map được sản phẩm Firestore cho mã: ${missing.map((line: any) => line.product_code).join(", ")}.`,
-      "error",
-    );
-  }
-
-  processing.value = true;
-  try {
-    const result = await processExportRequestToExportOrder({
-      request: row,
-      warehouse,
-      customer_name: row.customer_name,
-      export_date: processForm.export_date,
-      note: processForm.note,
-      timeline: timeline(row),
-      orderSummaryPatch: buildProcessedOrderSummary(row),
-      lines: lines.map((line: any) => ({
-        product: findProductByCode(line.product_code),
-        logo: line.logo,
-        quantity: toNumber(line.requested_qty),
-        unit: line.unit,
-        note: line.note || "",
-      })),
-    });
-
-    const nextRow = {
-      ...row,
-      status: "da_xuat",
-      warehouse_export_code: result.code,
-      warehouse_export_id: result.id,
-      warehouse_export_order_id: result.id,
-      export_order_id: result.id,
-      warehouse_handled_by: appUser.value?.email || "",
-      warehouse_handled_at: new Date().toISOString(),
-      warehouse_note: processForm.note,
-    };
-    const index = rows.value.findIndex((item) => item.id === row.id);
-    if (index >= 0) rows.value[index] = nextRow;
-    const order = orders.value.find((item) => item.id === row.order_id);
-    if (order) Object.assign(order, buildProcessedOrderSummary(nextRow));
-    showProcessModal.value = false;
-    showToast(
-      result.alreadyProcessed
-        ? "Phiếu đã được xử lý trước đó."
-        : `Đã cho xuất và tạo phiếu kho ${result.code}.`,
-      "success",
-    );
-    await loadRows(true);
-  } catch (error) {
-    showToast(
-      reportFirebaseError(error, "Không cho xuất được phiếu này."),
-      "error",
-    );
-  } finally {
-    processing.value = false;
-  }
-}
-
 async function removeRequest(row: any) {
   if (!canDeleteRequest(row)) {
     return showToast(
-      "Phiếu đã xuất kho hoặc đã có mã phiếu kho nên không thể xóa.",
+      "Kho đã tiếp nhận/xử lý hoặc phiếu đã xuất nên Sale không thể xóa.",
       "error",
     );
   }
   const confirmed = await askConfirm({
-    title: "Xóa phiếu xuất kho",
-    message: `Bạn chắc chắn muốn xóa phiếu xuất kho ${row.request_id}?\nPhiếu đã xuất kho hoặc đã có mã phiếu kho sẽ không được xóa.`,
+    title: "Xóa yêu cầu xuất kho",
+    message: `Bạn chắc chắn muốn xóa yêu cầu xuất kho ${row.request_id}?\nSau khi Kho tiếp nhận, Sale sẽ không thể xóa phiếu.`,
     confirmLabel: "Xóa phiếu",
   });
   if (!confirmed) return;
@@ -644,10 +516,10 @@ async function removeRequest(row: any) {
     invalidateScopedCache("order_export_requests");
     invalidateScopedCache("orders");
     invalidateScopedCache("activity_logs");
-    showToast("Đã xóa phiếu xuất kho.", "success");
+    showToast("Đã xóa yêu cầu xuất kho.", "success");
   }).catch((error) =>
     showToast(
-      reportFirebaseError(error, "Không xóa được phiếu xuất kho."),
+      reportFirebaseError(error, "Không xóa được yêu cầu xuất kho."),
       "error",
     ),
   );
@@ -758,8 +630,8 @@ onMounted(() => loadRows());
 <template>
   <AppShell>
     <PageHeader
-      title="Phiếu xuất kho"
-      subtitle="Yêu cầu xuất kho và trạng thái xử lý kho"
+      title="Yêu cầu xuất kho"
+      subtitle="Sale tạo, sửa, xóa và theo dõi trạng thái yêu cầu gửi Kho"
     >
       <button
         v-if="hasPermission('orders.warehouse_export') || hasPermission('*')"
@@ -828,19 +700,10 @@ onMounted(() => loadRows());
                 <div class="action-buttons">
                   <button class="btn-sm" @click="openDetail(row)">Xem</button>
                   <button
-                    v-if="canProcessRequest(row)"
-                    class="btn-sm btn-view"
-                    @click="openProcessModal(row)"
-                  >
-                    Cho xuất
-                  </button>
-                  <button
                     v-if="
                       (hasPermission('orders.warehouse_export') ||
                         hasPermission('*')) &&
-                      ['cho_xu_ly', 'dang_xu_ly', 'da_tiep_nhan'].includes(
-                        row.status,
-                      )
+                      saleCanModifyRequest(row)
                     "
                     class="btn-sm"
                     @click="openModal(row)"
@@ -866,7 +729,7 @@ onMounted(() => loadRows());
             </tr>
             <tr v-if="!filtered.length">
               <td colspan="7" class="empty">
-                Không có phiếu xuất kho phù hợp.
+                Không có yêu cầu xuất kho phù hợp.
               </td>
             </tr>
           </tbody>
@@ -879,7 +742,7 @@ onMounted(() => loadRows());
       :title="editing ? `Sửa phiếu ${form.request_id}` : 'Tạo yêu cầu xuất kho'"
       size="xl"
       :loading="saving"
-      save-label="Lưu phiếu xuất"
+      save-label="Lưu yêu cầu"
       @close="showModal = false"
       @save="saveRequest"
     >
@@ -965,7 +828,7 @@ onMounted(() => loadRows());
 
     <BaseModal
       v-if="showDetailModal && selectedRequest"
-      title="Chi tiết phiếu xuất kho"
+      title="Chi tiết yêu cầu xuất kho"
       size="xl"
       :show-footer="false"
       @close="showDetailModal = false"
@@ -1094,85 +957,7 @@ onMounted(() => loadRows());
       </div>
     </BaseModal>
 
-    <BaseModal
-      v-if="showProcessModal && processRequest"
-      :title="`Cho xuất kho ${processRequest.request_id}`"
-      size="lg"
-      :loading="processing"
-      save-label="Cho xuất kho"
-      @close="showProcessModal = false"
-      @save="processToRealExport"
-    >
-      <div class="detail-grid">
-        <div class="detail-item">
-          <label>Mã yêu cầu</label
-          ><strong>{{ processRequest.request_id }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Đơn hàng</label
-          ><strong>{{ processRequest.order_code }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Khách hàng</label
-          ><strong>{{ processRequest.customer_name || "-" }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Số dòng</label
-          ><strong>{{ requestLineProgress(processRequest).length }}</strong>
-        </div>
-      </div>
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Ngày xuất thực tế</label
-          ><input v-model="processForm.export_date" class="input" type="date" />
-        </div>
-        <div class="form-group">
-          <label>Kho xuất</label>
-          <SearchableSelect
-            v-model="processForm.warehouse_id"
-            :options="warehouseOptions"
-            placeholder="Chọn kho xuất"
-          />
-        </div>
-      </div>
-      <div class="table-wrap" style="margin-top: 14px">
-        <table style="min-width: 820px">
-          <thead>
-            <tr>
-              <th>Sản phẩm</th>
-              <th>Logo</th>
-              <th>Đơn vị</th>
-              <th>Số lượng sẽ xuất</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="(line, index) in requestLineProgress(processRequest)"
-              :key="index"
-            >
-              <td>
-                <b>{{ line.product_code }}</b>
-                <div class="small subtle">{{ line.product_name }}</div>
-              </td>
-              <td>{{ line.logo || "Không logo" }}</td>
-              <td>{{ line.unit || "-" }}</td>
-              <td>
-                <b>{{ line.requested_qty }}</b>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="form-group" style="margin-top: 12px">
-        <label>Ghi chú kho</label
-        ><textarea v-model="processForm.note" class="textarea" rows="3" />
-      </div>
-      <p class="small subtle">
-        Khi xác nhận, hệ thống sẽ check tồn trong Firestore, tạo
-        export_orders/export_order_items, ghi stock_movements và trừ
-        inventory_balances bằng transaction.
-      </p>
-    </BaseModal>
+
 
     <ConfirmModal
       v-bind="confirmState"

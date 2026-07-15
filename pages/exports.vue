@@ -15,9 +15,10 @@ import { reportFirebaseError } from "~/utils/firebaseErrors";
 
 const { loadExportOrders, loadExportOrderItems, loadProducts, loadWarehouses } =
   useScopedQueries();
-const { createExportOrder } = useWarehouseTransactions();
+const { createExportOrder, updateExportOrder, deleteExportOrder } = useWarehouseTransactions();
 const { hasPermission } = useAuth();
 const { showToast } = useUi();
+const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog();
 
 const loading = ref(false);
 const saving = ref(false);
@@ -30,6 +31,7 @@ const warehouses = ref<WarehouseDoc[]>([]);
 const selected = ref<ExportOrderDoc | null>(null);
 const showDetailModal = ref(false);
 const showCreateModal = ref(false);
+const editing = ref<ExportOrderDoc | null>(null);
 
 const form = reactive({
   export_date: todayKey(),
@@ -44,6 +46,14 @@ const form = reactive({
 
 const canCreate = computed(
   () => hasPermission("*") || hasPermission("export.create"),
+);
+
+const canEdit = computed(
+  () => hasPermission("*") || hasPermission("export.edit"),
+);
+
+const canDelete = computed(
+  () => hasPermission("*") || hasPermission("export.delete"),
 );
 
 const productOptions = computed(() =>
@@ -171,12 +181,37 @@ function itemCustomerReceiver(item: any) {
   return item.to_warehouse_id || item.to_warehouse_name ? "-" : (item.destination_name || selected.value?.customer_name || selected.value?.destination_name || "-");
 }
 
+function isRequestGenerated(row: any) {
+  return Boolean(
+    String(row?.source_request_id || "").trim()
+    || String(row?.source || "").trim() === "kingcup_firestore"
+    || String(row?.sync_source || "").trim().startsWith("kingcup_firestore:")
+  );
+}
+
+function canEditRow(row: ExportOrderDoc) {
+  return canEdit.value
+    && !isRequestGenerated(row)
+    && row.deleted !== true
+    && row.active !== false
+    && !["cancelled", "deleted"].includes(String(row.status || ""));
+}
+
+function canDeleteRow(row: ExportOrderDoc) {
+  return canDelete.value
+    && !isRequestGenerated(row)
+    && row.deleted !== true
+    && row.active !== false
+    && !["cancelled", "deleted"].includes(String(row.status || ""));
+}
+
 function openDetail(row: ExportOrderDoc) {
   selected.value = row;
   showDetailModal.value = true;
 }
 
 function openCreateModal() {
+  editing.value = null;
   Object.assign(form, {
     export_date: todayKey(),
     destination_type: "customer",
@@ -188,6 +223,74 @@ function openCreateModal() {
     lines: [newBlankLine()],
   });
   showCreateModal.value = true;
+}
+
+function openEditModal(row: ExportOrderDoc) {
+  if (!canEditRow(row)) {
+    return showToast(
+      isRequestGenerated(row)
+        ? "Phiếu sinh từ yêu cầu sale chỉ được xem, không được sửa tại đây."
+        : "Bạn không có quyền sửa phiếu xuất này.",
+      "error",
+    );
+  }
+  const orderItems = itemsByOrder.value.get(row.id) || [];
+  const firstItem = orderItems[0];
+  editing.value = row;
+  Object.assign(form, {
+    export_date: row.export_date || todayKey(),
+    destination_type: row.destination_type || "customer",
+    from_warehouse_id: firstItem?.from_warehouse_id || "",
+    to_warehouse_id: firstItem?.to_warehouse_id || row.to_warehouse_id || "",
+    customer_name: row.customer_name || row.destination_name || "",
+    source_order_code: row.source_order_code || "",
+    note: row.note || "",
+    lines: orderItems.length
+      ? orderItems.map((item) => ({
+          product_id: item.product_id || "",
+          logo: item.logo || "",
+          quantity: toNumber(item.quantity),
+          unit: item.unit || "",
+          note: item.note || "",
+        }))
+      : [newBlankLine()],
+  });
+  showCreateModal.value = true;
+}
+
+async function cancelExportOrder(row: ExportOrderDoc) {
+  if (!canDeleteRow(row)) {
+    return showToast(
+      isRequestGenerated(row)
+        ? "Phiếu sinh từ yêu cầu sale không được hủy tại trang Xuất kho thật."
+        : "Bạn không có quyền hủy phiếu xuất này.",
+      "error",
+    );
+  }
+  const confirmed = await askConfirm({
+    title: "Hủy phiếu xuất kho",
+    message: `Hủy ${codeOf(row)} sẽ hoàn tồn bằng transaction và giữ lại lịch sử. Bạn chắc chắn?`,
+    confirmLabel: "Hủy phiếu",
+  });
+  if (!confirmed) return;
+
+  saving.value = true;
+  try {
+    await deleteExportOrder({
+      order: row,
+      existingItems: itemsByOrder.value.get(row.id) || [],
+      reason: "Hủy phiếu xuất từ trang Xuất kho thật",
+    });
+    showToast(`Đã hủy phiếu ${codeOf(row)} và hoàn tồn.`, "success");
+    await loadRows(true);
+  } catch (error) {
+    showToast(
+      reportFirebaseError(error, "Không hủy được phiếu xuất kho."),
+      "error",
+    );
+  } finally {
+    saving.value = false;
+  }
 }
 
 function addLine() {
@@ -234,7 +337,7 @@ async function saveExportOrder() {
       form.destination_type === "warehouse"
         ? findWarehouse(form.to_warehouse_id)
         : null;
-    const result = await createExportOrder({
+    const payload = {
       export_date: form.export_date,
       destination_type: form.destination_type,
       source_order_code: form.source_order_code,
@@ -253,9 +356,22 @@ async function saveExportOrder() {
         unit: line.unit || findProduct(line.product_id)?.unit || "",
         note: line.note,
       })),
-    });
+    };
+    const result = editing.value
+      ? await updateExportOrder({
+          ...payload,
+          order: editing.value,
+          existingItems: itemsByOrder.value.get(editing.value.id) || [],
+        })
+      : await createExportOrder(payload);
     showCreateModal.value = false;
-    showToast(`Đã tạo phiếu xuất ${result.code}.`, "success");
+    showToast(
+      editing.value
+        ? `Đã sửa phiếu xuất ${result.code}.`
+        : `Đã tạo phiếu xuất ${result.code}.`,
+      "success",
+    );
+    editing.value = null;
     await loadRows(true);
   } catch (error) {
     showToast(
@@ -380,9 +496,32 @@ onMounted(() => loadRows());
                 <span class="badge blue">{{ row.status || "active" }}</span>
               </td>
               <td>
-                <button class="btn-sm btn-view" @click="openDetail(row)">
-                  Xem chi tiết
-                </button>
+                <div class="action-buttons">
+                  <button class="btn-sm btn-view" @click="openDetail(row)">
+                    Xem chi tiết
+                  </button>
+                  <button
+                    v-if="canEditRow(row)"
+                    class="btn-sm"
+                    @click="openEditModal(row)"
+                  >
+                    Sửa
+                  </button>
+                  <button
+                    v-if="canDeleteRow(row)"
+                    class="btn-sm btn-delete"
+                    @click="cancelExportOrder(row)"
+                  >
+                    Hủy
+                  </button>
+                  <span
+                    v-if="isRequestGenerated(row)"
+                    class="small subtle"
+                    title="Phiếu này được sinh từ yêu cầu sale"
+                  >
+                    Khóa sửa/hủy
+                  </span>
+                </div>
               </td>
             </tr>
             <tr v-if="!filtered.length">
@@ -395,11 +534,11 @@ onMounted(() => loadRows());
 
     <BaseModal
       v-if="showCreateModal"
-      title="Tạo phiếu xuất kho thật"
+      :title="editing ? `Sửa phiếu xuất ${codeOf(editing)}` : 'Tạo phiếu xuất kho thật'"
       size="xl"
       :loading="saving"
-      save-label="Tạo phiếu xuất"
-      @close="showCreateModal = false"
+      :save-label="editing ? 'Lưu thay đổi' : 'Tạo phiếu xuất'"
+      @close="showCreateModal = false; editing = null"
       @save="saveExportOrder"
     >
       <div class="form-grid">
@@ -563,6 +702,10 @@ onMounted(() => loadRows());
           ><strong>{{ selected.sync_source || selected.source || "-" }}</strong>
         </div>
         <div class="detail-item">
+          <label>Quyền sửa/hủy</label>
+          <strong>{{ isRequestGenerated(selected) ? "Khóa - sinh từ yêu cầu sale" : "Phiếu thủ công" }}</strong>
+        </div>
+        <div class="detail-item">
           <label>Người tạo</label
           ><strong>{{ selected.created_by || "-" }}</strong>
         </div>
@@ -612,5 +755,11 @@ onMounted(() => loadRows());
         </table>
       </div>
     </BaseModal>
+
+    <ConfirmModal
+      v-bind="confirmState"
+      @cancel="resolveConfirm(false)"
+      @confirm="resolveConfirm(true)"
+    />
   </AppShell>
 </template>

@@ -8,7 +8,19 @@ type TabKey = 'warehouses' | 'suppliers' | 'units'
 
 const { db } = useFirebaseServices()
 const { appUser, hasPermission } = useAuth()
-const { loadWarehouses, loadSuppliers, loadUnits, invalidateScopedCache } = useScopedQueries()
+const {
+  loadWarehouses,
+  loadSuppliers,
+  loadUnits,
+  loadImportOrders,
+  loadImportOrderItems,
+  loadExportOrders,
+  loadExportOrderItems,
+  loadInventoryBalances,
+  loadInventoryAdjustments,
+  loadProducts,
+  invalidateScopedCache
+} = useScopedQueries()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
@@ -23,6 +35,14 @@ const selected = ref<Record<string, any> | null>(null)
 const editing = ref<Record<string, any> | null>(null)
 const showDetailModal = ref(false)
 const showFormModal = ref(false)
+const usageCheckLoaded = ref(false)
+const importOrders = ref<any[]>([])
+const importItems = ref<any[]>([])
+const exportOrders = ref<any[]>([])
+const exportItems = ref<any[]>([])
+const inventoryBalances = ref<any[]>([])
+const inventoryAdjustments = ref<any[]>([])
+const products = ref<any[]>([])
 const form = reactive<Record<string, any>>({})
 
 const tabItems: Array<{ key: TabKey; label: string }> = [
@@ -66,6 +86,50 @@ const currentCollection = computed(() => activeTab.value)
 const currentLabel = computed(() => tabItems.find(tab => tab.key === activeTab.value)?.label || 'Danh mục')
 const formTitle = computed(() => `${editing.value ? 'Sửa' : 'Thêm'} ${currentLabel.value.toLowerCase()}`)
 const formSaveLabel = computed(() => editing.value ? 'Lưu' : 'Thêm')
+const canCheckReferences = computed(() => {
+  if (hasPermission('*')) return true
+  return hasPermission('import.view')
+    && hasPermission('export.view')
+    && hasPermission('inventory.view')
+    && hasPermission('products.view')
+})
+
+function activeDoc(row: any) {
+  return row && row.deleted !== true && row.active !== false
+}
+
+function catalogUsage(row: Record<string, any>) {
+  const id = String(row.id || '').trim()
+  const legacyId = String(row.legacy_id || '').trim()
+  const names = new Set([
+    normalizeText(row.name || ''),
+    normalizeText(row.unit_code || ''),
+    normalizeText(id),
+    normalizeText(legacyId)
+  ].filter(Boolean))
+
+  if (activeTab.value === 'warehouses') {
+    const importCount = importItems.value.filter(item => activeDoc(item) && [id, legacyId].includes(String(item.warehouse_id || item.warehouse_legacy_id || ''))).length
+    const exportCount = exportItems.value.filter(item => activeDoc(item) && (
+      [id, legacyId].includes(String(item.from_warehouse_id || item.from_warehouse_legacy_id || ''))
+      || [id, legacyId].includes(String(item.to_warehouse_id || item.to_warehouse_legacy_id || ''))
+    )).length
+    const balanceCount = inventoryBalances.value.filter(item => [id, legacyId].includes(String(item.warehouse_id || item.warehouse_legacy_id || ''))).length
+    const adjustmentCount = inventoryAdjustments.value.filter(item => activeDoc(item) && [id, legacyId].includes(String(item.warehouse_id || item.warehouse_legacy_id || ''))).length
+    return { total: importCount + exportCount + balanceCount + adjustmentCount, detail: `nhập ${importCount}, xuất ${exportCount}, tồn ${balanceCount}, điều chỉnh ${adjustmentCount}` }
+  }
+
+  if (activeTab.value === 'suppliers') {
+    const count = importOrders.value.filter(order => activeDoc(order) && [id, legacyId].includes(String(order.supplier_id || order.supplier_legacy_id || ''))).length
+    return { total: count, detail: `${count} phiếu nhập` }
+  }
+
+  const hasUnit = (value: any) => names.has(normalizeText(value || ''))
+  const productCount = products.value.filter(product => activeDoc(product) && hasUnit(product.unit)).length
+  const importCount = importItems.value.filter(item => activeDoc(item) && hasUnit(item.unit)).length
+  const exportCount = exportItems.value.filter(item => activeDoc(item) && hasUnit(item.unit)).length
+  return { total: productCount + importCount + exportCount, detail: `sản phẩm ${productCount}, dòng nhập ${importCount}, dòng xuất ${exportCount}` }
+}
 
 function openDetail(row: Record<string, any>) {
   selected.value = row
@@ -139,6 +203,20 @@ async function saveCatalog() {
   saving.value = true
   try {
     const payload = basePayload()
+    const codeField = activeTab.value === 'warehouses'
+      ? 'warehouse_code'
+      : activeTab.value === 'suppliers'
+        ? 'supplier_code'
+        : 'unit_code'
+    const normalizedCode = normalizeText(payload[codeField] || '')
+    if (normalizedCode) {
+      const duplicated = currentRows.value.some(row =>
+        row.id !== editing.value?.id
+        && activeDoc(row)
+        && normalizeText(row[codeField] || '') === normalizedCode
+      )
+      if (duplicated) throw new Error(`Mã ${payload[codeField]} đã tồn tại.`)
+    }
     if (editing.value?.id) {
       await updateDoc(doc(db, currentCollection.value, editing.value.id), payload)
       showToast(`Đã sửa ${currentLabel.value.toLowerCase()}.`, 'success')
@@ -167,6 +245,20 @@ async function saveCatalog() {
 }
 
 async function removeCatalog(row: Record<string, any>) {
+  if (!usageCheckLoaded.value) {
+    return showToast(
+      canCheckReferences.value
+        ? 'Chưa tải xong dữ liệu tham chiếu. Hãy bấm Làm mới rồi thử lại.'
+        : 'Không thể xóa an toàn vì tài khoản chưa đủ quyền kiểm tra phiếu nhập, phiếu xuất, tồn kho và sản phẩm đang tham chiếu danh mục này.',
+      'error'
+    )
+  }
+
+  const usage = catalogUsage(row)
+  if (usage.total > 0) {
+    return showToast(`Không thể xóa ${row.name || row.id} vì đang được sử dụng: ${usage.detail}.`, 'error')
+  }
+
   const confirmed = await askConfirm({
     title: `Xóa ${currentLabel.value.toLowerCase()}`,
     message: `Bạn chắc chắn muốn xóa mềm ${row.name || row.id}?`,
@@ -194,6 +286,7 @@ async function removeCatalog(row: Record<string, any>) {
 
 async function loadRows(force = false) {
   loading.value = true
+  usageCheckLoaded.value = false
   try {
     const [warehouseRows, supplierRows, unitRows] = await Promise.all([
       loadWarehouses(force),
@@ -203,8 +296,28 @@ async function loadRows(force = false) {
     warehouses.value = warehouseRows
     suppliers.value = supplierRows
     units.value = unitRows
+
+    if (canCheckReferences.value) {
+      const [importOrderRows, importItemRows, exportOrderRows, exportItemRows, balanceRows, adjustmentRows, productRows] = await Promise.all([
+        loadImportOrders(force),
+        loadImportOrderItems(force),
+        loadExportOrders(force),
+        loadExportOrderItems(force),
+        loadInventoryBalances(force),
+        loadInventoryAdjustments(force),
+        loadProducts(force)
+      ])
+      importOrders.value = importOrderRows
+      importItems.value = importItemRows
+      exportOrders.value = exportOrderRows
+      exportItems.value = exportItemRows
+      inventoryBalances.value = balanceRows
+      inventoryAdjustments.value = adjustmentRows
+      products.value = productRows
+      usageCheckLoaded.value = true
+    }
   } catch (error) {
-    showToast(reportFirebaseError(error, 'Không tải được danh mục kho.'), 'error')
+    showToast(reportFirebaseError(error, 'Không tải được danh mục kho hoặc dữ liệu tham chiếu.'), 'error')
   } finally {
     loading.value = false
   }
@@ -232,6 +345,10 @@ onMounted(() => loadRows())
           >{{ tab.label }}</button>
         </div>
         <input v-model="search" class="input" style="max-width: 420px" placeholder="Tìm theo mã, tên, SĐT, email, địa chỉ..." />
+      </div>
+
+      <div v-if="canManageCurrentTab && !usageCheckLoaded" class="small subtle" style="margin: 8px 0 12px">
+        Nút xóa chỉ hoạt động sau khi tài khoản tải được đầy đủ dữ liệu tham chiếu để tránh xóa kho/NCC/đơn vị đang được sử dụng.
       </div>
 
       <LoadingState v-if="loading" />

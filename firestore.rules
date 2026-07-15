@@ -127,6 +127,30 @@ service cloud.firestore {
         );
     }
 
+    function notificationAudienceMatches(data) {
+      return data.get('audience', '') == 'warehouse_export'
+        && hasPerm('page.warehouse_export_requests')
+        && hasAnyPerm([
+          'export_requests.accept',
+          'export_requests.reject',
+          'export_requests.release',
+          'export_requests.process'
+        ]);
+    }
+
+    function notificationCreateTargetIsValid() {
+      let directEmail = request.resource.data.get('to_email', '');
+      let audience = request.resource.data.get('audience', '');
+      return (
+          directEmail is string
+          && directEmail != ''
+        )
+        || (
+          audience == 'warehouse_export'
+          && hasPerm('orders.warehouse_export')
+        );
+    }
+
     // ---------------------------------------------------------------------
     // Generic data helpers
     // ---------------------------------------------------------------------
@@ -163,6 +187,35 @@ service cloud.firestore {
         'deleted_at',
         'updated_at'
       ]);
+    }
+
+    function warehouseSoftDeleteOnly() {
+      return onlyChanged([
+        'deleted',
+        'active',
+        'status',
+        'deleted_at',
+        'deleted_by',
+        'deleted_reason',
+        'cancelled_at',
+        'cancelled_by',
+        'cancel_reason',
+        'updated_by',
+        'updated_at'
+      ]);
+    }
+
+    function manualExportOrderData(data) {
+      return data.get('source_request_id', '') == ''
+        && data.get('source', '') != 'kingcup_firestore'
+        && !data.get('sync_source', '').matches('^kingcup_firestore:.*');
+    }
+
+    function manualExportOrderById(orderId) {
+      let path = /databases/$(database)/documents/export_orders/$(orderId);
+      return orderId is string
+        && exists(path)
+        && manualExportOrderData(get(path).data);
     }
 
     // ---------------------------------------------------------------------
@@ -329,13 +382,11 @@ service cloud.firestore {
     }
 
     function exportRequestEditable() {
-      return resource.data.get('status', '') == 'cho_xu_ly'
-        || resource.data.get('status', '') == 'dang_xu_ly'
-        || resource.data.get('status', '') == 'da_tiep_nhan';
+      return resource.data.get('status', '') in ['cho_xu_ly', 'dang_xu_ly', 'pending'];
     }
 
     function exportRequestCanBeDeleted() {
-      return resource.data.get('status', '') != 'da_xuat'
+      return resource.data.get('status', '') in ['cho_xu_ly', 'dang_xu_ly', 'pending']
         && resource.data.get('warehouse_export_code', '') == '';
     }
 
@@ -410,6 +461,7 @@ service cloud.firestore {
         'import.delete',
         'export.create',
         'export.edit',
+        'export.delete',
         'inventory.adjust',
         'export_requests.release',
         'export_requests.process'
@@ -466,20 +518,18 @@ service cloud.firestore {
 
 
     function orderWarehouseSummaryUpdateAllowed() {
-      let path = userPath();
-      let user = get(path).data;
-      return signedIn()
-        && exists(path)
-        && activeUserData(user)
-        && onlyWarehouseSummaryChanged()
+      return onlyWarehouseSummaryChanged()
         && (
-          adminUserData(user)
-          || (
-            userHasPermData(user, 'orders.warehouse_export')
+          (
+            hasPerm('orders.warehouse_export')
             && ownsOrderData(resource.data)
-            && orderIdentityUnchanged()
           )
-          || userHasAnyPermData(user, ['export_requests.accept', 'export_requests.reject', 'export_requests.release', 'export_requests.process'])
+          || hasAnyPerm([
+            'export_requests.accept',
+            'export_requests.reject',
+            'export_requests.release',
+            'export_requests.process'
+          ])
         );
     }
 
@@ -503,77 +553,42 @@ service cloud.firestore {
     }
 
     function exportSoftDeleteAllowed() {
-      let userPathValue = userPath();
-      let user = get(userPathValue).data;
-      let path = orderPath(resource.data.order_id);
-      let order = get(path).data;
-      return signedIn()
-        && resource.data.order_id is string
-        && exists(userPathValue)
-        && exists(path)
-        && userHasAnyPermData(user, ['export_requests.delete', 'orders.delete'])
-        && orderDataIsActive(order)
-        && exportRequestCanBeDeleted()
-        && (
-          adminUserData(user)
-          || ownsOrderData(order)
-        )
-        && softDeleteOnly();
+      return exportRequestCanBeDeleted()
+        && softDeleteOnly()
+        && hasAnyPerm(['export_requests.delete', 'orders.delete'])
+        && ownsOrderChildData(resource.data);
     }
 
     function exportOwnerEditAllowed() {
-      let userPathValue = userPath();
-      let user = get(userPathValue).data;
-      let path = orderPath(resource.data.order_id);
-      let order = get(path).data;
-      return signedIn()
-        && resource.data.order_id is string
-        && exists(userPathValue)
-        && exists(path)
-        && userHasPermData(user, 'orders.warehouse_export')
-        && orderDataIsActive(order)
-        && exportRequestEditable()
-        && (
-          adminUserData(user)
-          || ownEmailField(resource.data, 'requested_by')
-          || ownsOrderChildData(resource.data)
-          || ownsOrderData(order)
-        )
-        && unchanged([
-          'id',
-          'request_id',
-          'order_id',
-          'requested_by',
-          'requested_at',
-          'created_by',
-          'created_at',
-          'status',
-          'active',
-          'deleted',
-          'deleted_at',
-          'warehouse_export_code',
-          'warehouse_handled_by',
-          'warehouse_handled_at',
-          'warehouse_note',
-          'order_owner_email',
-          'order_created_by',
-          'order_sale_email'
-        ]);
+      return exportRequestEditable()
+        && onlyChanged([
+          'order_code',
+          'customer_name',
+          'export_date',
+          'updated_by',
+          'payload_json',
+          'request_timeline_json',
+          'updated_at'
+        ])
+        && hasPerm('orders.warehouse_export')
+        && ownsOrderChildData(resource.data)
+        && ownEmailField(request.resource.data, 'updated_by');
     }
 
 
     function exportWarehouseProcessAllowed() {
-      let userPathValue = userPath();
-      let user = get(userPathValue).data;
+      let path = userPath();
+      let user = get(path).data;
+      let permissions = user.get('permissions_flat', []);
+      let admin = adminUserData(user);
+      let legacyProcess = admin
+        || (
+          permissions is list
+          && 'export_requests.process' in permissions
+        );
       return signedIn()
-        && exists(userPathValue)
+        && exists(path)
         && activeUserData(user)
-        && userHasAnyPermData(user, [
-          'export_requests.accept',
-          'export_requests.reject',
-          'export_requests.release',
-          'export_requests.process'
-        ])
         && onlyChanged([
           'status',
           'warehouse_export_code',
@@ -592,19 +607,22 @@ service cloud.firestore {
         ])
         && ownEmailField(request.resource.data, 'warehouse_handled_by')
         && (
-          userHasPermData(user, 'export_requests.process')
+          legacyProcess
           || (
-            userHasPermData(user, 'export_requests.accept')
+            permissions is list
+            && 'export_requests.accept' in permissions
             && resource.data.get('status', '') in ['cho_xu_ly', 'pending']
             && request.resource.data.get('status', '') in ['da_tiep_nhan', 'cho_xuat_kho']
           )
           || (
-            userHasPermData(user, 'export_requests.reject')
+            permissions is list
+            && 'export_requests.reject' in permissions
             && !(resource.data.get('status', '') in ['tu_choi', 'da_xuat'])
             && request.resource.data.get('status', '') == 'tu_choi'
           )
           || (
-            userHasPermData(user, 'export_requests.release')
+            permissions is list
+            && 'export_requests.release' in permissions
             && resource.data.get('status', '') in ['cho_xu_ly', 'pending', 'dang_xu_ly', 'da_tiep_nhan', 'cho_xuat_kho']
             && request.resource.data.get('status', '') == 'da_xuat'
           )
@@ -896,10 +914,12 @@ service cloud.firestore {
 
       allow create: if exportCreateAllowed();
 
-      allow update: if isAdmin()
-        || exportWarehouseProcessAllowed()
+      // Evaluate cheap operation-shape checks first. This avoids exhausting
+      // Firestore's 1000-expression limit on the page's three-write batch.
+      allow update: if exportOwnerEditAllowed()
         || exportSoftDeleteAllowed()
-        || exportOwnerEditAllowed();
+        || exportWarehouseProcessAllowed()
+        || isAdmin();
 
       allow delete: if isAdmin()
         || (
@@ -1050,14 +1070,14 @@ service cloud.firestore {
         || (
           hasAnyPerm(['import.delete'])
           && warehouseDocIdentitySafe()
-          && softDeleteOnly()
+          && warehouseSoftDeleteOnly()
         );
       allow delete: if isAdmin();
     }
 
     match /import_order_items/{docId} {
       allow read: if hasAnyPerm(['import.view']);
-      allow create: if hasAnyPerm(['import.create'])
+      allow create: if hasAnyPerm(['import.create', 'import.edit'])
         && request.resource.data.import_order_id is string
         && quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) > 0
@@ -1072,7 +1092,7 @@ service cloud.firestore {
         || (
           hasAnyPerm(['import.delete'])
           && unchanged(['import_order_id', 'created_at', 'created_by', 'source'])
-          && softDeleteOnly()
+          && warehouseSoftDeleteOnly()
         );
       allow delete: if isAdmin();
     }
@@ -1084,35 +1104,62 @@ service cloud.firestore {
       allow update: if isAdmin()
         || (
           hasAnyPerm(['export.edit'])
+          && manualExportOrderData(resource.data)
+          && manualExportOrderData(request.resource.data)
           && warehouseDocIdentitySafe()
-          && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+          && unchanged([
+            'source_request_id',
+            'sync_source',
+            'deleted',
+            'active',
+            'status',
+            'deleted_at',
+            'deleted_by',
+            'deleted_reason',
+            'cancelled_at',
+            'cancelled_by',
+            'cancel_reason'
+          ])
         )
         || (
           hasAnyPerm(['export.delete'])
+          && manualExportOrderData(resource.data)
+          && manualExportOrderData(request.resource.data)
           && warehouseDocIdentitySafe()
-          && softDeleteOnly()
+          && unchanged(['source_request_id', 'sync_source'])
+          && warehouseSoftDeleteOnly()
         );
       allow delete: if isAdmin();
     }
 
     match /export_order_items/{docId} {
       allow read: if hasAnyPerm(['export.view', 'export_requests.release', 'export_requests.process']);
-      allow create: if hasAnyPerm(['export.create', 'export_requests.release', 'export_requests.process'])
-        && request.resource.data.export_order_id is string
+      allow create: if request.resource.data.export_order_id is string
+        && (
+          hasAnyPerm(['export.create', 'export_requests.release', 'export_requests.process'])
+          || (
+            hasAnyPerm(['export.edit'])
+            && manualExportOrderById(request.resource.data.export_order_id)
+          )
+        )
         && quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) > 0
         && ownEmailField(request.resource.data, 'created_by');
       allow update: if isAdmin()
         || (
           hasAnyPerm(['export.edit'])
+          && resource.data.export_order_id is string
+          && manualExportOrderById(resource.data.export_order_id)
           && unchanged(['export_order_id', 'created_at', 'created_by', 'source'])
           && quantityIsNumber(request.resource.data)
           && request.resource.data.get('quantity', 0) > 0
         )
         || (
           hasAnyPerm(['export.delete'])
+          && resource.data.export_order_id is string
+          && manualExportOrderById(resource.data.export_order_id)
           && unchanged(['export_order_id', 'created_at', 'created_by', 'source'])
-          && softDeleteOnly()
+          && warehouseSoftDeleteOnly()
         );
       allow delete: if isAdmin();
     }
@@ -1123,13 +1170,9 @@ service cloud.firestore {
         && quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) != 0
         && ownEmailField(request.resource.data, 'created_by');
-      allow update: if isAdmin()
-        || (
-          hasAnyPerm(['inventory.adjust'])
-          && warehouseDocIdentitySafe()
-          && quantityIsNumber(request.resource.data)
-        );
-      allow delete: if isAdmin();
+      // Điều chỉnh tồn là chứng từ append-only. Nếu nhập sai, tạo một
+      // điều chỉnh ngược mới thay vì sửa/xóa lịch sử cũ.
+      allow update, delete: if isAdmin();
     }
 
     match /stock_movements/{docId} {
@@ -1176,19 +1219,24 @@ service cloud.firestore {
       allow read: if isAdmin()
         || (
           activeUser()
-          && ownEmailField(resource.data, 'to_email')
+          && (
+            ownEmailField(resource.data, 'to_email')
+            || notificationAudienceMatches(resource.data)
+          )
         );
 
       allow create: if activeUser()
         && ownEmailField(request.resource.data, 'created_by')
-        && request.resource.data.get('to_email', '') is string;
+        && notificationCreateTargetIsValid();
 
-      // Recipient may only mark their own notification as read/seen.
+      // Direct recipients may still update legacy read fields. Broadcast
+      // notifications use notification_reads so each warehouse user has an
+      // independent read state.
       allow update: if isAdmin()
         || (
           activeUser()
           && ownEmailField(resource.data, 'to_email')
-          && unchanged(['to_email', 'created_by', 'created_at'])
+          && unchanged(['to_email', 'audience', 'audience_permissions', 'created_by', 'created_at'])
           && onlyChanged([
             'read',
             'is_read',
@@ -1199,6 +1247,24 @@ service cloud.firestore {
             'updated_at'
           ])
         );
+
+      allow delete: if isAdmin();
+    }
+
+    match /notification_reads/{docId} {
+      allow read: if activeUser()
+        && ownEmailField(resource.data, 'user_email');
+
+      allow create: if activeUser()
+        && ownEmailField(request.resource.data, 'user_email')
+        && request.resource.data.get('notification_id', '') is string
+        && request.resource.data.get('notification_id', '') != '';
+
+      allow update: if activeUser()
+        && ownEmailField(resource.data, 'user_email')
+        && ownEmailField(request.resource.data, 'user_email')
+        && unchanged(['notification_id', 'user_email'])
+        && onlyChanged(['read_at', 'created_at', 'updated_at', 'active', 'deleted']);
 
       allow delete: if isAdmin();
     }

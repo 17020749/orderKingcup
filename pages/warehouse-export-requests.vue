@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore'
 import type { OrderDoc, OrderItemDoc, ProductDoc, WarehouseDoc } from '~/types/models'
-import { formatDateTime, isActive, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
+import { formatDateTime, isActive, normalizeEmail, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { buildNotificationPayload } from '~/composables/useNotifications'
 
 const { db } = useFirebaseServices()
 const { appUser, hasPermission, hasAnyPermission } = useAuth()
@@ -214,7 +215,39 @@ const actionSaveLabel = computed(() => {
   return 'Xác nhận'
 })
 
-async function updateRequestStatus(row: any, nextStatus: string, action: string, title: string, note = '', extra: Record<string, any> = {}) {
+function saleNotificationRecipients(row: any) {
+  const actor = normalizeEmail(appUser.value?.email || '')
+  return Array.from(new Set([
+    normalizeEmail(row?.requested_by || ''),
+    normalizeEmail(row?.order_sale_email || ''),
+  ].filter(Boolean))).filter(email => email !== actor)
+}
+
+function addSaleNotifications(batch: any, row: any, input: { type: string; title: string; message: string }) {
+  saleNotificationRecipients(row).forEach(toEmail => {
+    batch.set(
+      doc(collection(db, 'notifications')),
+      buildNotificationPayload({
+        type: input.type,
+        title: input.title,
+        message: input.message,
+        route: '/export-requests',
+        entity_collection: 'order_export_requests',
+        entity_id: row.id,
+        entity_code: row.request_id || row.id,
+        created_by: appUser.value?.email || '',
+        to_email: toEmail,
+        metadata: {
+          order_id: row.order_id || '',
+          order_code: row.order_code || '',
+          customer_name: row.customer_name || '',
+        },
+      }),
+    )
+  })
+}
+
+async function updateRequestStatus(row: any, nextStatus: string, action: string, title: string, note = '', extra: Record<string, any> = {}, notification?: { type: string; title: string; message: string }) {
   const orderPatch = orderPatchAfter(row, nextStatus, extra)
   const batch = writeBatch(db)
   const patch = {
@@ -244,6 +277,7 @@ async function updateRequestStatus(row: any, nextStatus: string, action: string,
     active: true,
     deleted: false
   })
+  if (notification) addSaleNotifications(batch, row, notification)
   await batch.commit()
   invalidateScopedCache('order_export_requests')
   invalidateScopedCache('orders')
@@ -251,7 +285,19 @@ async function updateRequestStatus(row: any, nextStatus: string, action: string,
 }
 
 async function submitAccept(row: any) {
-  await updateRequestStatus(row, 'da_tiep_nhan', 'accept', 'Kho đã tiếp nhận', actionForm.note)
+  await updateRequestStatus(
+    row,
+    'da_tiep_nhan',
+    'accept',
+    'Kho đã tiếp nhận',
+    actionForm.note,
+    {},
+    {
+      type: 'warehouse_export_request_accepted',
+      title: 'Kho đã tiếp nhận yêu cầu xuất',
+      message: `${row.request_id || row.id} · Đơn ${row.order_code || '-'} đã được Kho tiếp nhận.`,
+    },
+  )
   showToast('Đã tiếp nhận yêu cầu xuất kho.', 'success')
 }
 
@@ -263,7 +309,19 @@ async function submitReject(row: any) {
     confirmLabel: 'Từ chối'
   })
   if (!confirmed) return
-  await updateRequestStatus(row, 'tu_choi', 'reject', 'Kho đã từ chối', actionForm.note)
+  await updateRequestStatus(
+    row,
+    'tu_choi',
+    'reject',
+    'Kho đã từ chối',
+    actionForm.note,
+    {},
+    {
+      type: 'warehouse_export_request_rejected',
+      title: 'Kho đã từ chối yêu cầu xuất',
+      message: `${row.request_id || row.id} · Lý do: ${String(actionForm.note || '').trim()}`,
+    },
+  )
   showToast('Đã từ chối yêu cầu xuất kho.', 'success')
 }
 
