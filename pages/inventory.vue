@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ExportOrderDoc, ExportOrderItemDoc, ImportOrderDoc, ImportOrderItemDoc, InventoryBalanceDoc, StockMovementDoc, WarehouseDoc } from '~/types/models'
+import type { ExportOrderDoc, ExportOrderItemDoc, ImportOrderDoc, ImportOrderItemDoc, InventoryBalanceDoc, ProductDoc, StockMovementDoc, WarehouseDoc } from '~/types/models'
 import { formatDateTime, normalizeText, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
@@ -12,7 +12,8 @@ type InventoryAuditRow = InventoryBalanceDoc & {
   has_balance: boolean
 }
 
-const { loadInventoryBalances, loadStockMovements, loadWarehouses, loadImportOrders, loadImportOrderItems, loadExportOrders, loadExportOrderItems } = useScopedQueries()
+const { loadInventoryBalances, loadStockMovements, loadWarehouses, loadProducts, loadImportOrders, loadImportOrderItems, loadExportOrders, loadExportOrderItems } = useScopedQueries()
+const { hasPermission } = useAuth()
 const { showToast } = useUi()
 
 const loading = ref(false)
@@ -23,12 +24,16 @@ const reconcileFilter = ref('')
 const rows = ref<InventoryBalanceDoc[]>([])
 const movements = ref<StockMovementDoc[]>([])
 const warehouses = ref<WarehouseDoc[]>([])
+const products = ref<ProductDoc[]>([])
 const importOrders = ref<ImportOrderDoc[]>([])
 const importItems = ref<ImportOrderItemDoc[]>([])
 const exportOrders = ref<ExportOrderDoc[]>([])
 const exportItems = ref<ExportOrderItemDoc[]>([])
 const selected = ref<InventoryAuditRow | null>(null)
 const showMovementModal = ref(false)
+
+const canValidateProducts = computed(() => hasPermission('*') || hasPermission('products.view'))
+const activeProductIds = computed(() => new Set(products.value.map(row => String(row.id || '').trim()).filter(Boolean)))
 
 function inventoryKey(row: any) {
   return [
@@ -38,23 +43,30 @@ function inventoryKey(row: any) {
   ].join('|')
 }
 
+function productIsVisible(row: any) {
+  if (!canValidateProducts.value) return true
+  return activeProductIds.value.has(String(row?.product_id || '').trim())
+}
+
 const auditRows = computed<InventoryAuditRow[]>(() => {
   const audit = new Map<string, InventoryAuditRow>()
 
-  rows.value.forEach(row => {
-    audit.set(inventoryKey(row), {
-      ...row,
-      movement_in: 0,
-      movement_out: 0,
-      movement_adjustment: 0,
-      movement_quantity: 0,
-      difference: 0,
-      has_balance: true
+  rows.value
+    .filter(productIsVisible)
+    .forEach(row => {
+      audit.set(inventoryKey(row), {
+        ...row,
+        movement_in: 0,
+        movement_out: 0,
+        movement_adjustment: 0,
+        movement_quantity: 0,
+        difference: 0,
+        has_balance: true
+      })
     })
-  })
 
   movements.value
-    .filter(row => row.deleted !== true && row.active !== false)
+    .filter(row => row.deleted !== true && row.active !== false && productIsVisible(row))
     .forEach(movement => {
       const key = inventoryKey(movement)
       if (!audit.has(key)) {
@@ -117,11 +129,17 @@ const auditRows = computed<InventoryAuditRow[]>(() => {
     row.difference = Math.round((toNumber(row.quantity) - row.movement_quantity) * 1000) / 1000
   })
 
-  return Array.from(audit.values()).sort((a, b) => {
-    const left = `${a.warehouse_name || ''} ${a.product_code || ''} ${a.logo || ''}`
-    const right = `${b.warehouse_name || ''} ${b.product_code || ''} ${b.logo || ''}`
-    return left.localeCompare(right, 'vi')
-  })
+  return Array.from(audit.values())
+    .filter(row =>
+      Math.abs(toNumber(row.quantity)) >= 0.0001
+      || Math.abs(row.movement_quantity) >= 0.0001
+      || Math.abs(row.difference) >= 0.0001
+    )
+    .sort((a, b) => {
+      const left = `${a.warehouse_name || ''} ${a.product_code || ''} ${a.logo || ''}`
+      const right = `${b.warehouse_name || ''} ${b.product_code || ''} ${b.logo || ''}`
+      return left.localeCompare(right, 'vi')
+    })
 })
 
 const filtered = computed(() => {
@@ -227,10 +245,11 @@ function openMovements(row: InventoryAuditRow) {
 async function loadRows(force = false) {
   loading.value = true
   try {
-    const [balanceRows, movementRows, warehouseRows, importOrderRows, importItemRows, exportOrderRows, exportItemRows] = await Promise.all([
+    const [balanceRows, movementRows, warehouseRows, productRows, importOrderRows, importItemRows, exportOrderRows, exportItemRows] = await Promise.all([
       loadInventoryBalances(force),
       loadStockMovements(force),
       loadWarehouses(force),
+      loadProducts(force),
       loadImportOrders(force),
       loadImportOrderItems(force),
       loadExportOrders(force),
@@ -239,6 +258,7 @@ async function loadRows(force = false) {
     rows.value = balanceRows
     movements.value = movementRows
     warehouses.value = warehouseRows
+    products.value = productRows
     importOrders.value = importOrderRows
     importItems.value = importItemRows
     exportOrders.value = exportOrderRows
