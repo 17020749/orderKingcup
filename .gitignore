@@ -17,6 +17,12 @@ firebase-debug.*.log*
 # it commented so all members can deploy to the same project(s) in .firebaserc.
 # .firebaserc
 
+# Local admin credentials and cleanup backups
+service-account*.json
+*.service-account.json
+firebase-adminsdk*.json
+backups/cleanup-test-orders/
+
 # Runtime data
 pids
 *.pid
@@ -41,7 +47,7 @@ bower_components
 # node-waf configuration
 .lock-wscript
 
-# Compiled binary addons (http://nodejs.org/api/addons.html)
+# Compiled binary addons (http://nodejs.org/api/addons)
 build/Release
 
 # Dependency directories
