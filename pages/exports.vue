@@ -47,11 +47,9 @@ const form = reactive({
 const canCreate = computed(
   () => hasPermission("*") || hasPermission("export.create"),
 );
-
 const canEdit = computed(
   () => hasPermission("*") || hasPermission("export.edit"),
 );
-
 const canDelete = computed(
   () => hasPermission("*") || hasPermission("export.delete"),
 );
@@ -95,6 +93,9 @@ const enrichedRows = computed(() =>
         (sum, item) => sum + toNumber(item.quantity),
         0,
       ),
+      product_search_text: orderItems
+        .map((item) => `${item.product_code || ""} ${item.product_name || ""} ${item.logo || ""} ${item.unit || ""}`)
+        .join(" "),
     };
   }),
 );
@@ -118,6 +119,7 @@ const filtered = computed(() => {
           row.status,
           row.sync_source,
           row.note,
+          row.product_search_text,
         ].join(" "),
       ).includes(keyword);
     return matchedDestination && matchedText;
@@ -424,21 +426,10 @@ onMounted(() => loadRows());
     </PageHeader>
 
     <div class="summary-grid">
-      <div class="summary-card">
-        <label>Số phiếu</label
-        ><strong>{{ summary.orders.toLocaleString("vi-VN") }}</strong>
-      </div>
-      <div class="summary-card">
-        <label>Số dòng hàng</label
-        ><strong>{{ summary.lines.toLocaleString("vi-VN") }}</strong>
-      </div>
-      <div class="summary-card">
-        <label>Tổng SL xuất</label
-        ><strong>{{ quantityText(summary.quantity) }}</strong>
-      </div>
-      <div class="summary-card">
-        <label>Ghi tồn</label><strong>Transaction</strong>
-      </div>
+      <div class="summary-card"><label>Số phiếu</label><strong>{{ summary.orders.toLocaleString("vi-VN") }}</strong></div>
+      <div class="summary-card"><label>Số dòng hàng</label><strong>{{ summary.lines.toLocaleString("vi-VN") }}</strong></div>
+      <div class="summary-card"><label>Tổng SL xuất</label><strong>{{ quantityText(summary.quantity) }}</strong></div>
+      <div class="summary-card"><label>Ghi tồn</label><strong>Transaction</strong></div>
     </div>
 
     <div class="card" style="margin: 24px;">
@@ -446,14 +437,10 @@ onMounted(() => loadRows());
         <input
           v-model="search"
           class="input"
-          style="max-width: 520px"
-          placeholder="Tìm mã phiếu, đơn hàng, khách hàng, người tạo..."
+          style="max-width: 620px"
+          placeholder="Tìm mã phiếu, đơn hàng, khách hàng, tên/mã sản phẩm, người tạo..."
         />
-        <select
-          v-model="destinationFilter"
-          class="select"
-          style="max-width: 220px"
-        >
+        <select v-model="destinationFilter" class="select" style="max-width: 220px">
           <option value="">Tất cả loại xuất</option>
           <option value="customer">Xuất tới khách</option>
           <option value="warehouse">Xuất tới kho</option>
@@ -463,70 +450,27 @@ onMounted(() => loadRows());
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
         <table style="min-width: 1180px">
-          <thead>
-            <tr>
-              <th>Mã phiếu</th>
-              <th>Ngày xuất</th>
-              <th>Loại xuất</th>
-              <th>Đích xuất</th>
-              <th>Số dòng</th>
-              <th>Tổng SL</th>
-              <th>Người tạo</th>
-              <th>Trạng thái</th>
-              <th>Thao tác</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Mã phiếu</th><th>Ngày xuất</th><th>Loại xuất</th><th>Đích xuất</th><th>Số dòng</th><th>Tổng SL</th><th>Người tạo</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
-              <td>
-                <b>{{ codeOf(row) }}</b>
-                <div class="small subtle">
-                  {{ row.source_order_code || row.sync_source || row.id }}
-                </div>
-              </td>
+              <td><b>{{ codeOf(row) }}</b><div class="small subtle">{{ row.source_order_code || row.sync_source || row.id }}</div></td>
               <td>{{ formatDateTime(row.export_date || row.created_at) }}</td>
               <td>{{ destinationLabel(row.destination_type) }}</td>
               <td>{{ row.destination_name || row.customer_name || "-" }}</td>
               <td>{{ row.item_count }}</td>
-              <td>
-                <b>{{ quantityText(row.total_quantity) }}</b>
-              </td>
+              <td><b>{{ quantityText(row.total_quantity) }}</b></td>
               <td>{{ row.created_by || "-" }}</td>
-              <td>
-                <span class="badge blue">{{ row.status || "active" }}</span>
-              </td>
+              <td><span class="badge blue">{{ row.status || "active" }}</span></td>
               <td>
                 <div class="action-buttons">
-                  <button class="btn-sm btn-view" @click="openDetail(row)">
-                    Xem chi tiết
-                  </button>
-                  <button
-                    v-if="canEditRow(row)"
-                    class="btn-sm"
-                    @click="openEditModal(row)"
-                  >
-                    Sửa
-                  </button>
-                  <button
-                    v-if="canDeleteRow(row)"
-                    class="btn-sm btn-delete"
-                    @click="cancelExportOrder(row)"
-                  >
-                    Hủy
-                  </button>
-                  <span
-                    v-if="isRequestGenerated(row)"
-                    class="small subtle"
-                    title="Phiếu này được sinh từ yêu cầu sale"
-                  >
-                    Khóa sửa/hủy
-                  </span>
+                  <button class="btn-sm btn-view" @click="openDetail(row)">Xem chi tiết</button>
+                  <button v-if="canEditRow(row)" class="btn-sm" @click="openEditModal(row)">Sửa</button>
+                  <button v-if="canDeleteRow(row)" class="btn-sm btn-delete" @click="cancelExportOrder(row)">Hủy</button>
+                  <span v-if="isRequestGenerated(row)" class="small subtle" title="Phiếu này được sinh từ yêu cầu sale">Khóa sửa/hủy</span>
                 </div>
               </td>
             </tr>
-            <tr v-if="!filtered.length">
-              <td colspan="9" class="empty">Không có phiếu xuất kho thật.</td>
-            </tr>
+            <tr v-if="!filtered.length"><td colspan="9" class="empty">Không có phiếu xuất kho thật.</td></tr>
           </tbody>
         </table>
       </div>
@@ -542,128 +486,32 @@ onMounted(() => loadRows());
       @save="saveExportOrder"
     >
       <div class="form-grid">
-        <div class="form-group">
-          <label>Ngày xuất</label
-          ><input v-model="form.export_date" class="input" type="date" />
-        </div>
-        <div class="form-group">
-          <label>Kho xuất</label>
-          <SearchableSelect
-            v-model="form.from_warehouse_id"
-            :options="warehouseOptions"
-            placeholder="Chọn kho xuất"
-          />
-        </div>
-        <div class="form-group">
-          <label>Loại xuất</label>
-          <select v-model="form.destination_type" class="select">
-            <option value="customer">Xuất tới khách</option>
-            <option value="warehouse">Xuất tới kho</option>
-          </select>
-        </div>
-        <div v-if="form.destination_type === 'warehouse'" class="form-group">
-          <label>Kho nhận</label>
-          <SearchableSelect
-            v-model="form.to_warehouse_id"
-            :options="warehouseOptions"
-            placeholder="Chọn kho nhận"
-          />
-        </div>
-        <div v-else class="form-group">
-          <label>Khách hàng / nơi nhận</label
-          ><input
-            v-model="form.customer_name"
-            class="input"
-            placeholder="Tên khách hàng hoặc nơi nhận"
-          />
-        </div>
-        <div class="form-group">
-          <label>Mã đơn liên quan</label
-          ><input
-            v-model="form.source_order_code"
-            class="input"
-            placeholder="Nếu có"
-          />
-        </div>
+        <div class="form-group"><label>Ngày xuất</label><input v-model="form.export_date" class="input" type="date" /></div>
+        <div class="form-group"><label>Kho xuất</label><SearchableSelect v-model="form.from_warehouse_id" :options="warehouseOptions" placeholder="Chọn kho xuất" /></div>
+        <div class="form-group"><label>Loại xuất</label><select v-model="form.destination_type" class="select"><option value="customer">Xuất tới khách</option><option value="warehouse">Xuất tới kho</option></select></div>
+        <div v-if="form.destination_type === 'warehouse'" class="form-group"><label>Kho nhận</label><SearchableSelect v-model="form.to_warehouse_id" :options="warehouseOptions" placeholder="Chọn kho nhận" /></div>
+        <div v-else class="form-group"><label>Khách hàng / nơi nhận</label><input v-model="form.customer_name" class="input" placeholder="Tên khách hàng hoặc nơi nhận" /></div>
+        <div class="form-group"><label>Mã đơn liên quan</label><input v-model="form.source_order_code" class="input" placeholder="Nếu có" /></div>
       </div>
 
       <div class="table-wrap" style="margin-top: 14px">
         <table style="min-width: 980px">
-          <thead>
-            <tr>
-              <th>Sản phẩm</th>
-              <th>Logo</th>
-              <th>Đơn vị</th>
-              <th>Số lượng</th>
-              <th>Ghi chú</th>
-              <th></th>
-            </tr>
-          </thead>
+          <thead><tr><th>Sản phẩm</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Ghi chú</th><th></th></tr></thead>
           <tbody>
             <tr v-for="(line, index) in form.lines" :key="index">
-              <td>
-                <SearchableSelect
-                  v-model="line.product_id"
-                  :options="productOptions"
-                  placeholder="Chọn sản phẩm"
-                  @change="onProductChanged(line)"
-                />
-              </td>
-              <td>
-                <input
-                  v-model="line.logo"
-                  class="input"
-                  placeholder="Để trống nếu không logo"
-                />
-              </td>
-              <td>
-                <input v-model="line.unit" class="input" placeholder="Đơn vị" />
-              </td>
-              <td>
-                <input
-                  v-model.number="line.quantity"
-                  class="input"
-                  type="number"
-                  min="0"
-                  step="1"
-                />
-              </td>
-              <td>
-                <input
-                  v-model="line.note"
-                  class="input"
-                  placeholder="Ghi chú dòng"
-                />
-              </td>
-              <td>
-                <button
-                  class="btn-sm btn-delete"
-                  type="button"
-                  @click="removeLine(index)"
-                >
-                  Xóa
-                </button>
-              </td>
+              <td><SearchableSelect v-model="line.product_id" :options="productOptions" placeholder="Tìm theo mã hoặc tên sản phẩm" @change="onProductChanged(line)" /></td>
+              <td><input v-model="line.logo" class="input" placeholder="Để trống nếu không logo" /></td>
+              <td><input v-model="line.unit" class="input" placeholder="Đơn vị" /></td>
+              <td><input v-model.number="line.quantity" class="input" type="number" min="0" step="1" /></td>
+              <td><input v-model="line.note" class="input" placeholder="Ghi chú dòng" /></td>
+              <td><button class="btn-sm btn-delete" type="button" @click="removeLine(index)">Xóa</button></td>
             </tr>
           </tbody>
         </table>
       </div>
-      <button
-        class="btn"
-        type="button"
-        style="margin-top: 10px"
-        @click="addLine"
-      >
-        + Thêm dòng
-      </button>
-      <div class="form-group" style="margin-top: 12px">
-        <label>Ghi chú phiếu</label
-        ><textarea v-model="form.note" class="textarea" rows="3" />
-      </div>
-      <p class="small subtle">
-        Khi lưu, hệ thống sẽ kiểm tra tồn hiện tại trong
-        <b>inventory_balances</b>. Nếu thiếu tồn, phiếu sẽ không được tạo.
-      </p>
+      <button class="btn" type="button" style="margin-top: 10px" @click="addLine">+ Thêm dòng</button>
+      <div class="form-group" style="margin-top: 12px"><label>Ghi chú phiếu</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
+      <p class="small subtle">Khi lưu, hệ thống sẽ kiểm tra tồn hiện tại trong <b>inventory_balances</b>. Nếu thiếu tồn, phiếu sẽ không được tạo.</p>
     </BaseModal>
 
     <BaseModal
@@ -674,83 +522,33 @@ onMounted(() => loadRows());
       @close="showDetailModal = false"
     >
       <div class="detail-grid">
-        <div class="detail-item">
-          <label>Mã phiếu</label><strong>{{ codeOf(selected) }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Ngày xuất</label
-          ><strong>{{
-            formatDateTime(selected.export_date || selected.created_at)
-          }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Loại xuất</label
-          ><strong>{{ destinationLabel(selected.destination_type) }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Kho nhận</label><strong>{{ detailWarehouseReceiver(selected) }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Khách nhận</label><strong>{{ detailCustomerReceiver(selected) }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Mã đơn liên quan</label
-          ><strong>{{ selected.source_order_code || "-" }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Nguồn sync</label
-          ><strong>{{ selected.sync_source || selected.source || "-" }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Quyền sửa/hủy</label>
-          <strong>{{ isRequestGenerated(selected) ? "Khóa - sinh từ yêu cầu sale" : "Phiếu thủ công" }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Người tạo</label
-          ><strong>{{ selected.created_by || "-" }}</strong>
-        </div>
-        <div class="detail-item">
-          <label>Ghi chú</label><strong>{{ selected.note || "-" }}</strong>
-        </div>
+        <div class="detail-item"><label>Mã phiếu</label><strong>{{ codeOf(selected) }}</strong></div>
+        <div class="detail-item"><label>Ngày xuất</label><strong>{{ formatDateTime(selected.export_date || selected.created_at) }}</strong></div>
+        <div class="detail-item"><label>Loại xuất</label><strong>{{ destinationLabel(selected.destination_type) }}</strong></div>
+        <div class="detail-item"><label>Kho nhận</label><strong>{{ detailWarehouseReceiver(selected) }}</strong></div>
+        <div class="detail-item"><label>Khách nhận</label><strong>{{ detailCustomerReceiver(selected) }}</strong></div>
+        <div class="detail-item"><label>Mã đơn liên quan</label><strong>{{ selected.source_order_code || "-" }}</strong></div>
+        <div class="detail-item"><label>Nguồn sync</label><strong>{{ selected.sync_source || selected.source || "-" }}</strong></div>
+        <div class="detail-item"><label>Quyền sửa/hủy</label><strong>{{ isRequestGenerated(selected) ? "Khóa - sinh từ yêu cầu sale" : "Phiếu thủ công" }}</strong></div>
+        <div class="detail-item"><label>Người tạo</label><strong>{{ selected.created_by || "-" }}</strong></div>
+        <div class="detail-item"><label>Ghi chú</label><strong>{{ selected.note || "-" }}</strong></div>
       </div>
 
       <div class="table-wrap">
         <table style="min-width: 1040px">
-          <thead>
-            <tr>
-              <th>Sản phẩm</th>
-              <th>Kho xuất</th>
-              <th>Kho nhận</th>
-              <th>Khách nhận</th>
-              <th>Logo</th>
-              <th>Đơn vị</th>
-              <th>Số lượng</th>
-              <th>Ghi chú</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Sản phẩm</th><th>Kho xuất</th><th>Kho nhận</th><th>Khách nhận</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Ghi chú</th></tr></thead>
           <tbody>
             <tr v-for="item in selectedItems" :key="item.id">
-              <td>
-                <b>{{ item.product_code }}</b>
-                <div class="small subtle">{{ item.product_name }}</div>
-              </td>
-              <td>
-                {{ item.from_warehouse_name || item.from_warehouse_id || "-" }}
-              </td>
+              <td><b>{{ item.product_code }}</b><div class="small subtle">{{ item.product_name }}</div></td>
+              <td>{{ item.from_warehouse_name || item.from_warehouse_id || "-" }}</td>
               <td>{{ itemWarehouseReceiver(item) }}</td>
               <td>{{ itemCustomerReceiver(item) }}</td>
               <td>{{ item.logo || "Không logo" }}</td>
               <td>{{ item.unit || "-" }}</td>
-              <td>
-                <b>{{ quantityText(item.quantity) }}</b>
-              </td>
+              <td><b>{{ quantityText(item.quantity) }}</b></td>
               <td>{{ item.note || "-" }}</td>
             </tr>
-            <tr v-if="!selectedItems.length">
-              <td colspan="8" class="empty">
-                Phiếu này chưa có dòng chi tiết.
-              </td>
-            </tr>
+            <tr v-if="!selectedItems.length"><td colspan="8" class="empty">Phiếu này chưa có dòng chi tiết.</td></tr>
           </tbody>
         </table>
       </div>
