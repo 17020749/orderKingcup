@@ -458,17 +458,32 @@ service cloud.firestore {
     }
 
     function canWriteInventoryCore() {
-      return hasAnyPerm([
-        'import.create',
-        'import.edit',
-        'import.delete',
-        'export.create',
-        'export.edit',
-        'export.delete',
-        'inventory.adjust',
-        'export_requests.release',
-        'export_requests.process'
-      ]);
+      let path = userPath();
+      let user = get(path).data;
+      let permissions = user.get('permissions_flat', []);
+      return signedIn()
+        && exists(path)
+        && activeUserData(user)
+        && (
+          user.get('is_admin', false) == true
+          || (
+            permissions is list
+            && (
+              '*' in permissions
+              || permissions.hasAny([
+                'import.create',
+                'import.edit',
+                'import.delete',
+                'export.create',
+                'export.edit',
+                'export.delete',
+                'inventory.adjust',
+                'export_requests.release',
+                'export_requests.process'
+              ])
+            )
+          )
+        );
     }
 
     function warehouseOperationAfterValid(operationId) {
