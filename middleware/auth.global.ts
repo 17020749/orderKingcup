@@ -9,6 +9,7 @@ const ROUTE_PERMISSIONS: Array<[string, string]> = [
   ['/exports', 'page.exports'],
   ['/inventory', 'page.inventory'],
   ['/inventory-adjustments', 'page.inventory_adjustments'],
+  ['/printing', 'page.printing'],
   ['/warehouse-settings', 'page.warehouse_settings'],
   ['/customers', 'page.customers'],
   ['/products', 'page.products'],

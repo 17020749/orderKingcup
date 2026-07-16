@@ -25,6 +25,7 @@ const navGroups: NavGroup[] = [
       { to: "/warehouse-export-requests", label: "Xử lý yêu cầu xuất", perm: "page.warehouse_export_requests" },
       { to: "/exports", label: "Phiếu xuất kho", perm: "page.exports" },
       { to: "/inventory-adjustments", label: "Điều chỉnh tồn", perm: "page.inventory_adjustments" },
+      { to: "/printing", label: "Tiến độ in ấn", perm: "page.printing" },
       { to: "/warehouse-settings", label: "Danh mục kho", perm: "page.warehouse_settings" },
       { to: "/shipments", label: "Vận chuyển", perm: "page.shipments" },
       { to: "/activity-logs", label: "Nhật ký hoạt động", perm: "page.activity_logs" },

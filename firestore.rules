@@ -473,6 +473,19 @@ service cloud.firestore {
         || data.get('quantity', 0) is float;
     }
 
+    function printQuantitiesAreValid(data) {
+      return (
+          data.get('print_quantity', 0) is int
+          || data.get('print_quantity', 0) is float
+        )
+        && data.get('print_quantity', 0) > 0
+        && (
+          data.get('actual_print_quantity', 0) is int
+          || data.get('actual_print_quantity', 0) is float
+        )
+        && data.get('actual_print_quantity', 0) >= 0;
+    }
+
     function balanceQuantityIsSafe() {
       return quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) >= 0;
@@ -695,7 +708,7 @@ service cloud.firestore {
     }
 
     match /products/{docId} {
-      allow read: if hasAnyPerm(['products.view', 'inventory.view']);
+      allow read: if hasAnyPerm(['products.view', 'inventory.view', 'printing.view']);
 
       allow create: if isAdmin()
         || (
@@ -935,6 +948,56 @@ service cloud.firestore {
     // Shipments and invoices
     // ---------------------------------------------------------------------
 
+    match /print_orders/{docId} {
+      allow read: if hasPerm('printing.view');
+
+      allow create: if hasPerm('printing.create')
+        && request.resource.data.get('order_code', '') is string
+        && request.resource.data.get('order_code', '') != ''
+        && ownEmailField(request.resource.data, 'created_by');
+
+      allow update: if isAdmin()
+        || (
+          hasPerm('printing.edit')
+          && warehouseDocIdentitySafe()
+          && request.resource.data.get('order_code', '') is string
+          && request.resource.data.get('order_code', '') != ''
+          && unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
+        )
+        || (
+          hasPerm('printing.delete')
+          && warehouseDocIdentitySafe()
+          && warehouseSoftDeleteOnly()
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    match /print_order_items/{docId} {
+      allow read: if hasPerm('printing.view');
+
+      allow create: if hasAnyPerm(['printing.create', 'printing.edit'])
+        && request.resource.data.print_order_id is string
+        && request.resource.data.get('product_id', '') is string
+        && request.resource.data.get('product_id', '') != ''
+        && printQuantitiesAreValid(request.resource.data)
+        && ownEmailField(request.resource.data, 'created_by');
+
+      allow update: if isAdmin()
+        || (
+          hasPerm('printing.edit')
+          && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
+          && printQuantitiesAreValid(request.resource.data)
+        )
+        || (
+          hasAnyPerm(['printing.edit', 'printing.delete'])
+          && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
+          && warehouseSoftDeleteOnly()
+        );
+
+      allow delete: if isAdmin();
+    }
+
     match /shipments/{docId} {
       allow read: if isAdmin()
         || (
@@ -1041,7 +1104,8 @@ service cloud.firestore {
     }
 
     match /suppliers/{docId} {
-      allow read: if canReadWarehouseCatalog();
+      allow read: if canReadWarehouseCatalog()
+        || hasPerm('printing.view');
       allow create: if hasAnyPerm(['suppliers.manage'])
         && ownEmailField(request.resource.data, 'created_by');
       allow update: if hasAnyPerm(['suppliers.manage'])

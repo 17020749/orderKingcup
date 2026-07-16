@@ -45,6 +45,7 @@ const PERMISSION_GROUP_ORDER = [
   "Khách hàng",
   "Sản phẩm",
   "Thanh toán",
+  "Tiến độ in ấn",
   "Vận chuyển",
   "Hóa đơn",
   "Cài đặt",

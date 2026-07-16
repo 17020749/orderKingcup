@@ -14,6 +14,7 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'page.customers', group: 'Khách hàng', name: 'Xem tab Khách hàng' },
   { key: 'page.products', group: 'Sản phẩm', name: 'Xem tab Sản phẩm' },
   { key: 'page.payments', group: 'Thanh toán', name: 'Xem tab Thanh toán' },
+  { key: 'page.printing', group: 'Tiến độ in ấn', name: 'Xem tab Tiến độ in ấn' },
   { key: 'page.shipments', group: 'Vận chuyển', name: 'Xem tab Vận chuyển' },
   { key: 'page.invoices', group: 'Hóa đơn', name: 'Xem tab Hóa đơn' },
   { key: 'page.settings', group: 'Cài đặt', name: 'Xem tab Cài đặt' },
@@ -83,6 +84,10 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'payments.edit', group: 'Thanh toán', name: 'Sửa phiếu thanh toán của mình' },
   { key: 'payments.delete', group: 'Thanh toán', name: 'Xóa phiếu thanh toán' },
   { key: 'payments.export', group: 'Thanh toán', name: 'Xuất Excel thanh toán' },
+  { key: 'printing.view', group: 'Tiến độ in ấn', name: 'Xem tiến độ in ấn' },
+  { key: 'printing.create', group: 'Tiến độ in ấn', name: 'Thêm tiến độ in ấn' },
+  { key: 'printing.edit', group: 'Tiến độ in ấn', name: 'Sửa tiến độ in ấn' },
+  { key: 'printing.delete', group: 'Tiến độ in ấn', name: 'Xóa tiến độ in ấn' },
   ...['shipments', 'invoices'].flatMap(module => [
     { key: `${module}.view`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Xem dữ liệu' },
     { key: `${module}.create`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Thêm dữ liệu' },

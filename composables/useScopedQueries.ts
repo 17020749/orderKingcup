@@ -23,6 +23,8 @@ import type {
   OrderDoc,
   OrderItemDoc,
   PaymentDoc,
+  PrintOrderDoc,
+  PrintOrderItemDoc,
   ProductDoc,
   ShipmentDoc,
   StockMovementDoc,
@@ -609,7 +611,7 @@ export function useScopedQueries() {
   }
 
   async function loadProducts(force = false, includeInactive = false) {
-    if (!hasPermission('products.view') && !hasPermission('inventory.view') && !hasPermission('*')) return []
+    if (!hasPermission('products.view') && !hasPermission('inventory.view') && !hasPermission('printing.view') && !hasPermission('*')) return []
     const rows = await listCollection<ProductDoc>('products', [], {
       cacheKey: 'all', ttlMs: 300_000, force
     })
@@ -629,7 +631,7 @@ export function useScopedQueries() {
   }
 
   async function loadSuppliers(force = false) {
-    if (!hasAnyWarehousePermission(['suppliers.view', 'suppliers.manage', 'import.view'])) return []
+    if (!hasAnyWarehousePermission(['suppliers.view', 'suppliers.manage', 'import.view', 'printing.view'])) return []
     return sortByName(await listCollection<SupplierDoc>('suppliers', [], {
       cacheKey: 'all', ttlMs: 300_000, force
     }))
@@ -706,6 +708,20 @@ export function useScopedQueries() {
     )
   }
 
+  async function loadPrintOrders(force = false) {
+    if (!hasPermission('printing.view') && !hasPermission('*')) return []
+    return sortNewest((await listCollection<PrintOrderDoc>('print_orders', [], {
+      cacheKey: 'all', ttlMs: 20_000, force
+    })).filter(isActive), 'created_at')
+  }
+
+  async function loadPrintOrderItems(force = false) {
+    if (!hasPermission('printing.view') && !hasPermission('*')) return []
+    return (await listCollection<PrintOrderItemDoc>('print_order_items', [], {
+      cacheKey: 'all', ttlMs: 20_000, force
+    })).filter(isActive)
+  }
+
   async function loadScopedInvoices(force = false) {
     if (isAdminUser()) {
       return (await listCollection<InvoiceDoc>('invoices', [], {
@@ -742,6 +758,8 @@ export function useScopedQueries() {
     loadInventoryBalances,
     loadInventoryAdjustments,
     loadStockMovements,
+    loadPrintOrders,
+    loadPrintOrderItems,
     loadScopedShipments,
     loadScopedInvoices,
     invalidateScopedCache
