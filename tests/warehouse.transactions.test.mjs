@@ -6,7 +6,8 @@ import {
   doc,
   getDoc,
   runTransaction,
-  setDoc
+  setDoc,
+  updateDoc
 } from 'firebase/firestore'
 
 const projectId = 'demo-orderkingcup-v75-transactions'
