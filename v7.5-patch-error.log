@@ -1,5 +1,0 @@
-rules export request operation fields: expected exactly one match, found 2
---- expected ---
-          'request_timeline_json',
-          'updated_at'
-

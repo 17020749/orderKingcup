@@ -6,6 +6,7 @@ import type {
 } from "~/types/models";
 import {
   formatDateTime,
+  makeId,
   normalizeText,
   toNumber,
   todayKey,
@@ -38,6 +39,7 @@ const form = reactive({
   unit: "",
   reason: "",
   note: "",
+  operation_id: makeId("op_inventory_adjust"),
 });
 
 const canAdjust = computed(
@@ -122,6 +124,7 @@ function openCreateModal() {
     unit: "",
     reason: "",
     note: "",
+    operation_id: makeId("op_inventory_adjust"),
   });
   showCreateModal.value = true;
 }
@@ -151,6 +154,7 @@ async function saveAdjustment() {
       unit: form.unit || findProduct(form.product_id)?.unit || "",
       reason: form.reason,
       note: form.note,
+      operation_id: form.operation_id,
     });
     showCreateModal.value = false;
     showToast(`Đã tạo điều chỉnh tồn ${result.id}.`, "success");

@@ -1261,3 +1261,61 @@ test('V7.4 không tài khoản nào được hard-delete khách hàng hoặc s�
   await assertFails(deleteDoc(doc(db, 'customers', 'customer-a')))
   await assertFails(deleteDoc(doc(db, 'products', 'product-existing')))
 })
+
+
+test('V7.5 cho phép nghiệp vụ kho tạo operation key bất biến', async () => {
+  const db = env.authenticatedContext(STOCK, { email: STOCK }).firestore()
+  const ref = doc(db, 'warehouse_operations', 'op-v75-stock')
+  await assertSucceeds(setDoc(ref, {
+    id: 'op-v75-stock',
+    operation_id: 'op-v75-stock',
+    action: 'import_create',
+    target_collection: 'import_orders',
+    target_id: 'import-v75',
+    result_code: 'PNK-V75',
+    target_revision: 1,
+    created_by: STOCK,
+    status: 'completed',
+    active: true,
+    deleted: false
+  }))
+  await assertFails(updateDoc(ref, { result_code: 'KHONG-DUOC-SUA' }))
+  await assertFails(deleteDoc(ref))
+})
+
+test('V7.5 người không có quyền kho không được tạo operation key', async () => {
+  const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  await assertFails(setDoc(doc(db, 'warehouse_operations', 'op-v75-editor'), {
+    id: 'op-v75-editor',
+    operation_id: 'op-v75-editor',
+    action: 'import_create',
+    target_collection: 'import_orders',
+    target_id: 'import-v75-editor',
+    created_by: EDITOR,
+    status: 'completed',
+    active: true,
+    deleted: false
+  }))
+})
+
+test('V7.5 quyền release được ghi revision và operation id khi cho xuất', async () => {
+  const db = env.authenticatedContext(WAREHOUSE_RELEASE, { email: WAREHOUSE_RELEASE }).firestore()
+  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a-accepted'), {
+    status: 'da_xuat',
+    warehouse_export_code: 'PXK-V75',
+    warehouse_export_id: 'export-v75',
+    warehouse_export_order_id: 'export-v75',
+    export_order_id: 'export-v75',
+    warehouse_handled_by: WAREHOUSE_RELEASE,
+    warehouse_handled_at: 'now',
+    exported_at: 'now',
+    actual_exported_at: 'now',
+    actual_export_summary_json: '[]',
+    stock_movement_ids: ['move-v75'],
+    request_timeline_json: '[]',
+    operation_id: 'op-v75-release',
+    last_operation_id: 'op-v75-release',
+    revision: 1,
+    updated_at: 'now'
+  }))
+})

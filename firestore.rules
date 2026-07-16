@@ -201,6 +201,9 @@ service cloud.firestore {
         'cancelled_by',
         'cancel_reason',
         'updated_by',
+        'operation_id',
+        'last_operation_id',
+        'revision',
         'updated_at'
       ]);
     }
@@ -606,6 +609,9 @@ service cloud.firestore {
           'actual_export_summary_json',
           'stock_movement_ids',
           'request_timeline_json',
+          'operation_id',
+          'last_operation_id',
+          'revision',
           'updated_at'
         ])
         && ownEmailField(request.resource.data, 'warehouse_handled_by')
@@ -1174,6 +1180,18 @@ service cloud.firestore {
       // Điều chỉnh tồn là chứng từ append-only. Nếu nhập sai, tạo một
       // điều chỉnh ngược mới thay vì sửa/xóa lịch sử cũ.
       allow update, delete: if isAdmin();
+    }
+
+
+    match /warehouse_operations/{docId} {
+      allow read: if canReadInventoryCore();
+      allow create: if canWriteInventoryCore()
+        && request.resource.data.get('operation_id', '') == docId
+        && request.resource.data.get('status', '') == 'completed'
+        && ownEmailField(request.resource.data, 'created_by');
+      // Operation records are immutable idempotency keys. A completed key must
+      // never be rewritten or removed by a client.
+      allow update, delete: if false;
     }
 
     match /stock_movements/{docId} {

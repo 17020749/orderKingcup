@@ -9,6 +9,7 @@ import type {
 import {
   formatDateTime,
   normalizeText,
+  makeId,
   toNumber,
   todayKey,
 } from "~/utils/format";
@@ -43,6 +44,7 @@ const form = reactive({
   import_date: todayKey(),
   supplier_id: "",
   note: "",
+  operation_id: makeId("op_import_create"),
   lines: [newBlankLine()],
 });
 
@@ -189,6 +191,7 @@ function openCreateModal() {
     import_date: todayKey(),
     supplier_id: "",
     note: "",
+    operation_id: makeId("op_import_create"),
     lines: [newBlankLine()],
   });
   showCreateModal.value = true;
@@ -202,6 +205,7 @@ function openEditModal(row: ImportOrderDoc) {
     import_date: String(row.import_date || todayKey()).slice(0, 10),
     supplier_id: row.supplier_id || "",
     note: row.note || "",
+    operation_id: makeId("op_import_update"),
     lines: orderItems.length
       ? orderItems.map((item) => ({
           product_id: item.product_id || "",
@@ -230,6 +234,8 @@ async function confirmDeleteImport(row: ImportOrderDoc) {
       order: row,
       existingItems: itemsForOrder(row),
       reason: "Xóa phiếu nhập kho",
+      operation_id: `import_delete:${row.id}:${toNumber((row as any).revision)}`,
+      expected_revision: toNumber((row as any).revision),
     });
     showToast(`Đã xóa phiếu nhập ${result.code}.`, "success");
     await loadRows(true);
@@ -274,6 +280,7 @@ async function saveImportOrder() {
       import_date: form.import_date,
       supplier: findSupplier(form.supplier_id) || null,
       note: form.note,
+      operation_id: form.operation_id,
       lines: validLines.map((line) => ({
         product: findProduct(line.product_id),
         warehouse: findWarehouse(line.warehouse_id),
@@ -287,6 +294,7 @@ async function saveImportOrder() {
       ? await updateImportOrder({
           order: editing.value,
           existingItems: itemsForOrder(editing.value),
+          expected_revision: toNumber((editing.value as any).revision),
           ...payload,
         })
       : await createImportOrder(payload);
