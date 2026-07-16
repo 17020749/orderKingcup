@@ -34,6 +34,8 @@ async function loadDashboard(force = false) {
       ...order,
       ...computePaymentStatus(order, paymentMap[order.id] || [])
     }))
+    const activeOrderIds = new Set(ordersWithPayment.map((order: any) => order.id).filter(Boolean))
+    const validItems = itemsSnap.filter((item: any) => isActive(item) && activeOrderIds.has(item.order_id))
     stats.value = {
       orders: ordersWithPayment.length,
       customers: customersSnap.filter(isActive).length,
@@ -41,7 +43,7 @@ async function loadDashboard(force = false) {
       revenue: ordersWithPayment.reduce((s: number, o: any) => s + toNumber(o.actual_revenue || o.total_vat), 0),
       paid: receivedPayments.reduce((s: number, p: any) => s + toNumber(p.amount), 0),
       debt: ordersWithPayment.reduce((s: number, o: any) => s + toNumber(o.debt_amount), 0),
-      profit: itemsSnap.filter(isActive).reduce((s: number, item: any) => s + toNumber(item.line_profit), 0),
+      profit: validItems.reduce((s: number, item: any) => s + toNumber(item.line_profit), 0),
       exportRequests: requestsSnap.filter(isActive).length
     }
     recentOrders.value = ordersWithPayment.sort((a: any, b: any) => String(b.created_at || b.order_date || '').localeCompare(String(a.created_at || a.order_date || ''))).slice(0, 8)
@@ -63,19 +65,19 @@ onMounted(() => loadDashboard())
     </PageHeader>
     <LoadingState v-if="loading" />
     <template v-else>
-      <div class="grid grid-4" style="margin-bottom: 16px">
+      <div class="grid grid-4" style="margin-bottom: 16px; padding-left: 24px; padding-right: 24px;">
         <div class="kpi"><div class="subtle">Doanh thu</div><div class="kpi-value">{{ money(stats.revenue) }}</div></div>
         <div class="kpi"><div class="subtle">Đã thu</div><div class="kpi-value">{{ money(stats.paid) }}</div></div>
         <div class="kpi"><div class="subtle">Công nợ</div><div class="kpi-value">{{ money(stats.debt) }}</div></div>
         <div class="kpi"><div class="subtle">Lợi nhuận</div><div class="kpi-value">{{ money(stats.profit) }}</div></div>
       </div>
-      <div class="grid grid-4" style="margin-bottom: 16px">
+      <div class="dashboard grid grid-4" style="margin-bottom: 16px; padding-left: 24px; padding-right: 24px;">
         <div class="summary-card"><label>Đơn hàng</label><strong>{{ stats.orders }}</strong></div>
         <div class="summary-card"><label>Khách hàng</label><strong>{{ stats.customers }}</strong></div>
         <div class="summary-card"><label>Sản phẩm</label><strong>{{ stats.products }}</strong></div>
         <div class="summary-card"><label>Phiếu xuất kho</label><strong>{{ stats.exportRequests }}</strong></div>
       </div>
-      <div class="grid grid-2">
+      <div class="grid grid-2" style="padding-left: 24px;padding-right: 24px;">
         <div class="card">
           <h3 style="margin-top: 0">Đơn hàng gần đây</h3>
           <div class="table-wrap">

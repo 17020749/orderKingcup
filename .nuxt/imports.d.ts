@@ -33,7 +33,7 @@ export { defineLazyHydrationComponent } from '#app/composables/lazy-hydration';
 export { useAuth } from '../composables/useAuth';
 export { useConfirmDialog } from '../composables/useConfirmDialog';
 export { useFirebaseServices } from '../composables/useFirebaseServices';
-export { WAREHOUSE_NOTIFICATION_PERMISSIONS, buildNotificationPayload, useNotifications, NotificationPayloadInput } from '../composables/useNotifications';
+export { WAREHOUSE_NOTIFICATION_PERMISSIONS, resolveSaleNotificationRecipients, buildNotificationPayload, useNotifications, NotificationPayloadInput, SaleNotificationRecipientInput } from '../composables/useNotifications';
 export { useOrderLogic } from '../composables/useOrderLogic';
 export { useRepo } from '../composables/useRepo';
 export { invalidateScopedCache, useScopedQueries } from '../composables/useScopedQueries';

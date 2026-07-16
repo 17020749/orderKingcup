@@ -1,10 +1,14 @@
 import {
   collection,
   getDocs,
+  onSnapshot,
   or,
   query,
   where,
-  type QueryConstraint
+  type DocumentData,
+  type Query,
+  type QueryConstraint,
+  type Unsubscribe
 } from 'firebase/firestore'
 import type {
   AnyDoc,
@@ -19,6 +23,8 @@ import type {
   OrderDoc,
   OrderItemDoc,
   PaymentDoc,
+  PrintOrderDoc,
+  PrintOrderItemDoc,
   ProductDoc,
   ShipmentDoc,
   StockMovementDoc,
@@ -41,6 +47,16 @@ type ListOptions = {
   force?: boolean
   silent?: boolean
 }
+
+type RealtimeRowsHandler<T extends AnyDoc> = (rows: T[]) => void
+type RealtimeErrorHandler = (error: any) => void
+
+const EXPORT_REQUEST_OWNER_FIELDS = [
+  'requested_by',
+  'order_owner_email',
+  'order_created_by',
+  'order_sale_email',
+]
 
 const memoryCache = new Map<string, CacheEntry>()
 const inFlight = new Map<string, Promise<AnyDoc[]>>()
@@ -178,6 +194,71 @@ export function useScopedQueries() {
   async function fetchCollection<T extends AnyDoc>(name: string, constraints: QueryConstraint[] = []) {
     const snap = await getDocs(query(collection(db, name), ...constraints))
     return snap.docs.map(d => ({ ...d.data(), id: d.id, firestore_id: d.id } as T))
+  }
+
+  function listenerErrorCode(error: any) {
+    return String(error?.code || '').replace(/^firestore\//, '')
+  }
+
+  function isRetryableListenerError(error: any) {
+    return [
+      'aborted',
+      'cancelled',
+      'deadline-exceeded',
+      'internal',
+      'resource-exhausted',
+      'unavailable',
+      'unknown',
+    ].includes(listenerErrorCode(error))
+  }
+
+  function listenQueryWithRetry<T extends AnyDoc>(
+    target: Query<DocumentData>,
+    onRows: RealtimeRowsHandler<T>,
+    onError: RealtimeErrorHandler,
+  ): Unsubscribe {
+    let active = true
+    let unsubscribe: Unsubscribe | null = null
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let retryAttempt = 0
+    const retryDelays = [1000, 2000, 5000, 10000, 30000]
+
+    const connect = () => {
+      if (!active) return
+      unsubscribe = onSnapshot(
+        target,
+        snapshot => {
+          if (!active) return
+          retryAttempt = 0
+          onRows(snapshot.docs.map(item => ({
+            ...item.data(),
+            id: item.id,
+            firestore_id: item.id,
+          } as T)))
+        },
+        error => {
+          if (!active) return
+          unsubscribe = null
+          onError(error)
+          if (!isRetryableListenerError(error)) return
+          const delay = retryDelays[Math.min(retryAttempt, retryDelays.length - 1)]
+          retryAttempt += 1
+          retryTimer = setTimeout(() => {
+            retryTimer = null
+            connect()
+          }, delay)
+        },
+      )
+    }
+
+    connect()
+    return () => {
+      active = false
+      unsubscribe?.()
+      unsubscribe = null
+      if (retryTimer) clearTimeout(retryTimer)
+      retryTimer = null
+    }
   }
 
   async function listCollection<T extends AnyDoc>(
@@ -359,9 +440,12 @@ export function useScopedQueries() {
 
     const currentEmail = email()
     const ownedOrderIds = new Set(orders.map(order => order.id).filter(Boolean))
-    const rows = await listByEmailFields<AnyDoc>('order_export_requests', [
-      'requested_by', 'order_owner_email', 'order_created_by', 'order_sale_email'
-    ], force, 15_000)
+    const rows = await listByEmailFields<AnyDoc>(
+      'order_export_requests',
+      EXPORT_REQUEST_OWNER_FIELDS,
+      force,
+      15_000,
+    )
 
     return sortNewest(uniqueById(rows).filter(row =>
       isActive(row)
@@ -392,6 +476,127 @@ export function useScopedQueries() {
     )
   }
 
+  function listenScopedExportRequests(
+    orders: OrderDoc[],
+    onRows: RealtimeRowsHandler<AnyDoc>,
+    onError: RealtimeErrorHandler,
+  ): Unsubscribe {
+    const publish = (rows: AnyDoc[]) => {
+      const currentEmail = email()
+      const ownedOrderIds = new Set(orders.map(order => order.id).filter(Boolean))
+      const visibleRows = canAll('export_requests.view_all')
+        ? rows
+        : rows.filter(row => (
+          EXPORT_REQUEST_OWNER_FIELDS.some(field => (
+            String(row[field] || '').trim().toLowerCase() === currentEmail
+          ))
+          || ownedOrderIds.has(row.order_id)
+        ))
+      invalidateScopedCache('order_export_requests')
+      onRows(sortNewest(uniqueById(visibleRows).filter(isActive), 'requested_at'))
+    }
+
+    if (canAll('export_requests.view_all')) {
+      return listenQueryWithRetry(
+        query(collection(db, 'order_export_requests')),
+        publish,
+        onError,
+      )
+    }
+    if (!hasPermission('export_requests.view') && !hasPermission('orders.warehouse_export')) {
+      onRows([])
+      return () => {}
+    }
+
+    const currentEmail = email()
+    if (!currentEmail) {
+      onRows([])
+      return () => {}
+    }
+
+    let active = true
+    let fallbackStarted = false
+    let primaryUnsubscribe: Unsubscribe | null = null
+    let fallbackUnsubscribes: Unsubscribe[] = []
+
+    const startFallback = () => {
+      if (!active || fallbackStarted) return
+      fallbackStarted = true
+      primaryUnsubscribe?.()
+      primaryUnsubscribe = null
+
+      const chunks = new Map<number, AnyDoc[]>()
+      const ready = new Set<number>()
+      const publishMerged = () => {
+        if (!active || ready.size !== EXPORT_REQUEST_OWNER_FIELDS.length) return
+        publish(Array.from(chunks.values()).flat())
+      }
+
+      fallbackUnsubscribes = EXPORT_REQUEST_OWNER_FIELDS.map((field, index) => (
+        listenQueryWithRetry(
+          query(
+            collection(db, 'order_export_requests'),
+            where(field, '==', currentEmail),
+          ),
+          rows => {
+            chunks.set(index, rows)
+            ready.add(index)
+            publishMerged()
+          },
+          onError,
+        )
+      ))
+    }
+
+    primaryUnsubscribe = listenQueryWithRetry(
+      query(
+        collection(db, 'order_export_requests'),
+        or(...EXPORT_REQUEST_OWNER_FIELDS.map(field => where(field, '==', currentEmail))),
+      ),
+      publish,
+      error => {
+        if (['failed-precondition', 'invalid-argument', 'unimplemented'].includes(listenerErrorCode(error))) {
+          startFallback()
+          return
+        }
+        onError(error)
+      },
+    )
+
+    return () => {
+      active = false
+      primaryUnsubscribe?.()
+      primaryUnsubscribe = null
+      fallbackUnsubscribes.forEach(unsubscribe => unsubscribe())
+      fallbackUnsubscribes = []
+    }
+  }
+
+  function listenWarehouseExportRequests(
+    onRows: RealtimeRowsHandler<AnyDoc>,
+    onError: RealtimeErrorHandler,
+  ): Unsubscribe {
+    if (!hasAnyWarehousePermission([
+      'page.warehouse_export_requests',
+      'export_requests.accept',
+      'export_requests.reject',
+      'export_requests.release',
+      'export_requests.process',
+    ])) {
+      onRows([])
+      return () => {}
+    }
+
+    return listenQueryWithRetry(
+      query(collection(db, 'order_export_requests')),
+      rows => {
+        invalidateScopedCache('order_export_requests')
+        onRows(sortNewest(uniqueById(rows).filter(isActive), 'requested_at'))
+      },
+      onError,
+    )
+  }
+
   async function loadScopedCustomers(force = false) {
     if (isAdminUser()) {
       return (await listCollection<CustomerDoc>('customers', [], {
@@ -406,7 +611,7 @@ export function useScopedQueries() {
   }
 
   async function loadProducts(force = false, includeInactive = false) {
-    if (!hasPermission('products.view') && !hasPermission('*')) return []
+    if (!hasPermission('products.view') && !hasPermission('inventory.view') && !hasPermission('printing.view') && !hasPermission('*')) return []
     const rows = await listCollection<ProductDoc>('products', [], {
       cacheKey: 'all', ttlMs: 300_000, force
     })
@@ -426,7 +631,7 @@ export function useScopedQueries() {
   }
 
   async function loadSuppliers(force = false) {
-    if (!hasAnyWarehousePermission(['suppliers.view', 'suppliers.manage', 'import.view'])) return []
+    if (!hasAnyWarehousePermission(['suppliers.view', 'suppliers.manage', 'import.view', 'printing.view'])) return []
     return sortByName(await listCollection<SupplierDoc>('suppliers', [], {
       cacheKey: 'all', ttlMs: 300_000, force
     }))
@@ -503,6 +708,20 @@ export function useScopedQueries() {
     )
   }
 
+  async function loadPrintOrders(force = false) {
+    if (!hasPermission('printing.view') && !hasPermission('*')) return []
+    return sortNewest((await listCollection<PrintOrderDoc>('print_orders', [], {
+      cacheKey: 'all', ttlMs: 20_000, force
+    })).filter(isActive), 'created_at')
+  }
+
+  async function loadPrintOrderItems(force = false) {
+    if (!hasPermission('printing.view') && !hasPermission('*')) return []
+    return (await listCollection<PrintOrderItemDoc>('print_order_items', [], {
+      cacheKey: 'all', ttlMs: 20_000, force
+    })).filter(isActive)
+  }
+
   async function loadScopedInvoices(force = false) {
     if (isAdminUser()) {
       return (await listCollection<InvoiceDoc>('invoices', [], {
@@ -525,6 +744,8 @@ export function useScopedQueries() {
     loadScopedPayments,
     loadScopedExportRequests,
     loadWarehouseExportRequests,
+    listenScopedExportRequests,
+    listenWarehouseExportRequests,
     loadScopedCustomers,
     loadProducts,
     loadWarehouses,
@@ -537,6 +758,8 @@ export function useScopedQueries() {
     loadInventoryBalances,
     loadInventoryAdjustments,
     loadStockMovements,
+    loadPrintOrders,
+    loadPrintOrderItems,
     loadScopedShipments,
     loadScopedInvoices,
     invalidateScopedCache

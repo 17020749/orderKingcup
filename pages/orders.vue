@@ -8,7 +8,7 @@ import { reportFirebaseError } from '~/utils/firebaseErrors'
 const { db } = useFirebaseServices()
 const { appUser, hasPermission } = useAuth()
 const { calcItems, computePaymentStatus, parseLogoLines } = useOrderLogic()
-const { invalidateScopedCache } = useRepo()
+const { invalidateScopedCache, saveDoc } = useRepo()
 const { loadScopedOrders, loadScopedOrderItems, loadScopedPayments, loadScopedExportRequests, loadScopedCustomers, loadProducts } = useScopedQueries()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
@@ -26,19 +26,33 @@ const exportRequests = ref<any[]>([])
 const showModal = ref(false)
 const showDetailModal = ref(false)
 const selectedDetail = ref<OrderDoc | null>(null)
+const selectedPrintOrder = ref<OrderDoc | null>(null)
+const showCustomerModal = ref(false)
+const savingCustomer = ref(false)
 const editing = ref<OrderDoc | null>(null)
 const form = reactive<any>({})
 const formItems = ref<any[]>([])
+const customerForm = reactive<any>({})
 
 const filtered = computed(() => rows.value.filter(row =>
   normalizeText(`${row.order_code} ${row.customer_name} ${row.phone} ${row.order_status} ${row.payment_status} ${row.invoice_status}`).includes(normalizeText(search.value))
 ))
 const canEditOrders = computed(() => hasPermission('orders.edit'))
+const canManageInvoiceStatus = computed(() => editing.value
+  ? hasPermission('invoices.edit')
+  : hasPermission('invoices.create')
+)
 const itemCount = computed(() => `${formItems.value.length} dòng`)
 const modalTotals = computed(() => calcItems(formItems.value, form))
 const selectedDetailItems = computed(() => selectedDetail.value ? (itemsByOrder.value[selectedDetail.value.id] || []) : [])
 const selectedDetailRequests = computed(() => selectedDetail.value
   ? exportRequests.value.filter(request => request.order_id === selectedDetail.value?.id && isActive(request))
+  : [])
+const selectedPrintItems = computed(() => selectedPrintOrder.value
+  ? (itemsByOrder.value[selectedPrintOrder.value.id] || [])
+  : [])
+const selectedPrintRequests = computed(() => selectedPrintOrder.value
+  ? exportRequests.value.filter(request => request.order_id === selectedPrintOrder.value?.id && isActive(request))
   : [])
 const selectedDetailProgress = computed(() => buildFulfillmentRows(selectedDetailItems.value, selectedDetailRequests.value))
 const selectedDetailOrderLines = computed(() => selectedDetailItems.value.flatMap((item: any) => {
@@ -198,6 +212,63 @@ function chooseCustomer() {
   if (!c) return
   form.customer_name = c.customer_name
   form.phone = c.phone
+}
+
+function openCustomerModal() {
+  if (!hasPermission('customers.create')) {
+    showToast('Bạn không có quyền thêm khách hàng.', 'error')
+    return
+  }
+  Object.assign(customerForm, {
+    id: makeId('cus'),
+    customer_code: '',
+    customer_name: '',
+    company_name: '',
+    phone: '',
+    email: '',
+    tax_code: '',
+    billing_address: '',
+    shipping_address: '',
+    source: '',
+    note: '',
+    status: 'active'
+  })
+  showCustomerModal.value = true
+}
+
+async function saveCustomer() {
+  if (!hasPermission('customers.create')) {
+    showToast('Bạn không có quyền thêm khách hàng.', 'error')
+    return
+  }
+  const customerName = String(customerForm.customer_name || '').trim()
+  if (!customerName) return showToast('Thiếu tên khách hàng', 'error')
+
+  savingCustomer.value = true
+  try {
+    const record = await saveDoc('customers', {
+      ...customerForm,
+      customer_name: customerName,
+      phone: String(customerForm.phone || '').trim(),
+      email: String(customerForm.email || '').trim(),
+      customer_name_norm: normalizeText(customerName),
+      phone_norm: normalizeText(customerForm.phone).replace(/\s/g, ''),
+      status: 'active',
+      active: true,
+      deleted: false
+    }, customerForm.id, { isCreate: true }) as CustomerDoc
+
+    customers.value = [record, ...customers.value.filter(customer => customer.id !== record.id)]
+    form.customer_id = record.id
+    form.customer_name = record.customer_name
+    form.phone = record.phone || ''
+    showCustomerModal.value = false
+    showToast('Đã thêm và chọn khách hàng mới', 'success')
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không lưu được khách hàng.'), 'error')
+  } finally {
+    savingCustomer.value = false
+  }
 }
 
 function chooseProduct(item: any) {
@@ -398,6 +469,18 @@ function openDetail(row: OrderDoc) {
   showDetailModal.value = true
 }
 
+function openPrint(row: OrderDoc) {
+  if (!hasPermission('orders.print')) {
+    showToast('Bạn không có quyền in đơn hàng.', 'error')
+    return
+  }
+  selectedPrintOrder.value = row
+}
+
+function closePrint() {
+  selectedPrintOrder.value = null
+}
+
 async function commitWriteChunks(writes: Array<(batch: ReturnType<typeof writeBatch>) => void>, size = 8) {
   for (let index = 0; index < writes.length; index += size) {
     const batch = writeBatch(db)
@@ -426,15 +509,16 @@ async function saveOrder() {
 
     const baseOrder: any = { ...form, ...totals }
     if (editing.value) {
-      // These fields are maintained by their dedicated modules. Omitting them
-      // prevents a normal order edit from overwriting payment/warehouse/invoice
-      // state or reviving a soft-deleted document.
-      ;[
+      // Payment, warehouse and deletion state remain protected. Invoice status
+      // may be included only when the current user has the dedicated permission.
+      const protectedFields = [
         'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
         'payment_count', 'deposit_count', 'collect_count',
         'warehouse_fulfillment_status', 'warehouse_request_status',
-        'invoice_status', 'deleted', 'active', 'status', 'deleted_at', 'created_at'
-      ].forEach(key => delete baseOrder[key])
+        'deleted', 'active', 'status', 'deleted_at', 'created_at'
+      ]
+      if (!canManageInvoiceStatus.value) protectedFields.push('invoice_status')
+      protectedFields.forEach(key => delete baseOrder[key])
     }
 
     const paymentSummary = editing.value
@@ -533,6 +617,9 @@ async function saveOrder() {
       owner_email: ownerEmail,
       sale_email: saleEmail,
       created_by: createdBy,
+      invoice_status: editing.value && !canManageInvoiceStatus.value
+        ? (editing.value.invoice_status || 'Không xuất')
+        : (form.invoice_status || 'Không xuất'),
       items_count: localItems.length,
       active: true,
       deleted: false,
@@ -645,7 +732,7 @@ onMounted(loadRows)
       <button v-if="hasPermission('orders.create')" class="btn primary" @click="openModal()">+ Tạo đơn hàng</button>
     </PageHeader>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm mã đơn, khách hàng, SĐT..." />
         <button class="btn" @click="loadRows(true)">Làm mới</button>
@@ -678,6 +765,7 @@ onMounted(loadRows)
               <td>
                 <div class="action-buttons">
                   <button class="btn-sm btn-view" @click="openDetail(row)">Xem</button>
+                  <button v-if="hasPermission('orders.print')" class="btn-sm" @click="openPrint(row)">In</button>
                   <button v-if="canEditRow(row)" class="btn-sm" @click="openModal(row)">Sửa</button>
                   <button v-else class="btn-sm" disabled>Khóa</button>
                   <button v-if="canDeleteRow(row)" class="btn-sm btn-delete" @click="softDeleteOrder(row)">Xóa</button>
@@ -708,13 +796,21 @@ onMounted(loadRows)
           <SearchableSelect
             v-model="form.customer_id"
             :options="customerOptions"
+            :action-label="hasPermission('customers.create') ? '+ Thêm khách hàng' : ''"
             placeholder="Tìm khách theo tên, SĐT, email..."
+            @action="openCustomerModal"
             @change="chooseCustomer"
           />
         </div>
         <div class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
         <div class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
-        <div class="form-group"><label>Hóa đơn</label><select v-model="form.invoice_status" class="select"><option v-for="s in INVOICE_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
+        <div class="form-group">
+        <label>Hóa đơn</label>
+        <select v-model="form.invoice_status" class="select" :disabled="!canManageInvoiceStatus">
+          <option v-for="s in INVOICE_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option>
+        </select>
+        <div v-if="!canManageInvoiceStatus" class="small subtle">Bạn không có quyền thay đổi trạng thái hóa đơn.</div>
+      </div>
         <div class="form-group"><label>VAT %</label><select v-model.number="form.vat_rate" class="select"><option v-for="s in VAT_RATE_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
       </div>
       <div class="form-group" style="margin-top:12px"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
@@ -766,6 +862,29 @@ onMounted(loadRows)
       <button type="button" class="btn" @click="addItem()">+ Thêm sản phẩm</button>
       <div class="order-grand-total"><span>Tạm tính</span><span>{{ money(modalTotals.subtotal_no_vat) }}</span></div>
       <div class="order-grand-total"><span>Tổng sau VAT</span><span>{{ money(modalTotals.actual_revenue) }}</span></div>
+    </BaseModal>
+
+    <BaseModal
+      v-if="showCustomerModal"
+      class="customer-create-modal-backdrop"
+      title="Thêm khách hàng"
+      save-label="Lưu khách hàng"
+      :loading="savingCustomer"
+      @close="showCustomerModal = false"
+      @save="saveCustomer"
+    >
+      <div class="form-grid">
+        <div class="form-group"><label>Mã khách</label><input v-model="customerForm.customer_code" class="input" /></div>
+        <div class="form-group"><label>Tên khách *</label><input v-model="customerForm.customer_name" class="input" /></div>
+        <div class="form-group"><label>Công ty</label><input v-model="customerForm.company_name" class="input" /></div>
+        <div class="form-group"><label>SĐT</label><input v-model="customerForm.phone" class="input" /></div>
+        <div class="form-group"><label>Email</label><input v-model="customerForm.email" class="input" /></div>
+        <div class="form-group"><label>Mã số thuế</label><input v-model="customerForm.tax_code" class="input" /></div>
+        <div class="form-group"><label>Địa chỉ hóa đơn</label><input v-model="customerForm.billing_address" class="input" /></div>
+        <div class="form-group"><label>Địa chỉ giao hàng</label><input v-model="customerForm.shipping_address" class="input" /></div>
+        <div class="form-group"><label>Nguồn</label><input v-model="customerForm.source" class="input" /></div>
+      </div>
+      <div class="form-group" style="margin-top:12px"><label>Ghi chú</label><textarea v-model="customerForm.note" class="textarea" rows="3" /></div>
     </BaseModal>
 
     <RecordDetailModal
@@ -865,6 +984,14 @@ onMounted(loadRows)
         </table>
       </div>
     </RecordDetailModal>
+
+    <OrderPrintModal
+      v-if="selectedPrintOrder"
+      :order="selectedPrintOrder"
+      :items="selectedPrintItems"
+      :requests="selectedPrintRequests"
+      @close="closePrint"
+    />
 
     <ConfirmModal
       v-bind="confirmState"

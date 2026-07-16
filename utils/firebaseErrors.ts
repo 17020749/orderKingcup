@@ -7,7 +7,7 @@ export function firebaseErrorMessage(error: any, fallback = 'Có lỗi xảy ra,
     'already-exists': 'Dữ liệu này đã tồn tại.',
     'failed-precondition': 'Dữ liệu hoặc truy vấn chưa đáp ứng điều kiện thực hiện.',
     'invalid-argument': 'Dữ liệu nhập vào không hợp lệ.',
-    'unavailable': 'Không kết nối được Firebase, vui lòng thử lại.',
+    'unavailable': 'Không kết nối được máy chủ, vui lòng thử lại.',
     'deadline-exceeded': 'Yêu cầu mất quá nhiều thời gian, vui lòng thử lại.',
     'resource-exhausted': 'Đã vượt giới hạn tài nguyên, vui lòng thử lại sau.'
   }

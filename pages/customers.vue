@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import type { CustomerDoc } from '~/types/models'
-import { isActive, makeId, normalizeText } from '~/utils/format'
+import { makeId, normalizeText } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
-const { saveDoc, softDeleteDoc } = useRepo()
-const { loadScopedCustomers } = useScopedQueries()
-const { hasPermission } = useAuth()
+const { saveDoc, softDeleteDoc, listDocs, q } = useRepo()
+const { appUser, hasPermission, isAdmin } = useAuth()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const loading = ref(false)
@@ -18,12 +17,43 @@ const selectedDetail = ref<CustomerDoc | null>(null)
 const editing = ref<CustomerDoc | null>(null)
 const form = reactive<any>({})
 
-const filtered = computed(() => rows.value.filter(r => normalizeText(`${r.customer_code} ${r.customer_name} ${r.company_name} ${r.phone} ${r.email}`).includes(normalizeText(search.value))))
+const filtered = computed(() => rows.value.filter(r => normalizeText(`${r.customer_code} ${r.customer_name} ${r.company_name} ${r.phone} ${r.email} ${customerStatusLabel(r.status)}`).includes(normalizeText(search.value))))
+const selectedDetailDisplay = computed(() => selectedDetail.value ? {
+  ...selectedDetail.value,
+  status: customerStatusLabel(selectedDetail.value.status)
+} : null)
+
+function customerStatusLabel(value: any) {
+  const status = String(value || 'active').trim().toLowerCase()
+  if (status === 'inactive') return 'Không hoạt động'
+  if (status === 'active') return 'Hoạt động'
+  return String(value || 'Hoạt động')
+}
+
+function customerStatusClass(value: any) {
+  return String(value || 'active').trim().toLowerCase() === 'inactive' ? 'red' : 'green'
+}
+
+function isCustomerNotDeleted(row: any) {
+  if (!row || row.deleted === true) return false
+  const status = normalizeText(row.status)
+  return !['deleted', 'da xoa'].includes(status)
+}
 
 async function loadRows(force = false) {
   loading.value = true
   try {
-    rows.value = (await loadScopedCustomers(force)).filter(isActive)
+    const currentEmail = String(appUser.value?.email || '').trim().toLowerCase()
+    const constraints = isAdmin.value || hasPermission('*')
+      ? []
+      : currentEmail
+        ? [q.where('created_by', '==', currentEmail)]
+        : []
+
+    // Trang quản lý khách hàng phải hiển thị cả active và inactive. Chỉ loại
+    // bản ghi đã xóa mềm; giá trị status trong Firestore vẫn giữ nguyên.
+    rows.value = (await listDocs('customers', constraints) as CustomerDoc[])
+      .filter(isCustomerNotDeleted)
       .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))
   } catch (error) { showToast(reportFirebaseError(error, 'Không tải được khách hàng.'), 'error') }
   finally { loading.value = false }
@@ -39,7 +69,7 @@ function openModal(row?: CustomerDoc) {
   showModal.value = true
 }
 async function saveCustomer() {
-  if (!form.customer_name) return alert('Thiếu tên khách hàng')
+  if (!form.customer_name) return showToast('Thiếu tên khách hàng', 'error')
   saving.value = true
   try {
     const record = await saveDoc('customers', {
@@ -51,6 +81,7 @@ async function saveCustomer() {
     if (index >= 0) rows.value[index] = { ...rows.value[index], ...record } as CustomerDoc
     else rows.value.unshift(record as CustomerDoc)
     showModal.value = false
+    showToast(editing.value ? 'Đã cập nhật khách hàng' : 'Đã thêm khách hàng', 'success')
   } catch (error) { showToast(reportFirebaseError(error, 'Không lưu được khách hàng.'), 'error') }
   finally { saving.value = false }
 }
@@ -71,12 +102,12 @@ onMounted(() => loadRows())
 
 <template>
   <AppShell>
-    <PageHeader title="Khách hàng" subtitle="Dữ liệu từ Firestore collection customers">
+    <PageHeader title="Khách hàng" subtitle="Quản lý thông tin khách hàng">
       <button v-if="hasPermission('customers.create')" class="btn primary" @click="openModal()">+ Thêm khách hàng</button>
     </PageHeader>
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
-        <input v-model="search" class="input" style="max-width:420px" placeholder="Tìm khách hàng, SĐT, email..." />
+        <input v-model="search" class="input" style="max-width:420px" placeholder="Tìm khách hàng, SĐT, email, trạng thái..." />
         <button class="btn" @click="loadRows(true)">Làm mới</button>
       </div>
       <LoadingState v-if="loading" />
@@ -86,13 +117,14 @@ onMounted(() => loadRows())
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
               <td>{{ row.customer_code || row.id }}</td><td><b>{{ row.customer_name }}</b></td><td>{{ row.company_name }}</td><td>{{ row.phone }}</td><td>{{ row.email }}</td>
-              <td><span class="badge green">{{ row.status || 'active' }}</span></td>
+              <td><span class="badge" :class="customerStatusClass(row.status)">{{ customerStatusLabel(row.status) }}</span></td>
               <td class="row">
                 <button class="btn" @click="openDetail(row)">Xem</button>
                 <button v-if="hasPermission('customers.edit')" class="btn" @click="openModal(row)">Sửa</button>
                 <button v-if="hasPermission('customers.delete')" class="btn danger" @click="removeCustomer(row)">Xóa</button>
               </td>
             </tr>
+            <tr v-if="!filtered.length"><td colspan="7" class="empty">Không có khách hàng phù hợp.</td></tr>
           </tbody>
         </table>
       </div>
@@ -108,15 +140,15 @@ onMounted(() => loadRows())
         <div class="form-group"><label>Địa chỉ hóa đơn</label><input v-model="form.billing_address" class="input" /></div>
         <div class="form-group"><label>Địa chỉ giao hàng</label><input v-model="form.shipping_address" class="input" /></div>
         <div class="form-group"><label>Nguồn</label><input v-model="form.source" class="input" /></div>
-        <div class="form-group"><label>Trạng thái</label><select v-model="form.status" class="select"><option value="active">active</option><option value="inactive">inactive</option></select></div>
+        <div class="form-group"><label>Trạng thái</label><select v-model="form.status" class="select"><option value="active">Hoạt động</option><option value="inactive">Không hoạt động</option></select></div>
       </div>
       <div class="form-group" style="margin-top:12px"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
     </BaseModal>
 
     <RecordDetailModal
-      v-if="showDetailModal && selectedDetail"
+      v-if="showDetailModal && selectedDetailDisplay"
       title="Chi tiết khách hàng"
-      :record="selectedDetail"
+      :record="selectedDetailDisplay"
       :field-order="['id','customer_code','customer_name','company_name','phone','email','tax_code','billing_address','shipping_address','source','note','created_by','created_at','updated_at','status','active','deleted']"
       @close="showDetailModal = false"
     />

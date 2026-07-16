@@ -45,6 +45,7 @@ const PERMISSION_GROUP_ORDER = [
   "Khách hàng",
   "Sản phẩm",
   "Thanh toán",
+  "Tiến độ in ấn",
   "Vận chuyển",
   "Hóa đơn",
   "Cài đặt",
@@ -404,11 +405,11 @@ onMounted(loadRows);
   <AppShell>
     <PageHeader
       title="Cài đặt"
-      subtitle="Quản lý user/role trực tiếp trên Firestore"
+      subtitle="Quản lý người dùng và vai trò"
     >
       <button class="btn" @click="loadRows">Làm mới</button>
     </PageHeader>
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="row" style="margin-bottom: 16px">
         <button
           class="btn"

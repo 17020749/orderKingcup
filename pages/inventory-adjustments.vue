@@ -6,6 +6,7 @@ import type {
 } from "~/types/models";
 import {
   formatDateTime,
+  makeId,
   normalizeText,
   toNumber,
   todayKey,
@@ -38,6 +39,7 @@ const form = reactive({
   unit: "",
   reason: "",
   note: "",
+  operation_id: makeId("op_inventory_adjust"),
 });
 
 const canAdjust = computed(
@@ -122,6 +124,7 @@ function openCreateModal() {
     unit: "",
     reason: "",
     note: "",
+    operation_id: makeId("op_inventory_adjust"),
   });
   showCreateModal.value = true;
 }
@@ -151,6 +154,7 @@ async function saveAdjustment() {
       unit: form.unit || findProduct(form.product_id)?.unit || "",
       reason: form.reason,
       note: form.note,
+      operation_id: form.operation_id,
     });
     showCreateModal.value = false;
     showToast(`Đã tạo điều chỉnh tồn ${result.id}.`, "success");
@@ -193,7 +197,7 @@ onMounted(() => loadRows());
   <AppShell>
     <PageHeader
       title="Điều chỉnh tồn"
-      subtitle="Điều chỉnh tăng/giảm tồn kho trên Firestore, có ghi stock_movements"
+      subtitle="Điều chỉnh tăng hoặc giảm tồn kho"
     >
       <button v-if="canAdjust" class="btn primary" @click="openCreateModal">
         + Điều chỉnh tồn
@@ -220,7 +224,7 @@ onMounted(() => loadRows());
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input
           v-model="search"

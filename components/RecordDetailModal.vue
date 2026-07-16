@@ -20,8 +20,8 @@ const props = withDefaults(defineProps<{
 defineEmits<{ close: [] }>()
 
 const commonLabels: Record<string, string> = {
-  id: 'ID Firestore',
-  firestore_id: 'Firestore ID',
+  id: 'ID hệ thống',
+  firestore_id: 'ID hệ thống',
   created_at: 'Ngày giờ tạo',
   updated_at: 'Ngày giờ cập nhật',
   deleted_at: 'Ngày giờ xóa',

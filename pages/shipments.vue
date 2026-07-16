@@ -125,7 +125,7 @@ onMounted(() => loadRows())
     <PageHeader title="Vận chuyển" subtitle="Theo dõi giao hàng, vận chuyển và COD">
       <button v-if="hasPermission('shipments.create') || hasPermission('*')" class="btn primary" @click="openModal()">+ Thêm vận chuyển</button>
     </PageHeader>
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" placeholder="Tìm đơn, nhà vận chuyển, mã vận đơn..." />
         <button class="btn" @click="loadRows(true)">Làm mới</button>

@@ -31,7 +31,7 @@ const { appUser, hasPermission } = useAuth();
 const {
   loadScopedOrders,
   loadScopedOrderItems,
-  loadScopedExportRequests,
+  listenScopedExportRequests,
 } = useScopedQueries();
 const {
   buildFulfillmentRows,
@@ -43,7 +43,9 @@ const { showToast, withLoading } = useUi();
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog();
 const { invalidateScopedCache } = useRepo();
 
-const loading = ref(false);
+const supportingLoading = ref(false);
+const realtimeLoading = ref(true);
+const loading = computed(() => supportingLoading.value || realtimeLoading.value);
 const saving = ref(false);
 const search = ref("");
 const rows = ref<any[]>([]);
@@ -57,6 +59,8 @@ const exportLines = ref<Array<FulfillmentRow & { export_quantity: number }>>(
   [],
 );
 const form = reactive<any>({});
+let stopRequestsListener: (() => void) | null = null;
+let lastRealtimeError = "";
 
 const filtered = computed(() =>
   rows.value.filter((row) =>
@@ -103,16 +107,79 @@ const orderOptions = computed(() =>
   })),
 );
 
+function timestampKey(value: any) {
+  if (typeof value?.toMillis === "function") return value.toMillis();
+  if (typeof value?.seconds === "number") return value.seconds * 1000;
+  return String(value || "");
+}
+
+function requestRevision(row: any) {
+  return [
+    row?.status || "",
+    timestampKey(row?.updated_at),
+    row?.active !== false,
+    row?.deleted === true,
+    row?.payload_json || "",
+    row?.request_timeline_json || "",
+    row?.warehouse_export_code || "",
+    row?.warehouse_note || "",
+  ].join("|");
+}
+
+function syncOpenRequestState(nextRows: any[]) {
+  if (selectedRequest.value) {
+    const fresh = nextRows.find(row => row.id === selectedRequest.value.id);
+    if (fresh) selectedRequest.value = fresh;
+    else {
+      selectedRequest.value = null;
+      showDetailModal.value = false;
+    }
+  }
+
+  if (!editing.value || !showModal.value || saving.value) return;
+  const fresh = nextRows.find(row => row.id === editing.value.id);
+  if (fresh && requestRevision(fresh) === requestRevision(editing.value)) return;
+  showModal.value = false;
+  editing.value = null;
+  showToast(
+    fresh
+      ? "Phiếu đang sửa vừa được cập nhật từ tài khoản khác. Vui lòng mở lại để dùng dữ liệu mới."
+      : "Phiếu đang sửa không còn khả dụng.",
+    "info",
+  );
+}
+
+function startRequestsListener() {
+  stopRequestsListener?.();
+  stopRequestsListener = null;
+  realtimeLoading.value = true;
+  stopRequestsListener = listenScopedExportRequests(
+    orders.value,
+    nextRows => {
+      syncOpenRequestState(nextRows);
+      rows.value = nextRows;
+      applyAllLocalOrderSummaries();
+      realtimeLoading.value = false;
+      lastRealtimeError = "";
+    },
+    error => {
+      realtimeLoading.value = false;
+      const message = reportFirebaseError(
+        error,
+        "Mất kết nối realtime với yêu cầu xuất kho.",
+      );
+      if (message !== lastRealtimeError) showToast(message, "error");
+      lastRealtimeError = message;
+    },
+  );
+}
+
 async function loadRows(force = false) {
-  loading.value = true;
+  supportingLoading.value = true;
   try {
     const loadedOrders = await loadScopedOrders(force);
     orders.value = loadedOrders.filter(isActive);
-    const [requests, items] = await Promise.all([
-      loadScopedExportRequests(orders.value, force),
-      loadScopedOrderItems(orders.value, force),
-    ]);
-    rows.value = requests.filter(isActive);
+    const items = await loadScopedOrderItems(orders.value, force);
 
     itemsByOrder.value = items.reduce(
       (map, item) => {
@@ -124,13 +191,15 @@ async function loadRows(force = false) {
     );
 
     applyAllLocalOrderSummaries();
+    startRequestsListener();
   } catch (error) {
+    realtimeLoading.value = false;
     showToast(
       reportFirebaseError(error, "Không tải được yêu cầu xuất kho."),
       "error",
     );
   } finally {
-    loading.value = false;
+    supportingLoading.value = false;
   }
 }
 
@@ -373,13 +442,22 @@ async function saveRequest() {
       active: true,
       deleted: false,
     });
-    if (!editing.value) {
+    {
+      const notificationType = editing.value
+        ? "warehouse_export_request_updated"
+        : "warehouse_export_request_created";
+      const notificationTitle = editing.value
+        ? "Yêu cầu xuất kho vừa được cập nhật"
+        : "Có yêu cầu xuất kho mới";
+      const notificationMessage = editing.value
+        ? `${form.request_id} · Đơn ${order.order_code || "-"} vừa được Sale cập nhật.`
+        : `${form.request_id} · Đơn ${order.order_code || "-"} · ${order.customer_name || "Khách hàng"}`;
       batch.set(
         doc(collection(db, "notifications")),
         buildNotificationPayload({
-          type: "warehouse_export_request_created",
-          title: "Có yêu cầu xuất kho mới",
-          message: `${form.request_id} · Đơn ${order.order_code || "-"} · ${order.customer_name || "Khách hàng"}`,
+          type: notificationType,
+          title: notificationTitle,
+          message: notificationMessage,
           route: "/warehouse-export-requests",
           entity_collection: "order_export_requests",
           entity_id: form.id,
@@ -625,6 +703,10 @@ function detailRequestLines(row: any) {
 }
 
 onMounted(() => loadRows());
+onBeforeUnmount(() => {
+  stopRequestsListener?.();
+  stopRequestsListener = null;
+});
 </script>
 
 <template>
@@ -657,7 +739,7 @@ onMounted(() => loadRows());
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input
           v-model="search"
@@ -835,7 +917,7 @@ onMounted(() => loadRows());
     >
       <div class="detail-grid">
         <div class="detail-item">
-          <label>ID Firestore</label><strong>{{ selectedRequest.id }}</strong>
+          <label>ID hệ thống</label><strong>{{ selectedRequest.id }}</strong>
         </div>
         <div class="detail-item">
           <label>Mã phiếu</label

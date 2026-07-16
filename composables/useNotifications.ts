@@ -35,6 +35,23 @@ export interface NotificationPayloadInput {
   metadata?: Record<string, any>
 }
 
+export interface SaleNotificationRecipientInput {
+  request?: Record<string, any> | null
+  order?: Record<string, any> | null
+  actorEmail?: string
+}
+
+export function resolveSaleNotificationRecipients(input: SaleNotificationRecipientInput) {
+  const request = input.request || {}
+  const order = input.order || {}
+  const actor = normalizeEmail(input.actorEmail || '')
+  const creator = normalizeEmail(request.requested_by || request.created_by || '')
+  const assignedSale = normalizeEmail(request.order_sale_email || order.sale_email || '')
+
+  return Array.from(new Set([creator, assignedSale].filter(Boolean)))
+    .filter(recipient => recipient !== actor)
+}
+
 export function buildNotificationPayload(input: NotificationPayloadInput) {
   return {
     type: input.type,
@@ -70,19 +87,48 @@ function mapSnapshot(snapshot: QuerySnapshot<DocumentData>) {
   return snapshot.docs.map(item => ({ id: item.id, ...item.data() }))
 }
 
-let directUnsubscribe: Unsubscribe | null = null
-let audienceUnsubscribe: Unsubscribe | null = null
-let readsUnsubscribe: Unsubscribe | null = null
-let currentSubscriptionKey = ''
+type NotificationStream = 'direct' | 'audience' | 'reads'
+
+function emptyStreamErrors(): Record<NotificationStream, string> {
+  return { direct: '', audience: '', reads: '' }
+}
+
+function emptyStreamLoading(): Record<NotificationStream, boolean> {
+  return { direct: false, audience: false, reads: false }
+}
+
+function retryableSnapshotError(reason: any) {
+  const code = String(reason?.code || '').replace(/^firestore\//, '')
+  return [
+    'aborted',
+    'cancelled',
+    'deadline-exceeded',
+    'internal',
+    'resource-exhausted',
+    'unavailable',
+    'unknown',
+  ].includes(code)
+}
 
 export function useNotifications() {
   const { db } = useFirebaseServices()
   const { appUser, permissions } = useAuth()
-  const directRows = useState<any[]>('notifications.direct', () => [])
-  const audienceRows = useState<any[]>('notifications.audience', () => [])
-  const readIds = useState<string[]>('notifications.readIds', () => [])
-  const loading = useState<boolean>('notifications.loading', () => false)
-  const error = useState<string>('notifications.error', () => '')
+  const directRows = ref<any[]>([])
+  const audienceRows = ref<any[]>([])
+  const readIds = ref<string[]>([])
+  const streamLoading = ref<Record<NotificationStream, boolean>>(emptyStreamLoading())
+  const streamErrors = ref<Record<NotificationStream, string>>(emptyStreamErrors())
+  // Listener ownership is instance-scoped. During a route transition Nuxt can
+  // mount the next AppShell before unmounting the previous one; module-level
+  // handles would let the old NotificationCenter stop the new subscription.
+  let directUnsubscribe: Unsubscribe | null = null
+  let audienceUnsubscribe: Unsubscribe | null = null
+  let readsUnsubscribe: Unsubscribe | null = null
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let currentSubscriptionKey = ''
+  let subscribedEmail = ''
+  let subscriptionGeneration = 0
+  let retryAttempt = 0
 
   const email = computed(() => normalizeEmail(appUser.value?.email || ''))
   const rulePermissions = computed(() => {
@@ -95,11 +141,11 @@ export function useNotifications() {
   })
 
   const items = computed(() => {
-    const currentEmail = email.value
+    const activeEmail = email.value
     const merged = new Map<string, any>()
     ;[...directRows.value, ...audienceRows.value].forEach(row => {
       if (!row?.id || row.deleted === true || row.active === false) return
-      if (normalizeEmail(row.created_by || '') === currentEmail && !normalizeEmail(row.to_email || '')) return
+      if (normalizeEmail(row.created_by || '') === activeEmail && !normalizeEmail(row.to_email || '')) return
       merged.set(row.id, row)
     })
     return Array.from(merged.values())
@@ -116,38 +162,119 @@ export function useNotifications() {
   })
 
   const unreadCount = computed(() => items.value.filter(item => !item.is_read).length)
+  const loading = computed(() => Object.values(streamLoading.value).some(Boolean))
+  const error = computed(() => Object.values(streamErrors.value).filter(Boolean).join(' · '))
 
-  function stop() {
+  function clearRetryTimer() {
+    if (retryTimer) clearTimeout(retryTimer)
+    retryTimer = null
+  }
+
+  function disposeListeners() {
     directUnsubscribe?.()
     audienceUnsubscribe?.()
     readsUnsubscribe?.()
     directUnsubscribe = null
     audienceUnsubscribe = null
     readsUnsubscribe = null
+  }
+
+  function resetRows() {
+    directRows.value = []
+    audienceRows.value = []
+    readIds.value = []
+  }
+
+  function stop() {
+    subscriptionGeneration += 1
+    disposeListeners()
+    clearRetryTimer()
     currentSubscriptionKey = ''
+    subscribedEmail = ''
+    retryAttempt = 0
+    streamLoading.value = emptyStreamLoading()
+    streamErrors.value = emptyStreamErrors()
+    resetRows()
+  }
+
+  function scheduleRetry(key: string, generation: number) {
+    if (retryTimer || generation !== subscriptionGeneration || key !== currentSubscriptionKey) return
+    const delays = [1000, 2000, 5000, 10000, 30000]
+    const delay = delays[Math.min(retryAttempt, delays.length - 1)]
+    retryAttempt += 1
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      if (generation !== subscriptionGeneration || key !== currentSubscriptionKey) return
+      currentSubscriptionKey = ''
+      start()
+    }, delay)
+  }
+
+  function streamReady(stream: NotificationStream) {
+    streamLoading.value = { ...streamLoading.value, [stream]: false }
+    streamErrors.value = { ...streamErrors.value, [stream]: '' }
+    if (!Object.values(streamLoading.value).some(Boolean) && !Object.values(streamErrors.value).some(Boolean)) {
+      retryAttempt = 0
+    }
+  }
+
+  function streamFailed(
+    stream: NotificationStream,
+    reason: any,
+    fallback: string,
+    key: string,
+    generation: number,
+  ) {
+    if (generation !== subscriptionGeneration || key !== currentSubscriptionKey) return
+    streamLoading.value = { ...streamLoading.value, [stream]: false }
+    streamErrors.value = {
+      ...streamErrors.value,
+      [stream]: reason?.message || fallback,
+    }
+    if (retryableSnapshotError(reason)) scheduleRetry(key, generation)
   }
 
   function start() {
-    const currentEmail = email.value
-    if (!currentEmail || !db) return
+    const nextEmail = email.value
+    if (!nextEmail || !db) {
+      stop()
+      return
+    }
     const audiencePermissions = rulePermissions.value
-    const key = `${currentEmail}|${audiencePermissions.slice().sort().join(',')}`
-    if (key === currentSubscriptionKey) return
+    const key = `${nextEmail}|${audiencePermissions.slice().sort().join(',')}`
+    const allRequiredListenersActive = Boolean(
+      directUnsubscribe
+      && readsUnsubscribe
+      && (audiencePermissions.length === 0 || audienceUnsubscribe),
+    )
+    if (key === currentSubscriptionKey && allRequiredListenersActive) return
 
-    stop()
+    const accountChanged = subscribedEmail !== nextEmail
+    subscriptionGeneration += 1
+    const generation = subscriptionGeneration
+    disposeListeners()
+    clearRetryTimer()
+    if (accountChanged) resetRows()
+    subscribedEmail = nextEmail
     currentSubscriptionKey = key
-    loading.value = true
-    error.value = ''
+    streamErrors.value = emptyStreamErrors()
+    streamLoading.value = {
+      direct: true,
+      audience: audiencePermissions.length > 0,
+      reads: true,
+    }
 
     directUnsubscribe = onSnapshot(
-      query(collection(db, 'notifications'), where('to_email', '==', currentEmail)),
+      query(collection(db, 'notifications'), where('to_email', '==', nextEmail)),
       snapshot => {
+        if (generation !== subscriptionGeneration) return
         directRows.value = mapSnapshot(snapshot)
-        loading.value = false
+        streamReady('direct')
       },
       reason => {
-        error.value = reason?.message || 'Không tải được thông báo cá nhân.'
-        loading.value = false
+        if (generation !== subscriptionGeneration) return
+        directUnsubscribe = null
+        streamFailed('direct', reason, 'Không tải được thông báo cá nhân.', key, generation)
       },
     )
 
@@ -158,41 +285,48 @@ export function useNotifications() {
           where('audience', '==', 'warehouse_export'),
         ),
         snapshot => {
+          if (generation !== subscriptionGeneration) return
           audienceRows.value = mapSnapshot(snapshot)
-          loading.value = false
+          streamReady('audience')
         },
         reason => {
-          error.value = reason?.message || 'Không tải được thông báo kho.'
-          loading.value = false
+          if (generation !== subscriptionGeneration) return
+          audienceUnsubscribe = null
+          streamFailed('audience', reason, 'Không tải được thông báo kho.', key, generation)
         },
       )
     } else {
       audienceRows.value = []
+      streamReady('audience')
     }
 
     readsUnsubscribe = onSnapshot(
-      query(collection(db, 'notification_reads'), where('user_email', '==', currentEmail)),
+      query(collection(db, 'notification_reads'), where('user_email', '==', nextEmail)),
       snapshot => {
+        if (generation !== subscriptionGeneration) return
         readIds.value = snapshot.docs
           .map(item => String(item.data()?.notification_id || ''))
           .filter(Boolean)
+        streamReady('reads')
       },
       reason => {
-        error.value = reason?.message || 'Không tải được trạng thái đã đọc.'
+        if (generation !== subscriptionGeneration) return
+        readsUnsubscribe = null
+        streamFailed('reads', reason, 'Không tải được trạng thái đã đọc.', key, generation)
       },
     )
   }
 
   async function markRead(notificationId: string) {
-    const currentEmail = email.value
-    if (!notificationId || !currentEmail) return
-    const readId = `${notificationId}__${currentEmail}`
+    const activeEmail = email.value
+    if (!notificationId || !activeEmail) return
+    const readId = `${notificationId}__${activeEmail}`
     await setDoc(
       doc(db, 'notification_reads', readId),
       {
         id: readId,
         notification_id: notificationId,
-        user_email: currentEmail,
+        user_email: activeEmail,
         read_at: serverTimestamp(),
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
@@ -237,6 +371,7 @@ export function useNotifications() {
     markRead,
     markAllRead,
     rulePermissions,
+    streamErrors,
     effectiveClientPermissions: permissions,
   }
 }

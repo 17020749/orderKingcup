@@ -20,6 +20,7 @@ export const ConfirmModal: typeof import("../components/ConfirmModal.vue")['defa
 export const GlobalLoading: typeof import("../components/GlobalLoading.vue")['default']
 export const LoadingState: typeof import("../components/LoadingState.vue")['default']
 export const NotificationCenter: typeof import("../components/NotificationCenter.vue")['default']
+export const OrderPrintModal: typeof import("../components/OrderPrintModal.vue")['default']
 export const PageHeader: typeof import("../components/PageHeader.vue")['default']
 export const RecordDetailModal: typeof import("../components/RecordDetailModal.vue")['default']
 export const SearchableSelect: typeof import("../components/SearchableSelect.vue")['default']
@@ -53,6 +54,7 @@ export const LazyConfirmModal: LazyComponent<typeof import("../components/Confir
 export const LazyGlobalLoading: LazyComponent<typeof import("../components/GlobalLoading.vue")['default']>
 export const LazyLoadingState: LazyComponent<typeof import("../components/LoadingState.vue")['default']>
 export const LazyNotificationCenter: LazyComponent<typeof import("../components/NotificationCenter.vue")['default']>
+export const LazyOrderPrintModal: LazyComponent<typeof import("../components/OrderPrintModal.vue")['default']>
 export const LazyPageHeader: LazyComponent<typeof import("../components/PageHeader.vue")['default']>
 export const LazyRecordDetailModal: LazyComponent<typeof import("../components/RecordDetailModal.vue")['default']>
 export const LazySearchableSelect: LazyComponent<typeof import("../components/SearchableSelect.vue")['default']>

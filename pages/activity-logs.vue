@@ -38,11 +38,11 @@ onMounted(loadRows)
 
 <template>
   <AppShell>
-    <PageHeader title="Nhật ký hoạt động" subtitle="Các thao tác ghi vào Firestore activity_logs">
+    <PageHeader title="Nhật ký hoạt động" subtitle="Theo dõi các thao tác trong hệ thống">
       <button class="btn" @click="loadRows">Làm mới</button>
     </PageHeader>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm log..." />
       </div>

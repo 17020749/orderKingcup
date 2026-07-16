@@ -14,10 +14,11 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'page.customers', group: 'Khách hàng', name: 'Xem tab Khách hàng' },
   { key: 'page.products', group: 'Sản phẩm', name: 'Xem tab Sản phẩm' },
   { key: 'page.payments', group: 'Thanh toán', name: 'Xem tab Thanh toán' },
+  { key: 'page.printing', group: 'Tiến độ in ấn', name: 'Xem tab Tiến độ in ấn' },
   { key: 'page.shipments', group: 'Vận chuyển', name: 'Xem tab Vận chuyển' },
   { key: 'page.invoices', group: 'Hóa đơn', name: 'Xem tab Hóa đơn' },
   { key: 'page.settings', group: 'Cài đặt', name: 'Xem tab Cài đặt' },
-  { key: 'page.activity_logs', group: 'Nhật ký', name: 'Xem tab Nhật ký' },
+  { key: 'page.activity_logs', group: 'Nhật ký', name: 'Xem tab Nhật ký hoạt động' },
   { key: 'dashboard.view', group: 'Dashboard', name: 'Xem dữ liệu dashboard' },
   { key: 'orders.view', group: 'Đơn hàng', name: 'Xem đơn hàng của mình' },
   { key: 'orders.view_all', group: 'Đơn hàng', name: 'Xem tất cả đơn hàng' },
@@ -83,6 +84,10 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'payments.edit', group: 'Thanh toán', name: 'Sửa phiếu thanh toán của mình' },
   { key: 'payments.delete', group: 'Thanh toán', name: 'Xóa phiếu thanh toán' },
   { key: 'payments.export', group: 'Thanh toán', name: 'Xuất Excel thanh toán' },
+  { key: 'printing.view', group: 'Tiến độ in ấn', name: 'Xem tiến độ in ấn' },
+  { key: 'printing.create', group: 'Tiến độ in ấn', name: 'Thêm tiến độ in ấn' },
+  { key: 'printing.edit', group: 'Tiến độ in ấn', name: 'Sửa tiến độ in ấn' },
+  { key: 'printing.delete', group: 'Tiến độ in ấn', name: 'Xóa tiến độ in ấn' },
   ...['shipments', 'invoices'].flatMap(module => [
     { key: `${module}.view`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Xem dữ liệu' },
     { key: `${module}.create`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Thêm dữ liệu' },
@@ -103,7 +108,7 @@ export const PAYMENT_STATUS_OPTIONS = ['Chưa thanh toán', 'Đã cọc', 'Đã 
 export const PAYMENT_TYPES = ['Cọc', 'Thu 1', 'Thu 2', 'Thu 3', 'Thanh toán đủ']
 export const PAYMENT_METHODS = ['Chuyển khoản', 'Tiền mặt']
 export const PAYMENT_STATUSES = ['Chưa nhận', 'Đã nhận', 'Giao dịch lỗi']
-export const INVOICE_STATUS_OPTIONS = ['Không xuất', 'Yêu cầu xuất', 'HĐ nháp', 'Đã xuất']
+export const INVOICE_STATUS_OPTIONS = ['Không xuất', 'Khách lẻ', 'Yêu cầu xuất', 'HĐ nháp', 'Đã xuất']
 export const VAT_RATE_OPTIONS = [0, 8]
 export const EXPORT_REQUEST_STATUSES = ['cho_xu_ly', 'dang_xu_ly', 'da_tiep_nhan', 'cho_xuat_kho', 'da_xuat', 'tu_choi', 'loi']
 

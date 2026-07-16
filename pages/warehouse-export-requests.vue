@@ -1,20 +1,31 @@
 <script setup lang="ts">
 import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore'
 import type { OrderDoc, OrderItemDoc, ProductDoc, WarehouseDoc } from '~/types/models'
-import { formatDateTime, isActive, normalizeEmail, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
+import { formatDateTime, isActive, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
-import { buildNotificationPayload } from '~/composables/useNotifications'
+import {
+  buildNotificationPayload,
+  resolveSaleNotificationRecipients,
+} from '~/composables/useNotifications'
 
 const { db } = useFirebaseServices()
 const { appUser, hasPermission, hasAnyPermission } = useAuth()
-const { loadScopedOrders, loadScopedOrderItems, loadWarehouseExportRequests, loadProducts, loadWarehouses } = useScopedQueries()
+const {
+  loadScopedOrders,
+  loadScopedOrderItems,
+  loadProducts,
+  loadWarehouses,
+  listenWarehouseExportRequests,
+} = useScopedQueries()
 const { buildFulfillmentRows, orderSummary, requestLineProgress } = useWarehouseLogic()
 const { processExportRequestToExportOrder } = useWarehouseTransactions()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const { invalidateScopedCache } = useRepo()
 
-const loading = ref(false)
+const supportingLoading = ref(false)
+const realtimeLoading = ref(true)
+const loading = computed(() => supportingLoading.value || realtimeLoading.value)
 const saving = ref(false)
 const search = ref('')
 const statusFilter = ref('')
@@ -29,6 +40,8 @@ const actionType = ref<'accept' | 'reject' | 'release' | ''>('')
 const showDetailModal = ref(false)
 const showActionModal = ref(false)
 const actionForm = reactive({ warehouse_id: '', note: '', export_date: todayKey() })
+let stopRequestsListener: (() => void) | null = null
+let lastRealtimeError = ''
 
 const canOpenPage = computed(() => hasAnyPermission(['page.warehouse_export_requests', 'export_requests.process']))
 const canAcceptAction = computed(() => hasAnyPermission(['export_requests.accept', 'export_requests.process']))
@@ -169,6 +182,13 @@ function canReleaseRequest(row: any) {
     && ['da_tiep_nhan', 'cho_xuat_kho', 'loi'].includes(String(row.status || ''))
 }
 
+function actionStillValid(row: any) {
+  if (actionType.value === 'accept') return canAcceptRequest(row)
+  if (actionType.value === 'reject') return canRejectRequest(row)
+  if (actionType.value === 'release') return canReleaseRequest(row)
+  return false
+}
+
 function normalizeCode(value: any) {
   return String(value || '').trim().toUpperCase()
 }
@@ -216,15 +236,17 @@ const actionSaveLabel = computed(() => {
 })
 
 function saleNotificationRecipients(row: any) {
-  const actor = normalizeEmail(appUser.value?.email || '')
-  return Array.from(new Set([
-    normalizeEmail(row?.requested_by || ''),
-    normalizeEmail(row?.order_sale_email || ''),
-  ].filter(Boolean))).filter(email => email !== actor)
+  const order = orders.value.find(item => item.id === row?.order_id)
+  return resolveSaleNotificationRecipients({
+    request: row,
+    order,
+    actorEmail: appUser.value?.email || '',
+  })
 }
 
 function addSaleNotifications(batch: any, row: any, input: { type: string; title: string; message: string }) {
-  saleNotificationRecipients(row).forEach(toEmail => {
+  const recipients = saleNotificationRecipients(row)
+  recipients.forEach(toEmail => {
     batch.set(
       doc(collection(db, 'notifications')),
       buildNotificationPayload({
@@ -245,6 +267,7 @@ function addSaleNotifications(batch: any, row: any, input: { type: string; title
       }),
     )
   })
+  return recipients.length
 }
 
 async function updateRequestStatus(row: any, nextStatus: string, action: string, title: string, note = '', extra: Record<string, any> = {}, notification?: { type: string; title: string; message: string }) {
@@ -277,15 +300,16 @@ async function updateRequestStatus(row: any, nextStatus: string, action: string,
     active: true,
     deleted: false
   })
-  if (notification) addSaleNotifications(batch, row, notification)
+  const notificationCount = notification ? addSaleNotifications(batch, row, notification) : 0
   await batch.commit()
   invalidateScopedCache('order_export_requests')
   invalidateScopedCache('orders')
   invalidateScopedCache('activity_logs')
+  return { notificationCount }
 }
 
 async function submitAccept(row: any) {
-  await updateRequestStatus(
+  const result = await updateRequestStatus(
     row,
     'da_tiep_nhan',
     'accept',
@@ -298,7 +322,12 @@ async function submitAccept(row: any) {
       message: `${row.request_id || row.id} · Đơn ${row.order_code || '-'} đã được Kho tiếp nhận.`,
     },
   )
-  showToast('Đã tiếp nhận yêu cầu xuất kho.', 'success')
+  showToast(
+    result.notificationCount
+      ? 'Đã tiếp nhận yêu cầu xuất kho.'
+      : 'Đã tiếp nhận yêu cầu nhưng không xác định được Sale để gửi thông báo.',
+    result.notificationCount ? 'success' : 'info',
+  )
 }
 
 async function submitReject(row: any) {
@@ -309,7 +338,7 @@ async function submitReject(row: any) {
     confirmLabel: 'Từ chối'
   })
   if (!confirmed) return
-  await updateRequestStatus(
+  const result = await updateRequestStatus(
     row,
     'tu_choi',
     'reject',
@@ -322,7 +351,12 @@ async function submitReject(row: any) {
       message: `${row.request_id || row.id} · Lý do: ${String(actionForm.note || '').trim()}`,
     },
   )
-  showToast('Đã từ chối yêu cầu xuất kho.', 'success')
+  showToast(
+    result.notificationCount
+      ? 'Đã từ chối yêu cầu xuất kho.'
+      : 'Đã từ chối yêu cầu nhưng không xác định được Sale để gửi thông báo.',
+    result.notificationCount ? 'success' : 'info',
+  )
 }
 
 async function submitRelease(row: any) {
@@ -334,11 +368,12 @@ async function submitRelease(row: any) {
 
   const missing = lines.filter((line: any) => !findProductByCode(line.product_code))
   if (missing.length) {
-    return showToast(`Chưa map được sản phẩm Firestore cho mã: ${missing.map((line: any) => line.product_code).join(', ')}. Kiểm tra quyền products.view và mã sản phẩm.`, 'error')
+    return showToast(`Chưa tìm thấy sản phẩm cho mã: ${missing.map((line: any) => line.product_code).join(', ')}. Kiểm tra quyền truy cập và mã sản phẩm.`, 'error')
   }
 
   const result = await processExportRequestToExportOrder({
     request: row,
+    notification_recipients: saleNotificationRecipients(row),
     warehouse,
     customer_name: row.customer_name,
     export_date: actionForm.export_date,
@@ -353,7 +388,13 @@ async function submitRelease(row: any) {
       note: line.note || ''
     }))
   })
-  showToast(result.alreadyProcessed ? 'Yêu cầu đã được xử lý trước đó.' : `Đã cho xuất kho và tạo phiếu ${result.code}.`, 'success')
+  if (result.alreadyProcessed) {
+    showToast('Yêu cầu đã được xử lý trước đó.', 'info')
+  } else if (!result.notificationCount) {
+    showToast(`Đã cho xuất kho và tạo phiếu ${result.code}, nhưng không xác định được Sale để gửi thông báo.`, 'info')
+  } else {
+    showToast(`Đã cho xuất kho và tạo phiếu ${result.code}.`, 'success')
+  }
 }
 
 async function submitAction() {
@@ -365,7 +406,6 @@ async function submitAction() {
     if (actionType.value === 'reject') await submitReject(row)
     if (actionType.value === 'release') await submitRelease(row)
     showActionModal.value = false
-    await loadRows(true)
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không xử lý được yêu cầu xuất kho.'), 'error')
   } finally {
@@ -377,8 +417,59 @@ function detailRequestLines(row: any) {
   return requestLineProgress(row)
 }
 
+function syncOpenRequestState(nextRows: any[]) {
+  if (selectedRequest.value) {
+    const fresh = nextRows.find(row => row.id === selectedRequest.value.id)
+    if (fresh) selectedRequest.value = fresh
+    else {
+      selectedRequest.value = null
+      showDetailModal.value = false
+    }
+  }
+
+  if (!actionRequest.value) return
+  const fresh = nextRows.find(row => row.id === actionRequest.value.id)
+  if (!fresh) {
+    actionRequest.value = null
+    if (showActionModal.value && !saving.value) {
+      showActionModal.value = false
+      showToast('Yêu cầu đang xử lý không còn khả dụng.', 'info')
+    }
+    return
+  }
+
+  actionRequest.value = fresh
+  if (showActionModal.value && !saving.value && !actionStillValid(fresh)) {
+    showActionModal.value = false
+    showToast('Yêu cầu vừa được tài khoản khác cập nhật nên thao tác này không còn hợp lệ.', 'info')
+  }
+}
+
+function startRequestsListener() {
+  stopRequestsListener?.()
+  stopRequestsListener = null
+  realtimeLoading.value = true
+  stopRequestsListener = listenWarehouseExportRequests(
+    nextRows => {
+      syncOpenRequestState(nextRows)
+      rows.value = nextRows
+      realtimeLoading.value = false
+      lastRealtimeError = ''
+    },
+    error => {
+      realtimeLoading.value = false
+      const message = reportFirebaseError(
+        error,
+        'Mất kết nối realtime với yêu cầu xuất kho.',
+      )
+      if (message !== lastRealtimeError) showToast(message, 'error')
+      lastRealtimeError = message
+    },
+  )
+}
+
 async function loadRows(force = false) {
-  loading.value = true
+  supportingLoading.value = true
   try {
     const [loadedOrders, productRows, warehouseRows] = await Promise.all([
       loadScopedOrders(force),
@@ -388,24 +479,26 @@ async function loadRows(force = false) {
     orders.value = loadedOrders.filter(isActive)
     products.value = productRows
     warehouses.value = warehouseRows
-    const [requests, items] = await Promise.all([
-      loadWarehouseExportRequests(force),
-      loadScopedOrderItems(orders.value, force)
-    ])
-    rows.value = requests.filter(isActive)
+    const items = await loadScopedOrderItems(orders.value, force)
     itemsByOrder.value = items.reduce((map, item) => {
       if (!map[item.order_id]) map[item.order_id] = []
       map[item.order_id].push(item)
       return map
     }, {} as Record<string, OrderItemDoc[]>)
+    startRequestsListener()
   } catch (error) {
+    realtimeLoading.value = false
     showToast(reportFirebaseError(error, 'Không tải được danh sách yêu cầu xuất kho cần xử lý.'), 'error')
   } finally {
-    loading.value = false
+    supportingLoading.value = false
   }
 }
 
 onMounted(() => loadRows())
+onBeforeUnmount(() => {
+  stopRequestsListener?.()
+  stopRequestsListener = null
+})
 </script>
 
 <template>
@@ -421,7 +514,7 @@ onMounted(() => loadRows())
       <div class="summary-card"><label>Đã xuất kho</label><strong>{{ summary.exported.toLocaleString('vi-VN') }}</strong></div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width:420px" placeholder="Tìm mã yêu cầu, đơn hàng, khách hàng..." />
         <select v-model="statusFilter" class="input" style="max-width:220px">

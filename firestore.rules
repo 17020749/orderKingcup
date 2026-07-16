@@ -201,6 +201,9 @@ service cloud.firestore {
         'cancelled_by',
         'cancel_reason',
         'updated_by',
+        'operation_id',
+        'last_operation_id',
+        'revision',
         'updated_at'
       ]);
     }
@@ -455,22 +458,51 @@ service cloud.firestore {
     }
 
     function canWriteInventoryCore() {
-      return hasAnyPerm([
-        'import.create',
-        'import.edit',
-        'import.delete',
-        'export.create',
-        'export.edit',
-        'export.delete',
-        'inventory.adjust',
-        'export_requests.release',
-        'export_requests.process'
-      ]);
+      let path = userPath();
+      let user = get(path).data;
+      let permissions = user.get('permissions_flat', []);
+      return signedIn()
+        && exists(path)
+        && activeUserData(user)
+        && (
+          user.get('is_admin', false) == true
+          || (
+            permissions is list
+            && (
+              '*' in permissions
+              || permissions.hasAny([
+                'import.create',
+                'import.edit',
+                'import.delete',
+                'export.create',
+                'export.edit',
+                'export.delete',
+                'inventory.adjust',
+                'export_requests.release',
+                'export_requests.process'
+              ])
+            )
+          )
+        );
     }
+
 
     function quantityIsNumber(data) {
       return data.get('quantity', 0) is int
         || data.get('quantity', 0) is float;
+    }
+
+    function printQuantitiesAreValid(data) {
+      return (
+          data.get('print_quantity', 0) is int
+          || data.get('print_quantity', 0) is float
+        )
+        && data.get('print_quantity', 0) > 0
+        && (
+          data.get('actual_print_quantity', 0) is int
+          || data.get('actual_print_quantity', 0) is float
+        )
+        && data.get('actual_print_quantity', 0) >= 0;
     }
 
     function balanceQuantityIsSafe() {
@@ -499,21 +531,24 @@ service cloud.firestore {
     // invoice or deletion state. Those fields are handled by dedicated rules.
     function normalOrderEditKeepsSystemFields() {
       return unchanged([
-        'paid_amount',
-        'debt_amount',
-        'computed_payment_status',
-        'payment_status',
-        'payment_count',
-        'deposit_count',
-        'collect_count',
-        'warehouse_fulfillment_status',
-        'warehouse_request_status',
-        'invoice_status',
-        'deleted',
-        'active',
-        'status',
-        'deleted_at'
-      ]);
+          'paid_amount',
+          'debt_amount',
+          'computed_payment_status',
+          'payment_status',
+          'payment_count',
+          'deposit_count',
+          'collect_count',
+          'warehouse_fulfillment_status',
+          'warehouse_request_status',
+          'deleted',
+          'active',
+          'status',
+          'deleted_at'
+        ])
+        && (
+          unchanged(['invoice_status'])
+          || hasAnyPerm(['invoices.create', 'invoices.edit', 'invoices.delete'])
+        );
     }
 
 
@@ -603,6 +638,9 @@ service cloud.firestore {
           'actual_export_summary_json',
           'stock_movement_ids',
           'request_timeline_json',
+          'operation_id',
+          'last_operation_id',
+          'revision',
           'updated_at'
         ])
         && ownEmailField(request.resource.data, 'warehouse_handled_by')
@@ -686,15 +724,13 @@ service cloud.firestore {
           )
         );
 
-      allow delete: if isAdmin()
-        || (
-          hasPerm('customers.delete')
-          && ownEmailField(resource.data, 'created_by')
-        );
+            // Customers are always removed through soft-delete updates.
+      allow delete: if false;
+
     }
 
     match /products/{docId} {
-      allow read: if hasPerm('products.view');
+      allow read: if hasAnyPerm(['products.view', 'inventory.view', 'printing.view']);
 
       allow create: if isAdmin()
         || (
@@ -719,9 +755,9 @@ service cloud.firestore {
           && softDeleteOnly()
         );
 
-      // Product deletion from the UI is intentionally a soft-delete so old
-      // order items keep their historical product information.
-      allow delete: if isAdmin();
+      // Products are always removed through soft-delete updates so old order
+      // and inventory history keeps its original product reference.
+      allow delete: if false;
     }
 
     // ---------------------------------------------------------------------
@@ -934,6 +970,56 @@ service cloud.firestore {
     // Shipments and invoices
     // ---------------------------------------------------------------------
 
+    match /print_orders/{docId} {
+      allow read: if hasPerm('printing.view');
+
+      allow create: if hasPerm('printing.create')
+        && request.resource.data.get('order_code', '') is string
+        && request.resource.data.get('order_code', '') != ''
+        && ownEmailField(request.resource.data, 'created_by');
+
+      allow update: if isAdmin()
+        || (
+          hasPerm('printing.edit')
+          && warehouseDocIdentitySafe()
+          && request.resource.data.get('order_code', '') is string
+          && request.resource.data.get('order_code', '') != ''
+          && unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
+        )
+        || (
+          hasPerm('printing.delete')
+          && warehouseDocIdentitySafe()
+          && warehouseSoftDeleteOnly()
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    match /print_order_items/{docId} {
+      allow read: if hasPerm('printing.view');
+
+      allow create: if hasAnyPerm(['printing.create', 'printing.edit'])
+        && request.resource.data.print_order_id is string
+        && request.resource.data.get('product_id', '') is string
+        && request.resource.data.get('product_id', '') != ''
+        && printQuantitiesAreValid(request.resource.data)
+        && ownEmailField(request.resource.data, 'created_by');
+
+      allow update: if isAdmin()
+        || (
+          hasPerm('printing.edit')
+          && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
+          && printQuantitiesAreValid(request.resource.data)
+        )
+        || (
+          hasAnyPerm(['printing.edit', 'printing.delete'])
+          && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
+          && warehouseSoftDeleteOnly()
+        );
+
+      allow delete: if isAdmin();
+    }
+
     match /shipments/{docId} {
       allow read: if isAdmin()
         || (
@@ -1040,7 +1126,8 @@ service cloud.firestore {
     }
 
     match /suppliers/{docId} {
-      allow read: if canReadWarehouseCatalog();
+      allow read: if canReadWarehouseCatalog()
+        || hasPerm('printing.view');
       allow create: if hasAnyPerm(['suppliers.manage'])
         && ownEmailField(request.resource.data, 'created_by');
       allow update: if hasAnyPerm(['suppliers.manage'])
@@ -1175,9 +1262,51 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+
+    match /warehouse_operations/{docId} {
+      allow read: if canReadInventoryCore();
+      allow create: if canWriteInventoryCore()
+        && request.resource.data.get('operation_id', '') == docId
+        && request.resource.data.get('status', '') == 'processing'
+        && ownEmailField(request.resource.data, 'created_by');
+      allow update: if resource.data.get('operation_id', '') == docId
+        && request.resource.data.get('operation_id', '') == docId
+        && resource.data.get('created_by', '').lower() == email()
+        && unchanged([
+          'operation_id',
+          'action',
+          'target_collection',
+          'target_id',
+          'created_by',
+          'created_at',
+          'source'
+        ])
+        && onlyChanged([
+          'status',
+          'processing_at',
+          'completed_at',
+          'failed_at',
+          'failure_message',
+          'result_code',
+          'target_revision'
+        ])
+        && (
+          (
+            resource.data.get('status', '') == 'processing'
+            && ['completed', 'failed'].hasAny([request.resource.data.get('status', '')])
+          )
+          || (
+            ['failed', 'pending'].hasAny([resource.data.get('status', '')])
+            && request.resource.data.get('status', '') == 'processing'
+          )
+        );
+      allow delete: if false;
+    }
+
     match /stock_movements/{docId} {
       allow read: if canReadInventoryCore();
       allow create: if canWriteInventoryCore()
+        && request.resource.data.get('operation_id', '') != ''
         && quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) != 0
         && ownEmailField(request.resource.data, 'created_by');
@@ -1190,6 +1319,8 @@ service cloud.firestore {
     match /inventory_balances/{docId} {
       allow read: if canReadInventoryCore();
       allow create, update: if canWriteInventoryCore()
+        && request.resource.data.get('last_operation_id', '') != ''
+        && ownEmailField(request.resource.data, 'updated_by')
         && balanceQuantityIsSafe();
       allow delete: if isAdmin();
     }

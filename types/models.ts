@@ -187,6 +187,51 @@ export interface ShipmentDoc {
   status?: string
 }
 
+export interface PrintOrderDoc {
+  id: string
+  order_code: string
+  am_code?: string
+  supplier_id?: string
+  supplier_name?: string
+  note?: string
+  status?: string
+  active?: boolean
+  deleted?: boolean
+  created_by?: string
+  created_at?: any
+  updated_by?: string
+  updated_at?: any
+  deleted_by?: string
+  deleted_at?: any
+  source?: string
+}
+
+export interface PrintOrderItemDoc {
+  id: string
+  print_order_id: string
+  product_id?: string
+  product_code?: string
+  product_name?: string
+  logo?: string
+  print_quantity: number
+  actual_print_quantity?: number
+  print_started_at?: string
+  expected_done_at?: string
+  is_completed?: boolean | string
+  completed_at?: any
+  note?: string
+  status?: string
+  active?: boolean
+  deleted?: boolean
+  created_by?: string
+  created_at?: any
+  updated_by?: string
+  updated_at?: any
+  deleted_by?: string
+  deleted_at?: any
+  source?: string
+}
+
 export interface InvoiceDoc {
   id: string
   order_id: string
@@ -453,4 +498,3 @@ export interface NotificationReadDoc {
   active?: boolean
   deleted?: boolean
 }
-
