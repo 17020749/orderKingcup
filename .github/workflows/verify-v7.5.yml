@@ -27,79 +27,81 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
+
           path = Path('firestore.rules')
           text = path.read_text(encoding='utf-8')
 
-          anchor = """    function canWriteInventoryCore() {
-              return hasAnyPerm([
-                'import.create',
-                'import.edit',
-                'import.delete',
-                'export.create',
-                'export.edit',
-                'export.delete',
-                'inventory.adjust',
-                'export_requests.release',
-                'export_requests.process'
-              ]);
-            }
-          """
-          helper = anchor + """
-            function warehouseOperationAfterValid(operationId) {
-              let path = /databases/$(database)/documents/warehouse_operations/$(operationId);
-              let operation = getAfter(path).data;
-              return operationId is string
-                && operationId != ''
-                && operation.get('operation_id', '') == operationId
-                && operation.get('status', '') == 'completed'
-                && ownEmailField(operation, 'created_by');
-            }
-          """
-          if text.count(anchor) != 1:
-              raise SystemExit(f'Không tìm thấy helper canWriteInventoryCore duy nhất: {text.count(anchor)}')
-          text = text.replace(anchor, helper, 1)
+          helper_pattern = re.compile(
+              r"(    function canWriteInventoryCore\(\) \{\n"
+              r"      return hasAnyPerm\(\[\n"
+              r"(?:        '[^']+',\n)*"
+              r"        '[^']+'\n"
+              r"      \]\);\n"
+              r"    \}\n)"
+          )
+          helper_matches = list(helper_pattern.finditer(text))
+          if len(helper_matches) != 1:
+              raise SystemExit(f'canWriteInventoryCore: cần đúng 1 khối, tìm thấy {len(helper_matches)}')
 
-          old_movement = """      allow create: if canWriteInventoryCore()
-                && quantityIsNumber(request.resource.data)
-                && request.resource.data.get('quantity', 0) != 0
-                && ownEmailField(request.resource.data, 'created_by');
-          """
-          new_movement = """      allow create: if (
-                  (
-                    request.resource.data.get('operation_id', '') != ''
-                    && warehouseOperationAfterValid(request.resource.data.get('operation_id', ''))
-                  )
-                  || (
-                    request.resource.data.get('operation_id', '') == ''
-                    && canWriteInventoryCore()
-                    && ownEmailField(request.resource.data, 'created_by')
-                  )
-                )
-                && quantityIsNumber(request.resource.data)
-                && request.resource.data.get('quantity', 0) != 0;
-          """
-          if text.count(old_movement) != 1:
-              raise SystemExit(f'Không tìm thấy rule stock_movements duy nhất: {text.count(old_movement)}')
-          text = text.replace(old_movement, new_movement, 1)
+          helper = """
+    function warehouseOperationAfterValid(operationId) {
+      let path = /databases/$(database)/documents/warehouse_operations/$(operationId);
+      let operation = getAfter(path).data;
+      return operationId is string
+        && operationId != ''
+        && operation.get('operation_id', '') == operationId
+        && operation.get('status', '') == 'completed'
+        && ownEmailField(operation, 'created_by');
+    }
+"""
+          text = helper_pattern.sub(lambda match: match.group(1) + helper, text, count=1)
 
-          old_balance = """      allow create, update: if canWriteInventoryCore()
-                && balanceQuantityIsSafe();
-          """
-          new_balance = """      allow create, update: if (
-                  (
-                    request.resource.data.get('last_operation_id', '') != ''
-                    && warehouseOperationAfterValid(request.resource.data.get('last_operation_id', ''))
-                  )
-                  || (
-                    request.resource.data.get('last_operation_id', '') == ''
-                    && canWriteInventoryCore()
-                  )
-                )
-                && balanceQuantityIsSafe();
-          """
-          if text.count(old_balance) != 1:
-              raise SystemExit(f'Không tìm thấy rule inventory_balances duy nhất: {text.count(old_balance)}')
-          text = text.replace(old_balance, new_balance, 1)
+          movement_pattern = re.compile(
+              r"      allow create: if canWriteInventoryCore\(\)\n"
+              r"        && quantityIsNumber\(request\.resource\.data\)\n"
+              r"        && request\.resource\.data\.get\('quantity', 0\) != 0\n"
+              r"        && ownEmailField\(request\.resource\.data, 'created_by'\);"
+          )
+          movement_matches = list(movement_pattern.finditer(text))
+          if len(movement_matches) != 1:
+              raise SystemExit(f'stock_movements create: cần đúng 1 khối, tìm thấy {len(movement_matches)}')
+
+          movement_rule = """      allow create: if (
+          (
+            request.resource.data.get('operation_id', '') != ''
+            && warehouseOperationAfterValid(request.resource.data.get('operation_id', ''))
+          )
+          || (
+            request.resource.data.get('operation_id', '') == ''
+            && canWriteInventoryCore()
+            && ownEmailField(request.resource.data, 'created_by')
+          )
+        )
+        && quantityIsNumber(request.resource.data)
+        && request.resource.data.get('quantity', 0) != 0;"""
+          text = movement_pattern.sub(movement_rule, text, count=1)
+
+          balance_pattern = re.compile(
+              r"      allow create, update: if canWriteInventoryCore\(\)\n"
+              r"        && balanceQuantityIsSafe\(\);"
+          )
+          balance_matches = list(balance_pattern.finditer(text))
+          if len(balance_matches) != 1:
+              raise SystemExit(f'inventory_balances write: cần đúng 1 khối, tìm thấy {len(balance_matches)}')
+
+          balance_rule = """      allow create, update: if (
+          (
+            request.resource.data.get('last_operation_id', '') != ''
+            && warehouseOperationAfterValid(request.resource.data.get('last_operation_id', ''))
+          )
+          || (
+            request.resource.data.get('last_operation_id', '') == ''
+            && canWriteInventoryCore()
+          )
+        )
+        && balanceQuantityIsSafe();"""
+          text = balance_pattern.sub(balance_rule, text, count=1)
 
           path.write_text(text, encoding='utf-8')
           PY
@@ -131,6 +133,6 @@ jobs:
           git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add firestore.rules tests/warehouse.transactions.test.mjs package.json .github/workflows/verify-v7.5.yml v7.5-final-tests-error.log
+          git add -A
           git commit -m "test: verify v7.5 idempotency and revision concurrency"
           git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
