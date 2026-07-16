@@ -1,0 +1,48 @@
+name: Apply V7.5 transaction hardening
+
+on:
+  pull_request:
+    branches:
+      - feature/v7.4-stability-fixes
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-v7-5:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feature/v7.5-transaction-hardening' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout V7.5 branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply guarded V7.5 patch
+        run: python scripts/apply-v7.5-transaction-hardening.py
+
+      - name: Static validation
+        shell: bash
+        run: |
+          node --check tests/firestore.rules.test.mjs
+          git diff --check
+          grep -q "match /warehouse_operations" firestore.rules
+          grep -q "assertExpectedRevision" composables/useWarehouseTransactions.ts
+          grep -q "operation_id: form.operation_id" pages/imports.vue
+          grep -q "operation_id: form.operation_id" pages/exports.vue
+          grep -q "operation_id: form.operation_id" pages/inventory-adjustments.vue
+
+      - name: Commit V7.5 source changes
+        shell: bash
+        run: |
+          rm -f scripts/apply-v7.5-transaction-hardening.py .github/workflows/apply-v7.5-transaction-hardening.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: harden warehouse transactions with idempotency"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
