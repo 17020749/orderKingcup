@@ -50,6 +50,17 @@ jobs:
           if old_pattern not in text:
               raise SystemExit('Không tìm thấy regex movementPayload cần nới thụt dòng.')
           text = text.replace(old_pattern, new_pattern, 1)
+
+          old_release_item = '''        "             updated_at: serverTimestamp(),\\n             source: 'kingcup_firestore'\\n",
+              "             updated_at: serverTimestamp(),\\n             operation_id: operationId,\\n             last_operation_id: operationId,\\n             revision: 1,\\n             source: 'kingcup_firestore'\\n",
+          '''
+          new_release_item = '''        "            updated_at: serverTimestamp(),\\n            source: 'kingcup_firestore'\\n",
+              "            updated_at: serverTimestamp(),\\n            operation_id: operationId,\\n            last_operation_id: operationId,\\n            revision: 1,\\n            source: 'kingcup_firestore'\\n",
+          '''
+          if old_release_item not in text:
+              raise SystemExit('Không tìm thấy đoạn patch item của luồng release cần chỉnh thụt dòng.')
+          text = text.replace(old_release_item, new_release_item, 1)
+
           path.write_text(text, encoding='utf-8')
           PY
           set +e
