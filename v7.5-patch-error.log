@@ -1,5 +1,5 @@
-release item fields: expected exactly one match, found 0
+release request revision: expected exactly one match, found 0
 --- expected ---
-             updated_at: serverTimestamp(),
-             source: 'kingcup_firestore'
+           request_timeline_json: JSON.stringify(nextTimeline),
+           updated_at: serverTimestamp()
 
