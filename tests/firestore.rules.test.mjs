@@ -1272,12 +1272,18 @@ test('V7.5 cho phép nghiệp vụ kho tạo operation key bất biến', async 
     action: 'import_create',
     target_collection: 'import_orders',
     target_id: 'import-v75',
-    result_code: 'PNK-V75',
-    target_revision: 1,
+    result_code: '',
+    target_revision: 0,
     created_by: STOCK,
-    status: 'completed',
+    status: 'pending',
     active: true,
     deleted: false
+  }))
+  await assertSucceeds(updateDoc(ref, {
+    status: 'completed',
+    result_code: 'PNK-V75',
+    target_revision: 1,
+    completed_at: 'now'
   }))
   await assertFails(updateDoc(ref, { result_code: 'KHONG-DUOC-SUA' }))
   await assertFails(deleteDoc(ref))
@@ -1292,7 +1298,7 @@ test('V7.5 người không có quyền kho không được tạo operation key',
     target_collection: 'import_orders',
     target_id: 'import-v75-editor',
     created_by: EDITOR,
-    status: 'completed',
+    status: 'pending',
     active: true,
     deleted: false
   }))

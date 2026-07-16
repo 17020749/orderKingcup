@@ -86,26 +86,33 @@ test('V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction ch
   const movementRef = doc(db, 'stock_movements', 'move-v75-concurrent-import')
   const balanceRef = doc(db, 'inventory_balances', 'wh-a__product-existing__no_logo')
 
+  await setDoc(operationRef, {
+    id: operationId,
+    operation_id: operationId,
+    action: 'import_create',
+    target_collection: 'import_orders',
+    target_id: 'import-v75-concurrent',
+    result_code: '',
+    target_revision: 0,
+    created_by: STOCK,
+    status: 'pending',
+    active: true,
+    deleted: false
+  })
+
   async function applyOnce() {
     return runTransaction(db, async transaction => {
       const operationSnap = await transaction.get(operationRef)
-      if (operationSnap.exists()) return 'replayed'
+      if (operationSnap.data()?.status === 'completed') return 'replayed'
 
       const balanceSnap = await transaction.get(balanceRef)
       const currentQuantity = Number(balanceSnap.data()?.quantity || 0)
 
-      transaction.set(operationRef, {
-        id: operationId,
-        operation_id: operationId,
-        action: 'import_create',
-        target_collection: 'import_orders',
-        target_id: 'import-v75-concurrent',
+      transaction.update(operationRef, {
+        status: 'completed',
         result_code: 'PNK-V75-CONCURRENT',
         target_revision: 1,
-        created_by: STOCK,
-        status: 'completed',
-        active: true,
-        deleted: false
+        completed_at: 'now'
       })
       transaction.set(movementRef, {
         id: 'move-v75-concurrent-import',
@@ -158,27 +165,34 @@ test('V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tạ
   const orderRef = doc(db, 'export_orders', 'export-v75-revision')
 
   async function updateAtRevision(operationId) {
+    const operationRef = doc(db, 'warehouse_operations', operationId)
+    await setDoc(operationRef, {
+      id: operationId,
+      operation_id: operationId,
+      action: 'export_update',
+      target_collection: 'export_orders',
+      target_id: 'export-v75-revision',
+      result_code: '',
+      target_revision: 0,
+      created_by: STOCK,
+      status: 'pending',
+      active: true,
+      deleted: false
+    })
+
     return runTransaction(db, async transaction => {
-      const operationRef = doc(db, 'warehouse_operations', operationId)
       const operationSnap = await transaction.get(operationRef)
-      if (operationSnap.exists()) return 'replayed'
+      if (operationSnap.data()?.status === 'completed') return 'replayed'
 
       const orderSnap = await transaction.get(orderRef)
       const revision = Number(orderSnap.data()?.revision || 0)
       if (revision !== 0) throw new Error(`STALE_REVISION:${revision}`)
 
-      transaction.set(operationRef, {
-        id: operationId,
-        operation_id: operationId,
-        action: 'export_update',
-        target_collection: 'export_orders',
-        target_id: 'export-v75-revision',
+      transaction.update(operationRef, {
+        status: 'completed',
         result_code: 'PX-V75-REVISION',
         target_revision: 1,
-        created_by: STOCK,
-        status: 'completed',
-        active: true,
-        deleted: false
+        completed_at: 'now'
       })
       transaction.update(orderRef, {
         note: operationId,

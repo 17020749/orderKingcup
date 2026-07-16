@@ -141,13 +141,62 @@ function warehouseOperationPayload(input: {
     result_code: input.resultCode || '',
     target_revision: input.targetRevision || 0,
     created_by: input.createdBy,
-    status: 'completed',
-    completed_at: serverTimestamp(),
+    status: 'pending',
     created_at: serverTimestamp(),
     active: true,
     deleted: false,
     source: 'nuxt_v7_5'
   }
+}
+
+function warehouseOperationCompletionPayload(input: {
+  operationId: string
+  action: string
+  targetCollection: string
+  targetId: string
+  resultCode?: string
+  targetRevision?: number
+  createdBy: string
+}) {
+  return {
+    status: 'completed',
+    result_code: input.resultCode || '',
+    target_revision: input.targetRevision || 0,
+    completed_at: serverTimestamp()
+  }
+}
+
+function assertOperationOwner(data: any, action: string, createdBy: string) {
+  if (String(data?.action || '') !== action) {
+    throw new Error('operation_id đã được dùng cho một nghiệp vụ khác. Hãy tải lại trang và thử lại.')
+  }
+  if (normalizeEmail(data?.created_by || '') !== normalizeEmail(createdBy)) {
+    throw new Error('operation_id thuộc về tài khoản khác, không thể tiếp tục thao tác.')
+  }
+  const status = String(data?.status || '')
+  if (!['pending', 'completed'].includes(status)) {
+    throw new Error(`operation_id đang ở trạng thái không hợp lệ: ${status || 'trống'}.`)
+  }
+}
+
+async function ensureWarehouseOperation(db: any, input: {
+  operationId: string
+  action: string
+  targetCollection: string
+  targetId: string
+  resultCode?: string
+  targetRevision?: number
+  createdBy: string
+}) {
+  const operationRef = doc(db, 'warehouse_operations', input.operationId)
+  await runTransaction(db, async transaction => {
+    const snapshot = await transaction.get(operationRef)
+    if (snapshot.exists()) {
+      assertOperationOwner(snapshot.data(), input.action, input.createdBy)
+      return
+    }
+    transaction.set(operationRef, warehouseOperationPayload(input))
+  })
 }
 
 function readOperationResult(data: any, action: string) {
@@ -357,17 +406,29 @@ export function useWarehouseTransactions() {
       source: 'nuxt'
     }
 
+    await ensureWarehouseOperation(db, {
+      operationId,
+      action: 'import_create',
+      targetCollection: 'import_orders',
+      targetId: orderId,
+      resultCode: code,
+      createdBy: createdBy
+    })
+
     await runTransaction(db, async tx => {
       const operationRef = doc(db, 'warehouse_operations', operationId)
       const operationSnap = await tx.get(operationRef)
-      if (operationSnap.exists()) {
+      if (!operationSnap.exists()) throw new Error('Không tìm thấy operation pending cho nghiệp vụ kho.')
+      const operationData = operationSnap.data() || {}
+      assertOperationOwner(operationData, 'import_create', createdBy)
+      if (String(operationData.status || '') === 'completed') {
         const previous = readOperationResult(operationSnap.data(), 'import_create')
         resultId = previous.id || resultId
         resultCode = previous.code || resultCode
         alreadyProcessed = true
         return
-      }
 
+      }
       const balanceSnaps = new Map<string, any>()
       for (const delta of balanceDeltas.values()) {
         balanceSnaps.set(delta.id, await tx.get(doc(db, 'inventory_balances', delta.id)))
@@ -427,7 +488,7 @@ export function useWarehouseTransactions() {
         tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId, createdBy), { merge: true })
       }
 
-      tx.set(operationRef, warehouseOperationPayload({
+      tx.update(operationRef, warehouseOperationCompletionPayload({
         operationId,
         action: 'import_create',
         targetCollection: 'import_orders',
@@ -581,18 +642,30 @@ export function useWarehouseTransactions() {
       })
     }
 
+    await ensureWarehouseOperation(db, {
+      operationId,
+      action: 'import_update',
+      targetCollection: 'import_orders',
+      targetId: orderId,
+      resultCode: code,
+      createdBy: updatedBy
+    })
+
     await runTransaction(db, async tx => {
       const operationRef = doc(db, 'warehouse_operations', operationId)
       const operationSnap = await tx.get(operationRef)
-      if (operationSnap.exists()) {
+      if (!operationSnap.exists()) throw new Error('Không tìm thấy operation pending cho nghiệp vụ kho.')
+      const operationData = operationSnap.data() || {}
+      assertOperationOwner(operationData, 'import_update', updatedBy)
+      if (String(operationData.status || '') === 'completed') {
         const previous = readOperationResult(operationSnap.data(), 'import_update')
         resultId = previous.id || resultId
         resultCode = previous.code || resultCode
         resultRevision = previous.revision || resultRevision
         alreadyProcessed = true
         return
-      }
 
+      }
       const orderRef = doc(db, 'import_orders', orderId)
       const currentOrderSnap = await tx.get(orderRef)
       if (!currentOrderSnap.exists()) throw new Error('Phiếu nhập không còn tồn tại.')
@@ -721,7 +794,7 @@ export function useWarehouseTransactions() {
         tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId, updatedBy), { merge: true })
       }
 
-      tx.set(operationRef, warehouseOperationPayload({
+      tx.update(operationRef, warehouseOperationCompletionPayload({
         operationId,
         action: 'import_update',
         targetCollection: 'import_orders',
@@ -775,18 +848,30 @@ export function useWarehouseTransactions() {
       })
     }
 
+    await ensureWarehouseOperation(db, {
+      operationId,
+      action: 'import_delete',
+      targetCollection: 'import_orders',
+      targetId: orderId,
+      resultCode: code,
+      createdBy: deletedBy
+    })
+
     await runTransaction(db, async tx => {
       const operationRef = doc(db, 'warehouse_operations', operationId)
       const operationSnap = await tx.get(operationRef)
-      if (operationSnap.exists()) {
+      if (!operationSnap.exists()) throw new Error('Không tìm thấy operation pending cho nghiệp vụ kho.')
+      const operationData = operationSnap.data() || {}
+      assertOperationOwner(operationData, 'import_delete', deletedBy)
+      if (String(operationData.status || '') === 'completed') {
         const previous = readOperationResult(operationSnap.data(), 'import_delete')
         resultId = previous.id || resultId
         resultCode = previous.code || resultCode
         resultRevision = previous.revision || resultRevision
         alreadyProcessed = true
         return
-      }
 
+      }
       const orderRef = doc(db, 'import_orders', orderId)
       const currentOrderSnap = await tx.get(orderRef)
       if (!currentOrderSnap.exists()) throw new Error('Phiếu nhập không còn tồn tại.')
@@ -862,7 +947,7 @@ export function useWarehouseTransactions() {
         tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId, deletedBy), { merge: true })
       }
 
-      tx.set(operationRef, warehouseOperationPayload({
+      tx.update(operationRef, warehouseOperationCompletionPayload({
         operationId,
         action: 'import_delete',
         targetCollection: 'import_orders',
@@ -990,17 +1075,29 @@ export function useWarehouseTransactions() {
 
     const stockMovementIds = preparedLines.flatMap(line => line.toWarehouse ? [line.outMovementId, line.inMovementId] : [line.outMovementId])
 
+    await ensureWarehouseOperation(db, {
+      operationId,
+      action: 'export_create',
+      targetCollection: 'export_orders',
+      targetId: orderId,
+      resultCode: code,
+      createdBy: createdBy
+    })
+
     await runTransaction(db, async tx => {
       const operationRef = doc(db, 'warehouse_operations', operationId)
       const operationSnap = await tx.get(operationRef)
-      if (operationSnap.exists()) {
+      if (!operationSnap.exists()) throw new Error('Không tìm thấy operation pending cho nghiệp vụ kho.')
+      const operationData = operationSnap.data() || {}
+      assertOperationOwner(operationData, 'export_create', createdBy)
+      if (String(operationData.status || '') === 'completed') {
         const previous = readOperationResult(operationSnap.data(), 'export_create')
         resultId = previous.id || resultId
         resultCode = previous.code || resultCode
         alreadyProcessed = true
         return
-      }
 
+      }
       const balanceSnaps = new Map<string, any>()
       for (const delta of balanceDeltas.values()) {
         balanceSnaps.set(delta.id, await tx.get(doc(db, 'inventory_balances', delta.id)))
@@ -1092,7 +1189,7 @@ export function useWarehouseTransactions() {
         tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId, createdBy), { merge: true })
       }
 
-      tx.set(operationRef, warehouseOperationPayload({
+      tx.update(operationRef, warehouseOperationCompletionPayload({
         operationId,
         action: 'export_create',
         targetCollection: 'export_orders',
@@ -1236,18 +1333,30 @@ export function useWarehouseTransactions() {
       ? warehouseName(firstToWarehouse)
       : (input.destination_name || input.customer_name || '')
 
+    await ensureWarehouseOperation(db, {
+      operationId,
+      action: 'export_update',
+      targetCollection: 'export_orders',
+      targetId: orderId,
+      resultCode: code,
+      createdBy: updatedBy
+    })
+
     await runTransaction(db, async tx => {
       const operationRef = doc(db, 'warehouse_operations', operationId)
       const operationSnap = await tx.get(operationRef)
-      if (operationSnap.exists()) {
+      if (!operationSnap.exists()) throw new Error('Không tìm thấy operation pending cho nghiệp vụ kho.')
+      const operationData = operationSnap.data() || {}
+      assertOperationOwner(operationData, 'export_update', updatedBy)
+      if (String(operationData.status || '') === 'completed') {
         const previous = readOperationResult(operationSnap.data(), 'export_update')
         resultId = previous.id || resultId
         resultCode = previous.code || resultCode
         resultRevision = previous.revision || resultRevision
         alreadyProcessed = true
         return
-      }
 
+      }
       const orderRef = doc(db, 'export_orders', orderId)
       const currentOrderSnap = await tx.get(orderRef)
       if (!currentOrderSnap.exists()) throw new Error('Phiếu xuất không còn tồn tại.')
@@ -1442,7 +1551,7 @@ export function useWarehouseTransactions() {
         tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, current + delta.delta, operationId, updatedBy), { merge: true })
       }
 
-      tx.set(operationRef, warehouseOperationPayload({
+      tx.update(operationRef, warehouseOperationCompletionPayload({
         operationId,
         action: 'export_update',
         targetCollection: 'export_orders',
@@ -1526,18 +1635,30 @@ export function useWarehouseTransactions() {
       }
     }
 
+    await ensureWarehouseOperation(db, {
+      operationId,
+      action: 'export_cancel',
+      targetCollection: 'export_orders',
+      targetId: orderId,
+      resultCode: code,
+      createdBy: deletedBy
+    })
+
     await runTransaction(db, async tx => {
       const operationRef = doc(db, 'warehouse_operations', operationId)
       const operationSnap = await tx.get(operationRef)
-      if (operationSnap.exists()) {
+      if (!operationSnap.exists()) throw new Error('Không tìm thấy operation pending cho nghiệp vụ kho.')
+      const operationData = operationSnap.data() || {}
+      assertOperationOwner(operationData, 'export_cancel', deletedBy)
+      if (String(operationData.status || '') === 'completed') {
         const previous = readOperationResult(operationSnap.data(), 'export_cancel')
         resultId = previous.id || resultId
         resultCode = previous.code || resultCode
         resultRevision = previous.revision || resultRevision
         alreadyProcessed = true
         return
-      }
 
+      }
       const orderRef = doc(db, 'export_orders', orderId)
       const currentOrderSnap = await tx.get(orderRef)
       if (!currentOrderSnap.exists()) throw new Error('Phiếu xuất không còn tồn tại.')
@@ -1651,7 +1772,7 @@ export function useWarehouseTransactions() {
         tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, current + delta.delta, operationId, deletedBy), { merge: true })
       }
 
-      tx.set(operationRef, warehouseOperationPayload({
+      tx.update(operationRef, warehouseOperationCompletionPayload({
         operationId,
         action: 'export_cancel',
         targetCollection: 'export_orders',
@@ -1730,16 +1851,28 @@ export function useWarehouseTransactions() {
       source: 'nuxt'
     }
 
+    await ensureWarehouseOperation(db, {
+      operationId,
+      action: 'inventory_adjust',
+      targetCollection: 'inventory_adjustments',
+      targetId: adjustmentId,
+      resultCode: '',
+      createdBy: createdBy
+    })
+
     await runTransaction(db, async tx => {
       const operationRef = doc(db, 'warehouse_operations', operationId)
       const operationSnap = await tx.get(operationRef)
-      if (operationSnap.exists()) {
+      if (!operationSnap.exists()) throw new Error('Không tìm thấy operation pending cho nghiệp vụ kho.')
+      const operationData = operationSnap.data() || {}
+      assertOperationOwner(operationData, 'inventory_adjust', createdBy)
+      if (String(operationData.status || '') === 'completed') {
         const previous = readOperationResult(operationSnap.data(), 'inventory_adjust')
         resultId = previous.id || resultId
         alreadyProcessed = true
         return
-      }
 
+      }
       const balanceRef = doc(db, 'inventory_balances', balanceKey)
       const snap = await tx.get(balanceRef)
       const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
@@ -1766,7 +1899,7 @@ export function useWarehouseTransactions() {
         operationId
       }))
       tx.set(balanceRef, balancePayload(delta, next, operationId, createdBy), { merge: true })
-      tx.set(operationRef, warehouseOperationPayload({
+      tx.update(operationRef, warehouseOperationCompletionPayload({
         operationId,
         action: 'inventory_adjust',
         targetCollection: 'inventory_adjustments',
@@ -1884,17 +2017,29 @@ export function useWarehouseTransactions() {
     }]
 
     let alreadyProcessed = false
+    await ensureWarehouseOperation(db, {
+      operationId,
+      action: 'export_request_release',
+      targetCollection: 'export_orders',
+      targetId: orderId,
+      resultCode: code,
+      createdBy: createdBy
+    })
+
     await runTransaction(db, async tx => {
       const operationRef = doc(db, 'warehouse_operations', operationId)
       const operationSnap = await tx.get(operationRef)
-      if (operationSnap.exists()) {
+      if (!operationSnap.exists()) throw new Error('Không tìm thấy operation pending cho nghiệp vụ kho.')
+      const operationData = operationSnap.data() || {}
+      assertOperationOwner(operationData, 'export_request_release', createdBy)
+      if (String(operationData.status || '') === 'completed') {
         const previous = readOperationResult(operationSnap.data(), 'export_request_release')
         resultId = previous.id || resultId
         resultCode = previous.code || resultCode
         alreadyProcessed = true
         return
-      }
 
+      }
       const requestRef = doc(db, 'order_export_requests', requestDocId)
       const exportRef = doc(db, 'export_orders', orderId)
       const requestSnap = await tx.get(requestRef)
@@ -2038,7 +2183,7 @@ export function useWarehouseTransactions() {
         })
       }
 
-      tx.set(operationRef, warehouseOperationPayload({
+      tx.update(operationRef, warehouseOperationCompletionPayload({
         operationId,
         action: 'export_request_release',
         targetCollection: 'export_orders',

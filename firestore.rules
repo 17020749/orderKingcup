@@ -486,11 +486,13 @@ service cloud.firestore {
         );
     }
 
-    function warehouseOperationExistsAfter(operationId) {
+    function warehouseOperationAfterValid(operationId) {
       let path = /databases/$(database)/documents/warehouse_operations/$(operationId);
+      let operation = getAfter(path).data;
       return operationId is string
         && operationId != ''
-        && existsAfter(path);
+        && operation.get('status', '') == 'completed'
+        && ownEmailField(operation, 'created_by');
     }
 
     function quantityIsNumber(data) {
@@ -1209,11 +1211,31 @@ service cloud.firestore {
       allow read: if canReadInventoryCore();
       allow create: if canWriteInventoryCore()
         && request.resource.data.get('operation_id', '') == docId
-        && request.resource.data.get('status', '') == 'completed'
+        && request.resource.data.get('status', '') == 'pending'
         && ownEmailField(request.resource.data, 'created_by');
-      // Operation records are immutable idempotency keys. A completed key must
-      // never be rewritten or removed by a client.
-      allow update, delete: if false;
+      allow update: if resource.data.get('status', '') == 'pending'
+        && request.resource.data.get('status', '') == 'completed'
+        && sameEmailField(resource.data, request.resource.data, 'created_by')
+        && ownEmailField(resource.data, 'created_by')
+        && unchanged([
+          'id',
+          'operation_id',
+          'action',
+          'target_collection',
+          'target_id',
+          'created_by',
+          'created_at',
+          'active',
+          'deleted',
+          'source'
+        ])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'result_code',
+          'target_revision',
+          'completed_at'
+        ]);
+      allow delete: if false;
     }
 
     match /stock_movements/{docId} {
@@ -1221,7 +1243,7 @@ service cloud.firestore {
       allow create: if (
           request.resource.data.get('operation_id', '') != ''
           ? (
-            warehouseOperationExistsAfter(request.resource.data.get('operation_id', ''))
+            warehouseOperationAfterValid(request.resource.data.get('operation_id', ''))
             && ownEmailField(request.resource.data, 'created_by')
           )
           : (
@@ -1242,7 +1264,7 @@ service cloud.firestore {
       allow create, update: if (
           request.resource.data.get('last_operation_id', '') != ''
           ? (
-            warehouseOperationExistsAfter(request.resource.data.get('last_operation_id', ''))
+            warehouseOperationAfterValid(request.resource.data.get('last_operation_id', ''))
             && ownEmailField(request.resource.data, 'updated_by')
           )
           : canWriteInventoryCore()
