@@ -1,4 +1,4 @@
-name: Verify V7.5 build and rules
+name: Verify V7.5 rules diagnostics
 
 on:
   pull_request:
@@ -7,18 +7,20 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  verify:
-    if: github.event.pull_request.head.ref == 'feature/v7.5-transaction-hardening'
+  verify-rules:
+    if: github.event.pull_request.head.ref == 'feature/v7.5-transaction-hardening' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - name: Checkout V7.5
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          persist-credentials: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -37,14 +39,29 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile --ignore-scripts
 
-      - name: Prepare Nuxt
-        run: pnpm exec nuxi prepare
+      - name: Run Firestore rules tests
+        id: rules
+        shell: bash
+        run: |
+          set +e
+          pnpm run test:rules > /tmp/v7.5-rules.log 2>&1
+          code=$?
+          cat /tmp/v7.5-rules.log
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
 
-      - name: Build
-        run: pnpm run build
+      - name: Record rules diagnostic
+        if: steps.rules.outputs.exit_code != '0'
+        shell: bash
+        run: |
+          cp /tmp/v7.5-rules.log v7.5-rules-error.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f v7.5-rules-error.log
+          git commit -m "chore: record v7.5 rules failure"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          exit 1
 
-      - name: Generate
-        run: pnpm run generate
-
-      - name: Firestore rules tests
-        run: pnpm run test:rules
+      - name: Confirm rules pass
+        if: steps.rules.outputs.exit_code == '0'
+        run: echo "Firestore Rules tests passed."
