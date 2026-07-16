@@ -1,0 +1,49 @@
+name: Verify final V7.5
+
+on:
+  pull_request:
+    branches:
+      - feature/v7.4-stability-fixes
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event.pull_request.head.ref == 'feature/v7.5-transaction-hardening'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout V7.5
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install pnpm and dependencies
+        run: |
+          npm install --global pnpm@9.15.9 --no-audit --no-fund
+          pnpm install --no-frozen-lockfile --ignore-scripts
+
+      - name: Prepare Nuxt
+        run: pnpm exec nuxi prepare
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Generate
+        run: pnpm run generate
+
+      - name: Firestore rules and concurrency tests
+        run: pnpm run test:rules
