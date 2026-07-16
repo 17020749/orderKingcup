@@ -487,16 +487,6 @@ service cloud.firestore {
     }
 
 
-    function warehouseProcessingOperationOwned(operationId) {
-      let path = /databases/$(database)/documents/warehouse_operations/$(operationId);
-      let operation = get(path).data;
-      return operationId is string
-        && operationId != ''
-        && exists(path)
-        && operation.get('status', '') == 'processing'
-        && operation.get('created_by', '').lower() == email();
-    }
-
     function quantityIsNumber(data) {
       return data.get('quantity', 0) is int
         || data.get('quantity', 0) is float;
@@ -1218,8 +1208,24 @@ service cloud.firestore {
       allow update: if resource.data.get('operation_id', '') == docId
         && request.resource.data.get('operation_id', '') == docId
         && resource.data.get('created_by', '').lower() == email()
-        && request.resource.data.get('created_by', '') == resource.data.get('created_by', '')
-        && request.resource.data.get('action', '') == resource.data.get('action', '')
+        && unchanged([
+          'operation_id',
+          'action',
+          'target_collection',
+          'target_id',
+          'created_by',
+          'created_at',
+          'source'
+        ])
+        && onlyChanged([
+          'status',
+          'processing_at',
+          'completed_at',
+          'failed_at',
+          'failure_message',
+          'result_code',
+          'target_revision'
+        ])
         && (
           (
             resource.data.get('status', '') == 'processing'
@@ -1235,19 +1241,11 @@ service cloud.firestore {
 
     match /stock_movements/{docId} {
       allow read: if canReadInventoryCore();
-      allow create: if (
-          request.resource.data.get('operation_id', '') != ''
-          ? (
-            warehouseProcessingOperationOwned(request.resource.data.get('operation_id', ''))
-            && ownEmailField(request.resource.data, 'created_by')
-          )
-          : (
-            canWriteInventoryCore()
-            && ownEmailField(request.resource.data, 'created_by')
-          )
-        )
+      allow create: if canWriteInventoryCore()
+        && request.resource.data.get('operation_id', '') != ''
         && quantityIsNumber(request.resource.data)
-        && request.resource.data.get('quantity', 0) != 0;
+        && request.resource.data.get('quantity', 0) != 0
+        && ownEmailField(request.resource.data, 'created_by');
 
       // Stock movements are append-only from the client. Corrections should
       // be represented as another adjustment movement, not by rewriting history.
@@ -1256,14 +1254,9 @@ service cloud.firestore {
 
     match /inventory_balances/{docId} {
       allow read: if canReadInventoryCore();
-      allow create, update: if (
-          request.resource.data.get('last_operation_id', '') != ''
-          ? (
-            warehouseProcessingOperationOwned(request.resource.data.get('last_operation_id', ''))
-            && ownEmailField(request.resource.data, 'updated_by')
-          )
-          : canWriteInventoryCore()
-        )
+      allow create, update: if canWriteInventoryCore()
+        && request.resource.data.get('last_operation_id', '') != ''
+        && ownEmailField(request.resource.data, 'updated_by')
         && balanceQuantityIsSafe();
       allow delete: if isAdmin();
     }

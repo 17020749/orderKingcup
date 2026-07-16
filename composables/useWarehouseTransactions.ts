@@ -175,7 +175,7 @@ function assertOperationOwner(data: any, action: string, createdBy: string) {
     throw new Error('operation_id thuộc về tài khoản khác, không thể tiếp tục thao tác.')
   }
   const status = String(data?.status || '')
-  if (!['pending', 'completed'].includes(status)) {
+  if (!['pending', 'processing', 'failed', 'completed'].includes(status)) {
     throw new Error(`operation_id đang ở trạng thái không hợp lệ: ${status || 'trống'}.`)
   }
 }
