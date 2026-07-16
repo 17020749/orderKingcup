@@ -14,18 +14,21 @@ const props = withDefaults(
     placeholder?: string;
     disabled?: boolean;
     noResultText?: string;
+    actionLabel?: string;
   }>(),
   {
     modelValue: "",
     placeholder: "Chọn dữ liệu",
     disabled: false,
     noResultText: "Không tìm thấy dữ liệu phù hợp",
+    actionLabel: "",
   },
 );
 
 const emit = defineEmits<{
   "update:modelValue": [value: string];
   change: [value: string];
+  action: [];
 }>();
 
 const open = ref(false);
@@ -105,6 +108,12 @@ function choose(option: OptionItem) {
   keyword.value = "";
 }
 
+function triggerAction() {
+  open.value = false;
+  keyword.value = "";
+  emit("action");
+}
+
 function onOutside(event: MouseEvent) {
   const target = event.target as Node;
   if (rootRef.value?.contains(target) || panelRef.value?.contains(target))
@@ -153,6 +162,7 @@ onBeforeUnmount(() => {
         v-if="open"
         ref="panelRef"
         class="searchable-select-panel searchable-select-panel-teleport"
+        :class="{ 'has-action': actionLabel }"
         :style="panelStyle"
         @click.stop
       >
@@ -162,6 +172,14 @@ onBeforeUnmount(() => {
           class="input searchable-select-input"
           placeholder="Gõ để tìm..."
         />
+        <button
+          v-if="actionLabel"
+          type="button"
+          class="searchable-select-action"
+          @click="triggerAction"
+        >
+          {{ actionLabel }}
+        </button>
         <div class="searchable-select-options">
           <button
             v-for="option in filtered"

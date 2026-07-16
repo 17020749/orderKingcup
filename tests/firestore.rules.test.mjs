@@ -633,7 +633,7 @@ test('Admin có thể tạo dữ liệu con cho order của user khác', async (
 test('Chủ phiếu chỉ sửa khi phiếu còn ở trạng thái cho phép', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
   await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
-    payload_json: '{"quantity":2}', updated_at: 'now'
+    payload_json: '{"quantity":2}', updated_by: A, updated_at: 'now'
   }))
   await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a-done'), {
     payload_json: '{"quantity":999}', updated_at: 'now'

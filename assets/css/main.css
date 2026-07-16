@@ -832,6 +832,21 @@ tr:hover td {
 .searchable-select-input {
   margin-bottom: 8px;
 }
+.searchable-select-action {
+  width: 100%;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  background: #ecfdf5;
+  color: #047857;
+  padding: 9px 10px;
+  margin-bottom: 8px;
+  font-weight: 800;
+  text-align: left;
+}
+.searchable-select-action:hover {
+  border-color: #86efac;
+  background: #dcfce7;
+}
 .searchable-select-options {
   max-height: 280px;
   overflow: auto;
@@ -911,6 +926,12 @@ tr:hover td {
 }
 .searchable-select-panel-teleport .searchable-select-options {
   max-height: calc(100% - 50px);
+}
+.searchable-select-panel-teleport.has-action .searchable-select-options {
+  max-height: calc(100% - 96px);
+}
+.customer-create-modal-backdrop {
+  z-index: 60;
 }
 .permission-group-list {
   display: grid;
