@@ -1,5 +1,5 @@
-release return result: expected exactly one match, found 2
+rules export request operation fields: expected exactly one match, found 2
 --- expected ---
-      id: orderId,
-      code,
+          'request_timeline_json',
+          'updated_at'
 
