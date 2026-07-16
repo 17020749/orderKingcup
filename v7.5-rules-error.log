@@ -1,0 +1,481 @@
+
+> order-kingcup-nuxt-firestore@1.0.0 test:rules /home/runner/work/orderKingcup/orderKingcup
+> firebase emulators:exec --only firestore "node --test --test-concurrency=1 tests/firestore.rules.test.mjs tests/warehouse.transactions.test.mjs"
+
+[33m[1m⚠  emulators:[22m[39m You are not currently authenticated so some features may not work correctly. Please run [1mfirebase login[22m to authenticate the CLI.
+[36m[1mi  emulators:[22m[39m Starting emulators: firestore
+[33m[1m⚠ [22m[39m It appears you are running in a CI environment. You can avoid downloading the Firestore Emulator repeatedly by caching the /home/runner/.cache/firebase/emulators directory.
+[36m[1mi  firestore:[22m[39m downloading cloud-firestore-emulator-v1.21.0.jar...
+
+[36m[1mi  firestore:[22m[39m Firestore Emulator logging to [1mfirestore-debug.log[22m
+[32m[1m✔  firestore:[22m[39m Firestore Emulator was started in standard edition.
+[32m[1m✔  firestore:[22m[39m Firestore Emulator UI websocket is running on 9150.
+[36m[1mi [22m[39m Running script: [1mnode --test --test-concurrency=1 tests/firestore.rules.test.mjs tests/warehouse.transactions.test.mjs[22m
+TAP version 13
+# Subtest: Xóa mềm order và order_items trong cùng batch là nguyên tử
+ok 1 - Xóa mềm order và order_items trong cùng batch là nguyên tử
+  ---
+  duration_ms: 5092.33665
+  ...
+# Subtest: User A tạo payment chuẩn cho order A
+ok 2 - User A tạo payment chuẩn cho order A
+  ---
+  duration_ms: 274.876147
+  ...
+# [2026-07-16T05:15:33.475Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83a6 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L881:24 for 'create' @ L881, evaluation error at L887:24 for 'update' @ L887, false for 'create' @ L881
+# Subtest: User A không thể giả ownership để tạo payment cho order B
+ok 3 - User A không thể giả ownership để tạo payment cho order B
+  ---
+  duration_ms: 206.159386
+  ...
+# [2026-07-16T05:15:33.691Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83a8 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L887:24 for 'update' @ L887, false for 'update' @ L887
+# [2026-07-16T05:15:33.716Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83a9 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L909:24 for 'delete' @ L909, false for 'delete' @ L909
+# Subtest: User A không thể sửa hoặc hard-delete payment của User B
+ok 4 - User A không thể sửa hoặc hard-delete payment của User B
+  ---
+  duration_ms: 238.861454
+  ...
+# [2026-07-16T05:15:33.876Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83ab error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L944:24 for 'create' @ L944, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'create' @ L944
+# Subtest: User A tạo phiếu xuất order A nhưng không thể giả phiếu cho order B
+ok 5 - User A tạo phiếu xuất order A nhưng không thể giả phiếu cho order B
+  ---
+  duration_ms: 159.160111
+  ...
+# [2026-07-16T05:15:34.011Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83ad error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# [2026-07-16T05:15:34.032Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83ae error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# [2026-07-16T05:15:34.051Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83af error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# Subtest: Sale chỉ tạo/sửa yêu cầu, không được tự tiếp nhận, từ chối hoặc cho xuất kho
+ok 6 - Sale chỉ tạo/sửa yêu cầu, không được tự tiếp nhận, từ chối hoặc cho xuất kho
+  ---
+  duration_ms: 174.988953
+  ...
+# Subtest: Sale sửa được yêu cầu đang chờ bằng đúng batch của page
+ok 7 - Sale sửa được yêu cầu đang chờ bằng đúng batch của page
+  ---
+  duration_ms: 183.829883
+  ...
+# [2026-07-16T05:15:34.356Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83b3 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# Subtest: Sale không thể giả updated_by khi sửa yêu cầu
+ok 8 - Sale không thể giả updated_by khi sửa yêu cầu
+  ---
+  duration_ms: 121.399568
+  ...
+# Subtest: Sale xóa mềm được yêu cầu chưa được Kho tiếp nhận
+ok 9 - Sale xóa mềm được yêu cầu chưa được Kho tiếp nhận
+  ---
+  duration_ms: 121.352888
+  ...
+# [2026-07-16T05:15:34.594Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83b7 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# [2026-07-16T05:15:34.610Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83b8 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# [2026-07-16T05:15:34.628Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83b9 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L953:24 for 'delete' @ L953, false for 'delete' @ L953
+# Subtest: Kho đã tiếp nhận thì Sale không được sửa hoặc xóa yêu cầu
+ok 10 - Kho đã tiếp nhận thì Sale không được sửa hoặc xóa yêu cầu
+  ---
+  duration_ms: 150.31968
+  ...
+# [2026-07-16T05:15:34.750Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83bb error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L837, false for 'update' @ L837
+# Subtest: User A không thể chiếm order_item của User B bằng owner request mới
+ok 11 - User A không thể chiếm order_item của User B bằng owner request mới
+  ---
+  duration_ms: 122.025496
+  ...
+# [2026-07-16T05:15:34.846Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83bd error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L674:46 for 'update' @ L674, false for 'update' @ L674
+# Subtest: User có users.manage không thể tự cấp quyền admin
+ok 12 - User có users.manage không thể tự cấp quyền admin
+  ---
+  duration_ms: 95.239854
+  ...
+# [2026-07-16T05:15:34.976Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83bf error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# [2026-07-16T05:15:34.990Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83c0 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# Subtest: Warehouse chỉ sửa field xử lý, không sửa payload phiếu
+ok 13 - Warehouse chỉ sửa field xử lý, không sửa payload phiếu
+  ---
+  duration_ms: 144.527251
+  ...
+# [2026-07-16T05:15:35.121Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83c3 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# Subtest: Quyền trang Kho xử lý YC xuất chỉ được đọc, không được xử lý
+ok 14 - Quyền trang Kho xử lý YC xuất chỉ được đọc, không được xử lý
+  ---
+  duration_ms: 130.336923
+  ...
+# [2026-07-16T05:15:35.243Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83c5 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# [2026-07-16T05:15:35.258Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83c6 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# Subtest: Quyền tiếp nhận chỉ được tiếp nhận, không được từ chối hoặc cho xuất
+ok 15 - Quyền tiếp nhận chỉ được tiếp nhận, không được từ chối hoặc cho xuất
+  ---
+  duration_ms: 137.595735
+  ...
+# [2026-07-16T05:15:35.355Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83c8 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# [2026-07-16T05:15:35.369Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83c9 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1131:24 for 'create' @ L1131, evaluation error at L1133:24 for 'update' @ L1133, false for 'create' @ L1131
+# Subtest: Quyền từ chối chỉ được từ chối, không được tiếp nhận hoặc cho xuất
+ok 16 - Quyền từ chối chỉ được từ chối, không được tiếp nhận hoặc cho xuất
+  ---
+  duration_ms: 110.783434
+  ...
+# Subtest: Quyền cho xuất được tạo phiếu xuất thật, ghi tồn và cập nhật request/order
+ok 17 - Quyền cho xuất được tạo phiếu xuất thật, ghi tồn và cập nhật request/order
+  ---
+  duration_ms: 174.736505
+  ...
+# [2026-07-16T05:15:35.625Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83cd error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L985, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L985
+# [2026-07-16T05:15:35.654Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83ce error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1031, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1031
+# Subtest: User A không sửa shipment/invoice của User B
+ok 18 - User A không sửa shipment/invoice của User B
+  ---
+  duration_ms: 109.425294
+  ...
+# [2026-07-16T05:15:35.793Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83d1 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L704:24 for 'update' @ L704, false for 'update' @ L704
+# Subtest: Customer chỉ hiển thị và sửa dữ liệu của chính user
+ok 19 - Customer chỉ hiển thị và sửa dữ liệu của chính user
+  ---
+  duration_ms: 139.63541
+  ...
+# Subtest: Query customer theo created_by được phép, query toàn bộ bị chặn
+ok 20 - Query customer theo created_by được phép, query toàn bộ bị chặn
+  ---
+  duration_ms: 174.691021
+  ...
+# Subtest: Query realtime Sale theo ownership và Kho theo toàn bộ phiếu được phép
+ok 21 - Query realtime Sale theo ownership và Kho theo toàn bộ phiếu được phép
+  ---
+  duration_ms: 208.905955
+  ...
+# Subtest: Admin đọc và sửa dữ liệu của mọi user
+ok 22 - Admin đọc và sửa dữ liệu của mọi user
+  ---
+  duration_ms: 114.114377
+  ...
+# [2026-07-16T05:15:36.388Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83db error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L771, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L771
+# [2026-07-16T05:15:36.406Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83dc error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L807:24 for 'delete' @ L807, false for 'delete' @ L807
+# Subtest: User A không thể sửa hoặc xóa order của User B
+ok 23 - User A không thể sửa hoặc xóa order của User B
+  ---
+  duration_ms: 114.526184
+  ...
+# [2026-07-16T05:15:36.540Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83de error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L887:24 for 'update' @ L887, false for 'update' @ L887
+# Subtest: User A không thể đổi order_id của payment thuộc mình sang order B
+ok 24 - User A không thể đổi order_id của payment thuộc mình sang order B
+  ---
+  duration_ms: 133.868743
+  ...
+# [2026-07-16T05:15:36.664Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83e0 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L979:24 for 'create' @ L979, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L985, false for 'create' @ L979
+# [2026-07-16T05:15:36.679Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83e1 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1025:24 for 'create' @ L1025, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1031, false for 'create' @ L1025
+# Subtest: User A không thể tạo shipment hoặc invoice giả cho order B
+ok 25 - User A không thể tạo shipment hoặc invoice giả cho order B
+  ---
+  duration_ms: 138.506488
+  ...
+# [2026-07-16T05:15:36.763Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83e3 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1004:24 for 'delete' @ L1004, false for 'delete' @ L1004
+# [2026-07-16T05:15:36.778Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83e4 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1050:24 for 'delete' @ L1050, false for 'delete' @ L1050
+# Subtest: User A không thể hard-delete shipment hoặc invoice của User B
+ok 26 - User A không thể hard-delete shipment hoặc invoice của User B
+  ---
+  duration_ms: 99.267822
+  ...
+# [2026-07-16T05:15:36.882Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83e6 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L679:40 for 'create' @ L679, evaluation error at L679:40 for 'update' @ L679, false for 'create' @ L679
+# [2026-07-16T05:15:36.895Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83e7 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L679:40 for 'update' @ L679, false for 'update' @ L679
+# [2026-07-16T05:15:36.908Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83e8 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L679:40 for 'delete' @ L679, false for 'delete' @ L679
+# Subtest: User thường không thể tạo, sửa hoặc xóa role
+ok 27 - User thường không thể tạo, sửa hoặc xóa role
+  ---
+  duration_ms: 129.851796
+  ...
+# Subtest: Tương thích user status Hoạt động và role Admin cũ
+ok 28 - Tương thích user status Hoạt động và role Admin cũ
+  ---
+  duration_ms: 143.90234
+  ...
+# [2026-07-16T05:15:37.150Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83ed error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L832:24 for 'create' @ L832, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L837, false for 'create' @ L832
+# Subtest: Order item dùng owner_email/created_by/sale_email và đối chiếu parent thật
+ok 29 - Order item dùng owner_email/created_by/sale_email và đối chiếu parent thật
+  ---
+  duration_ms: 97.840875
+  ...
+# Subtest: Admin có thể tạo dữ liệu con cho order của user khác
+ok 30 - Admin có thể tạo dữ liệu con cho order của user khác
+  ---
+  duration_ms: 99.319469
+  ...
+# [2026-07-16T05:15:37.358Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83f1 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# [2026-07-16T05:15:37.369Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83f2 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L953:24 for 'delete' @ L953, false for 'delete' @ L953
+# Subtest: Chủ phiếu chỉ sửa khi phiếu còn ở trạng thái cho phép
+ok 31 - Chủ phiếu chỉ sửa khi phiếu còn ở trạng thái cho phép
+  ---
+  duration_ms: 119.87204
+  ...
+# [2026-07-16T05:15:37.475Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83f4 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L771, false for 'update' @ L771
+# [2026-07-16T05:15:37.489Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83f5 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L771, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L771
+# Subtest: Quyền orders.edit không được giả trạng thái thanh toán hoặc kho
+ok 32 - Quyền orders.edit không được giả trạng thái thanh toán hoặc kho
+  ---
+  duration_ms: 119.695316
+  ...
+# [2026-07-16T05:15:37.602Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83f7 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'delete' @ L753
+# Subtest: User có quyền sản phẩm được thêm, sửa và xóa mềm nhưng không hard-delete
+ok 33 - User có quyền sản phẩm được thêm, sửa và xóa mềm nhưng không hard-delete
+  ---
+  duration_ms: 112.958236
+  ...
+# [2026-07-16T05:15:37.717Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83f9 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L948, false for 'update' @ L948
+# Subtest: Chủ phiếu được xóa mềm phiếu chưa xuất nhưng không xóa phiếu đã xuất
+ok 34 - Chủ phiếu được xóa mềm phiếu chưa xuất nhưng không xóa phiếu đã xuất
+  ---
+  duration_ms: 114.922919
+  ...
+# [2026-07-16T05:15:37.813Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83fb error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L771, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L771
+# [2026-07-16T05:15:37.824Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83fc error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L807:24 for 'delete' @ L807, false for 'delete' @ L807
+# Subtest: Không thể xóa mềm đơn đã có số lượng xuất kho
+ok 35 - Không thể xóa mềm đơn đã có số lượng xuất kho
+  ---
+  duration_ms: 106.4911
+  ...
+# [2026-07-16T05:15:37.911Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae83fe error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1292:24 for 'update' @ L1292, false for 'update' @ L1292
+# Subtest: Người nhận notification chỉ được đổi trạng thái đọc, không đổi người nhận hoặc nội dung
+ok 36 - Người nhận notification chỉ được đổi trạng thái đọc, không đổi người nhận hoặc nội dung
+  ---
+  duration_ms: 87.401309
+  ...
+# Subtest: Tạo phiếu xuất và cập nhật tổng hợp đơn trong cùng batch
+ok 37 - Tạo phiếu xuất và cập nhật tổng hợp đơn trong cùng batch
+  ---
+  duration_ms: 97.080896
+  ...
+# Subtest: Xóa mềm phiếu chưa xuất và cập nhật lại tổng hợp đơn trong cùng batch
+ok 38 - Xóa mềm phiếu chưa xuất và cập nhật lại tổng hợp đơn trong cùng batch
+  ---
+  duration_ms: 109.658313
+  ...
+# [2026-07-16T05:15:38.250Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae8406 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L1064, evaluation error at L1066:24 for 'update' @ L1066, false for 'create' @ L1064
+# Subtest: Warehouse catalog: user có quyền quản lý đọc/tạo được, user thường bị chặn
+ok 39 - Warehouse catalog: user có quyền quản lý đọc/tạo được, user thường bị chặn
+  ---
+  duration_ms: 131.725047
+  ...
+# [2026-07-16T05:15:38.328Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae8408 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1066:24 for 'update' @ L1066, false for 'update' @ L1066
+# Subtest: Warehouse catalog: không cho sửa danh tính legacy/source của kho
+ok 40 - Warehouse catalog: không cho sửa danh tính legacy/source của kho
+  ---
+  duration_ms: 77.852294
+  ...
+# [2026-07-16T05:15:38.420Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae840a error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L1109, evaluation error at L1114:24 for 'update' @ L1114, false for 'create' @ L1109
+# [2026-07-16T05:15:38.439Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae840b error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1091:24 for 'create' @ L1091, evaluation error at L1093:24 for 'update' @ L1093, false for 'create' @ L1091
+# Subtest: Nhập kho Firestore: chỉ user có import.create được tạo phiếu và số lượng phải dương
+ok 41 - Nhập kho Firestore: chỉ user có import.create được tạo phiếu và số lượng phải dương
+  ---
+  duration_ms: 111.664778
+  ...
+# Subtest: Xóa mềm phiếu nhập Firestore: import.delete được đảo tồn bằng movement và balance
+ok 42 - Xóa mềm phiếu nhập Firestore: import.delete được đảo tồn bằng movement và balance
+  ---
+  duration_ms: 91.881494
+  ...
+# [2026-07-16T05:15:38.631Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae840f error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L1166, evaluation error at L1177:24 for 'update' @ L1177, false for 'create' @ L1166
+# Subtest: Xuất kho thật Firestore: tạo phiếu xuất thật và chi tiết phải có số lượng dương
+ok 43 - Xuất kho thật Firestore: tạo phiếu xuất thật và chi tiết phải có số lượng dương
+  ---
+  duration_ms: 99.651071
+  ...
+# [2026-07-16T05:15:38.749Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae8414 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1242:32 for 'update' @ L1242, false for 'update' @ L1242
+# Subtest: Tồn kho Firestore: đọc theo quyền, không cho ghi tồn âm
+ok 44 - Tồn kho Firestore: đọc theo quyền, không cho ghi tồn âm
+  ---
+  duration_ms: 117.473228
+  ...
+# [2026-07-16T05:15:38.836Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae8416 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1237:32 for 'update' @ L1237, false for 'update' @ L1237
+# Subtest: Stock movements là append-only với client kho, chỉ admin được sửa lịch sử
+ok 45 - Stock movements là append-only với client kho, chỉ admin được sửa lịch sử
+  ---
+  duration_ms: 107.568664
+  ...
+# Subtest: Phiếu xuất thủ công được sửa và hủy mềm với đúng quyền
+ok 46 - Phiếu xuất thủ công được sửa và hủy mềm với đúng quyền
+  ---
+  duration_ms: 79.042541
+  ...
+# [2026-07-16T05:15:39.007Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae841b error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1133:24 for 'update' @ L1133, false for 'update' @ L1133
+# [2026-07-16T05:15:39.018Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae841c error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1133:24 for 'update' @ L1133, false for 'update' @ L1133
+# [2026-07-16T05:15:39.029Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae841d error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1177:24 for 'update' @ L1177, false for 'update' @ L1177
+# Subtest: Phiếu xuất sinh từ order_export_requests bị khóa sửa và hủy trực tiếp
+ok 47 - Phiếu xuất sinh từ order_export_requests bị khóa sửa và hủy trực tiếp
+  ---
+  duration_ms: 93.594786
+  ...
+# [2026-07-16T05:15:39.126Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae841f error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1242:32 for 'update' @ L1242, false for 'update' @ L1242
+# Subtest: export.delete được ghi movement hoàn tồn và cập nhật balance không âm
+ok 48 - export.delete được ghi movement hoàn tồn và cập nhật balance không âm
+  ---
+  duration_ms: 96.99436
+  ...
+# [2026-07-16T05:15:39.201Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae8421 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1204:32 for 'update' @ L1204, false for 'update' @ L1204
+# [2026-07-16T05:15:39.211Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae8422 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1204:32 for 'delete' @ L1204, false for 'delete' @ L1204
+# Subtest: Điều chỉnh tồn là append-only với user kho
+ok 49 - Điều chỉnh tồn là append-only với user kho
+  ---
+  duration_ms: 104.34067
+  ...
+# Subtest: Thông báo cá nhân chỉ được query bởi đúng người nhận
+ok 50 - Thông báo cá nhân chỉ được query bởi đúng người nhận
+  ---
+  duration_ms: 77.662186
+  ...
+# Subtest: Thông báo broadcast của kho chỉ đọc được bởi user có quyền trang và quyền xử lý phù hợp
+ok 51 - Thông báo broadcast của kho chỉ đọc được bởi user có quyền trang và quyền xử lý phù hợp
+  ---
+  duration_ms: 120.703341
+  ...
+# [2026-07-16T05:15:39.518Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae842e error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1285:24 for 'create' @ L1285, evaluation error at L1292:24 for 'update' @ L1292, false for 'create' @ L1285
+# Subtest: Sale có quyền tạo yêu cầu được tạo thông báo broadcast cho kho
+ok 52 - Sale có quyền tạo yêu cầu được tạo thông báo broadcast cho kho
+  ---
+  duration_ms: 89.009374
+  ...
+# [2026-07-16T05:15:39.629Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae8432 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L1315, false for 'update' @ L1320
+# Subtest: Mỗi user chỉ được tạo và đọc trạng thái đã đọc của chính mình
+ok 53 - Mỗi user chỉ được tạo và đọc trạng thái đã đọc của chính mình
+  ---
+  duration_ms: 110.422706
+  ...
+# Subtest: Sale sửa yêu cầu được gửi broadcast cập nhật cho đúng nhóm Kho xử lý
+ok 54 - Sale sửa yêu cầu được gửi broadcast cập nhật cho đúng nhóm Kho xử lý
+  ---
+  duration_ms: 96.777596
+  ...
+# Subtest: V7.4 cho phép sửa đơn và trạng thái hóa đơn nguyên tử khi đủ quyền
+ok 55 - V7.4 cho phép sửa đơn và trạng thái hóa đơn nguyên tử khi đủ quyền
+  ---
+  duration_ms: 60.837684
+  ...
+# [2026-07-16T05:15:39.856Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae843a error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L771, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L771
+# Subtest: V7.4 chặn đổi trạng thái hóa đơn khi chỉ có quyền sửa đơn
+ok 56 - V7.4 chặn đổi trạng thái hóa đơn khi chỉ có quyền sửa đơn
+  ---
+  duration_ms: 69.235127
+  ...
+# Subtest: V7.4 inventory viewer đọc được sản phẩm để lọc sản phẩm đã xóa
+ok 57 - V7.4 inventory viewer đọc được sản phẩm để lọc sản phẩm đã xóa
+  ---
+  duration_ms: 68.846075
+  ...
+# [2026-07-16T05:15:40.012Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae843e error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'delete' @ L721
+# [2026-07-16T05:15:40.018Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae843f error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'delete' @ L753
+# Subtest: V7.4 không tài khoản nào được hard-delete khách hàng hoặc sản phẩm
+ok 58 - V7.4 không tài khoản nào được hard-delete khách hàng hoặc sản phẩm
+  ---
+  duration_ms: 93.016026
+  ...
+# [2026-07-16T05:15:40.090Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae8441 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'update' @ L1216
+# [2026-07-16T05:15:40.094Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae8442 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'delete' @ L1216
+# Subtest: V7.5 cho phép nghiệp vụ kho tạo operation key bất biến
+ok 59 - V7.5 cho phép nghiệp vụ kho tạo operation key bất biến
+  ---
+  duration_ms: 75.885795
+  ...
+# [2026-07-16T05:15:40.158Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x11ae8444 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1210:24 for 'create' @ L1210, false for 'update' @ L1216, false for 'create' @ L1210
+# Subtest: V7.5 người không có quyền kho không được tạo operation key
+ok 60 - V7.5 người không có quyền kho không được tạo operation key
+  ---
+  duration_ms: 64.104462
+  ...
+# Subtest: V7.5 quyền release được ghi revision và operation id khi cho xuất
+ok 61 - V7.5 quyền release được ghi revision và operation id khi cho xuất
+  ---
+  duration_ms: 65.320464
+  ...
+# Subtest: V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction chạy đồng thời
+not ok 62 - V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction chạy đồng thời
+  ---
+  duration_ms: 1720.171253
+  location: '/home/runner/work/orderKingcup/orderKingcup/tests/warehouse.transactions.test.mjs:82:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    7 PERMISSION_DENIED: 
+    evaluation error at L1210:24 for 'create' @ L1210, evaluation error at L1221:24 for 'create' @ L1221, evaluation error at L1237:32 for 'update' @ L1237, evaluation error at L1242:32 for 'update' @ L1242, false for 'create' @ L1210, false for 'update' @ L1242, false for 'update' @ L1237
+  code: 'permission-denied'
+  name: 'FirebaseError'
+  ...
+# Subtest: V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tại cùng phiên bản
+ok 63 - V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tại cùng phiên bản
+  ---
+  duration_ms: 1029.828041
+  ...
+1..63
+# tests 63
+# suites 0
+# pass 62
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 15559.134569
+[33m[1m⚠ [22m[39m Script exited unsuccessfully (code 1)
+[36m[1mi  emulators:[22m[39m Shutting down emulators.
+[36m[1mi  firestore:[22m[39m Stopping Firestore Emulator
+[36m[1mi  hub:[22m[39m Stopping emulator hub
+[36m[1mi  logging:[22m[39m Stopping Logging Emulator
+
+[1m[31mError:[39m[22m Script "[1mnode --test --test-concurrency=1 tests/firestore.rules.test.mjs tests/warehouse.transactions.test.mjs[22m" exited with code 1
+ ELIFECYCLE  Command failed with exit code 1.
