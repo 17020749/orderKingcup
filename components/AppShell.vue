@@ -4,6 +4,9 @@ const route = useRoute();
 
 type NavItem = { to: string; label: string; perm: string };
 type NavGroup = { key: string; label: string; items: NavItem[] };
+type NavEntry =
+  | { type: "item"; key: string; item: NavItem }
+  | { type: "group"; key: string; group: NavGroup };
 
 const navGroups: NavGroup[] = [
   {
@@ -26,21 +29,24 @@ const navGroups: NavGroup[] = [
       { to: "/exports", label: "Phiếu xuất kho", perm: "page.exports" },
       { to: "/inventory-adjustments", label: "Điều chỉnh tồn", perm: "page.inventory_adjustments" },
       { to: "/printing", label: "Tiến độ in ấn", perm: "page.printing" },
+      { to: "/inventory", label: "Tồn kho", perm: "page.inventory" },
       { to: "/warehouse-settings", label: "Danh mục kho", perm: "page.warehouse_settings" },
       { to: "/shipments", label: "Vận chuyển", perm: "page.shipments" },
+    ],
+  },
+  {
+    key: "settings",
+    label: "Cài đặt",
+    items: [
       { to: "/activity-logs", label: "Nhật ký hoạt động", perm: "page.activity_logs" },
       { to: "/settings/users", label: "Người dùng & quyền", perm: "admin.only" },
       { to: "/settings/general", label: "Cài đặt chung", perm: "page.settings" },
     ],
   },
-  {
-    key: "shared",
-    label: "Dùng chung",
-    items: [
-      { to: "/products", label: "Sản phẩm", perm: "page.products" },
-      { to: "/inventory", label: "Tồn kho", perm: "page.inventory" },
-    ],
-  },
+];
+
+const standaloneNavItems: NavItem[] = [
+  { to: "/products", label: "Sản phẩm", perm: "page.products" },
 ];
 
 function canSeeNavItem(item: NavItem) {
@@ -58,9 +64,29 @@ const visibleNavGroups = computed(() =>
     .filter((group) => group.items.length),
 );
 
+const visibleNavEntries = computed<NavEntry[]>(() => {
+  const groups = new Map(visibleNavGroups.value.map((group) => [group.key, group]));
+  const entries: NavEntry[] = [];
+
+  const business = groups.get("business");
+  if (business) entries.push({ type: "group", key: business.key, group: business });
+
+  const warehouse = groups.get("warehouse");
+  if (warehouse) entries.push({ type: "group", key: warehouse.key, group: warehouse });
+
+  for (const item of standaloneNavItems.filter(canSeeNavItem)) {
+    entries.push({ type: "item", key: item.to, item });
+  }
+
+  const settings = groups.get("settings");
+  if (settings) entries.push({ type: "group", key: settings.key, group: settings });
+
+  return entries;
+});
+
 const collapsedGroups = useState<Record<string, boolean>>(
   "app-shell.collapsed-nav-groups",
-  () => ({ business: true, warehouse: true, shared: true }),
+  () => ({ business: true, warehouse: true, settings: true }),
 );
 
 function routeMatches(item: NavItem) {
@@ -79,7 +105,10 @@ function toggleNavGroup(key: string) {
 }
 
 function openActiveNavGroup() {
-  const activeGroup = visibleNavGroups.value.find(groupIsActive);
+  const activeGroup = visibleNavEntries.value
+    .filter((entry): entry is Extract<NavEntry, { type: "group" }> => entry.type === "group")
+    .map((entry) => entry.group)
+    .find(groupIsActive);
   if (!activeGroup || !collapsedGroups.value[activeGroup.key]) return;
   collapsedGroups.value = {
     ...collapsedGroups.value,
@@ -88,7 +117,10 @@ function openActiveNavGroup() {
 }
 
 const visibleNavCount = computed(() =>
-  visibleNavGroups.value.reduce((count, group) => count + group.items.length, 0),
+  visibleNavEntries.value.reduce(
+    (count, entry) => count + (entry.type === "group" ? entry.group.items.length : 1),
+    0,
+  ),
 );
 
 watch(
@@ -138,30 +170,39 @@ onBeforeUnmount(saveNavScroll);
         </div>
       </div>
       <nav ref="navElement" class="nav" @scroll.passive="saveNavScroll">
-        <section
-          v-for="group in visibleNavGroups"
-          :key="group.key"
-          class="nav-section"
-          :class="{ active: groupIsActive(group) }"
-        >
-          <button
-            type="button"
-            class="nav-group-toggle"
-            :aria-expanded="!collapsedGroups[group.key]"
-            @click="toggleNavGroup(group.key)"
+        <template v-for="entry in visibleNavEntries" :key="entry.key">
+          <NuxtLink
+            v-if="entry.type === 'item'"
+            :to="entry.item.to"
+            class="nav-standalone-link"
           >
-            <span>{{ group.label }}</span>
-            <span class="nav-group-meta">
-              <small>{{ group.items.length }}</small>
-              <span class="nav-chevron" :class="{ collapsed: collapsedGroups[group.key] }">⌄</span>
-            </span>
-          </button>
-          <div v-show="!collapsedGroups[group.key]" class="nav-group-links">
-            <NuxtLink v-for="item in group.items" :key="item.to" :to="item.to">
-              <span>{{ item.label }}</span>
-            </NuxtLink>
-          </div>
-        </section>
+            <span>{{ entry.item.label }}</span>
+          </NuxtLink>
+
+          <section
+            v-else
+            class="nav-section"
+            :class="{ active: groupIsActive(entry.group) }"
+          >
+            <button
+              type="button"
+              class="nav-group-toggle"
+              :aria-expanded="!collapsedGroups[entry.group.key]"
+              @click="toggleNavGroup(entry.group.key)"
+            >
+              <span>{{ entry.group.label }}</span>
+              <span class="nav-group-meta">
+                <small>{{ entry.group.items.length }}</small>
+                <span class="nav-chevron" :class="{ collapsed: collapsedGroups[entry.group.key] }">⌄</span>
+              </span>
+            </button>
+            <div v-show="!collapsedGroups[entry.group.key]" class="nav-group-links">
+              <NuxtLink v-for="item in entry.group.items" :key="item.to" :to="item.to">
+                <span>{{ item.label }}</span>
+              </NuxtLink>
+            </div>
+          </section>
+        </template>
       </nav>
       <div class="sidebar-footer">
         <NotificationCenter />
