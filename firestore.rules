@@ -471,6 +471,16 @@ service cloud.firestore {
       ]);
     }
 
+    function warehouseOperationAfterValid(operationId) {
+      let path = /databases/$(database)/documents/warehouse_operations/$(operationId);
+      let operation = getAfter(path).data;
+      return operationId is string
+        && operationId != ''
+        && operation.get('operation_id', '') == operationId
+        && operation.get('status', '') == 'completed'
+        && ownEmailField(operation, 'created_by');
+    }
+
     function quantityIsNumber(data) {
       return data.get('quantity', 0) is int
         || data.get('quantity', 0) is float;
@@ -1196,10 +1206,19 @@ service cloud.firestore {
 
     match /stock_movements/{docId} {
       allow read: if canReadInventoryCore();
-      allow create: if canWriteInventoryCore()
+      allow create: if (
+          (
+            request.resource.data.get('operation_id', '') != ''
+            && warehouseOperationAfterValid(request.resource.data.get('operation_id', ''))
+          )
+          || (
+            request.resource.data.get('operation_id', '') == ''
+            && canWriteInventoryCore()
+            && ownEmailField(request.resource.data, 'created_by')
+          )
+        )
         && quantityIsNumber(request.resource.data)
-        && request.resource.data.get('quantity', 0) != 0
-        && ownEmailField(request.resource.data, 'created_by');
+        && request.resource.data.get('quantity', 0) != 0;
 
       // Stock movements are append-only from the client. Corrections should
       // be represented as another adjustment movement, not by rewriting history.
@@ -1208,7 +1227,16 @@ service cloud.firestore {
 
     match /inventory_balances/{docId} {
       allow read: if canReadInventoryCore();
-      allow create, update: if canWriteInventoryCore()
+      allow create, update: if (
+          (
+            request.resource.data.get('last_operation_id', '') != ''
+            && warehouseOperationAfterValid(request.resource.data.get('last_operation_id', ''))
+          )
+          || (
+            request.resource.data.get('last_operation_id', '') == ''
+            && canWriteInventoryCore()
+          )
+        )
         && balanceQuantityIsSafe();
       allow delete: if isAdmin();
     }
