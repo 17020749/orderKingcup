@@ -1,0 +1,211 @@
+name: Add V7.5 concurrency regression tests
+
+on:
+  pull_request:
+    branches:
+      - feature/v7.4-stability-fixes
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  add-and-test:
+    if: github.event.pull_request.head.ref == 'feature/v7.5-transaction-hardening' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout V7.5
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Add concurrency tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/firestore.rules.test.mjs')
+          text = path.read_text(encoding='utf-8')
+          marker = "V7.5 cùng operation id chỉ áp tồn một lần"
+          if marker in text:
+              raise SystemExit('Concurrency tests V7.5 đã tồn tại; dừng để tránh thêm trùng.')
+
+          old_import = "import { readFileSync } from 'node:fs'\n"
+          new_import = old_import + "import assert from 'node:assert/strict'\n"
+          if text.count(old_import) != 1:
+              raise SystemExit('Không tìm thấy import node:fs duy nhất.')
+          text = text.replace(old_import, new_import, 1)
+
+          old_query = "  query,\n  setDoc,"
+          new_query = "  query,\n  runTransaction,\n  setDoc,"
+          if text.count(old_query) != 1:
+              raise SystemExit('Không tìm thấy vị trí import runTransaction.')
+          text = text.replace(old_query, new_query, 1)
+
+          text += r'''
+
+test('V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction chạy đồng thời', async () => {
+  const db = env.authenticatedContext(STOCK, { email: STOCK }).firestore()
+  const operationId = 'op-v75-concurrent-import'
+  const operationRef = doc(db, 'warehouse_operations', operationId)
+  const movementRef = doc(db, 'stock_movements', 'move-v75-concurrent-import')
+  const balanceRef = doc(db, 'inventory_balances', 'wh-a__product-existing__no_logo')
+
+  async function applyOnce() {
+    return runTransaction(db, async transaction => {
+      const operationSnap = await transaction.get(operationRef)
+      if (operationSnap.exists()) return 'replayed'
+
+      const balanceSnap = await transaction.get(balanceRef)
+      const currentQuantity = Number(balanceSnap.data()?.quantity || 0)
+
+      transaction.set(operationRef, {
+        id: operationId,
+        operation_id: operationId,
+        action: 'import_create',
+        target_collection: 'import_orders',
+        target_id: 'import-v75-concurrent',
+        result_code: 'PNK-V75-CONCURRENT',
+        target_revision: 1,
+        created_by: STOCK,
+        status: 'completed',
+        active: true,
+        deleted: false
+      })
+      transaction.set(movementRef, {
+        id: 'move-v75-concurrent-import',
+        movement_type: 'import',
+        direction: 'in',
+        product_id: 'product-existing',
+        warehouse_id: 'wh-a',
+        logo: '',
+        quantity: 5,
+        created_by: STOCK,
+        operation_id: operationId,
+        active: true,
+        deleted: false
+      })
+      transaction.set(balanceRef, {
+        quantity: currentQuantity + 5,
+        last_operation_id: operationId,
+        updated_at: 'now'
+      }, { merge: true })
+      return 'applied'
+    })
+  }
+
+  const results = await Promise.all([applyOnce(), applyOnce()])
+  assert.equal(results.filter(result => result === 'applied').length, 1)
+  assert.equal(results.filter(result => result === 'replayed').length, 1)
+
+  const balanceSnap = await getDoc(balanceRef)
+  const movementSnap = await getDoc(movementRef)
+  const operationSnap = await getDoc(operationRef)
+  assert.equal(Number(balanceSnap.data()?.quantity || 0), 15)
+  assert.equal(movementSnap.exists(), true)
+  assert.equal(operationSnap.exists(), true)
+})
+
+test('V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tại cùng phiên bản', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'export_orders', 'export-v75-revision'), {
+      id: 'export-v75-revision',
+      code: 'PX-V75-REVISION',
+      destination_type: 'customer',
+      source_request_id: '',
+      sync_source: '',
+      source: 'nuxt',
+      revision: 0,
+      created_by: STOCK,
+      active: true,
+      deleted: false,
+      status: 'completed'
+    })
+  })
+
+  const db = env.authenticatedContext(STOCK, { email: STOCK }).firestore()
+  const orderRef = doc(db, 'export_orders', 'export-v75-revision')
+
+  async function updateAtRevision(operationId) {
+    return runTransaction(db, async transaction => {
+      const operationRef = doc(db, 'warehouse_operations', operationId)
+      const operationSnap = await transaction.get(operationRef)
+      if (operationSnap.exists()) return 'replayed'
+
+      const orderSnap = await transaction.get(orderRef)
+      const revision = Number(orderSnap.data()?.revision || 0)
+      if (revision !== 0) throw new Error(`STALE_REVISION:${revision}`)
+
+      transaction.set(operationRef, {
+        id: operationId,
+        operation_id: operationId,
+        action: 'export_update',
+        target_collection: 'export_orders',
+        target_id: 'export-v75-revision',
+        result_code: 'PX-V75-REVISION',
+        target_revision: 1,
+        created_by: STOCK,
+        status: 'completed',
+        active: true,
+        deleted: false
+      })
+      transaction.update(orderRef, {
+        note: operationId,
+        revision: 1,
+        operation_id: operationId,
+        last_operation_id: operationId,
+        updated_by: STOCK,
+        updated_at: 'now'
+      })
+      return 'applied'
+    })
+  }
+
+  const results = await Promise.allSettled([
+    updateAtRevision('op-v75-revision-a'),
+    updateAtRevision('op-v75-revision-b')
+  ])
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1)
+  assert.equal(results.filter(result => result.status === 'rejected').length, 1)
+
+  const orderSnap = await getDoc(orderRef)
+  assert.equal(Number(orderSnap.data()?.revision || 0), 1)
+})
+'''
+          path.write_text(text, encoding='utf-8')
+          PY
+          node --check tests/firestore.rules.test.mjs
+          git diff --check
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install pnpm and dependencies
+        run: |
+          npm install --global pnpm@9.15.9 --no-audit --no-fund
+          pnpm install --no-frozen-lockfile --ignore-scripts
+
+      - name: Run rules and concurrency tests
+        run: pnpm run test:rules
+
+      - name: Commit tested concurrency tests
+        shell: bash
+        run: |
+          rm -f .github/workflows/add-v7.5-concurrency-tests.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/firestore.rules.test.mjs .github/workflows/add-v7.5-concurrency-tests.yml
+          git commit -m "test: cover v7.5 idempotency and revision concurrency"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
