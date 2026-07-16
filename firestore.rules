@@ -486,14 +486,6 @@ service cloud.firestore {
         );
     }
 
-    function warehouseOperationAfterValid(operationId) {
-      let path = /databases/$(database)/documents/warehouse_operations/$(operationId);
-      let operation = getAfter(path).data;
-      return operationId is string
-        && operationId != ''
-        && operation.get('status', '') == 'completed'
-        && ownEmailField(operation, 'created_by');
-    }
 
     function quantityIsNumber(data) {
       return data.get('quantity', 0) is int
@@ -1213,44 +1205,23 @@ service cloud.firestore {
         && request.resource.data.get('operation_id', '') == docId
         && request.resource.data.get('status', '') == 'pending'
         && ownEmailField(request.resource.data, 'created_by');
-      allow update: if resource.data.get('status', '') == 'pending'
+      allow update: if canWriteInventoryCore()
+        && resource.data.get('status', '') == 'pending'
         && request.resource.data.get('status', '') == 'completed'
-        && sameEmailField(resource.data, request.resource.data, 'created_by')
-        && ownEmailField(resource.data, 'created_by')
-        && unchanged([
-          'id',
-          'operation_id',
-          'action',
-          'target_collection',
-          'target_id',
-          'created_by',
-          'created_at',
-          'active',
-          'deleted',
-          'source'
-        ])
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status',
-          'result_code',
-          'target_revision',
-          'completed_at'
-        ]);
+        && resource.data.get('operation_id', '') == docId
+        && request.resource.data.get('operation_id', '') == docId
+        && resource.data.get('created_by', '').lower() == email()
+        && request.resource.data.get('created_by', '') == resource.data.get('created_by', '')
+        && request.resource.data.get('action', '') == resource.data.get('action', '')
+        && request.resource.data.get('target_collection', '') == resource.data.get('target_collection', '')
+        && request.resource.data.get('target_id', '') == resource.data.get('target_id', '');
       allow delete: if false;
     }
 
     match /stock_movements/{docId} {
       allow read: if canReadInventoryCore();
-      allow create: if (
-          request.resource.data.get('operation_id', '') != ''
-          ? (
-            warehouseOperationAfterValid(request.resource.data.get('operation_id', ''))
-            && ownEmailField(request.resource.data, 'created_by')
-          )
-          : (
-            canWriteInventoryCore()
-            && ownEmailField(request.resource.data, 'created_by')
-          )
-        )
+      allow create: if canWriteInventoryCore()
+        && ownEmailField(request.resource.data, 'created_by')
         && quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) != 0;
 
@@ -1261,15 +1232,12 @@ service cloud.firestore {
 
     match /inventory_balances/{docId} {
       allow read: if canReadInventoryCore();
-      allow create, update: if (
-          request.resource.data.get('last_operation_id', '') != ''
-          ? (
-            warehouseOperationAfterValid(request.resource.data.get('last_operation_id', ''))
-            && ownEmailField(request.resource.data, 'updated_by')
-          )
-          : canWriteInventoryCore()
-        )
-        && balanceQuantityIsSafe();
+      allow create, update: if canWriteInventoryCore()
+        && balanceQuantityIsSafe()
+        && (
+          request.resource.data.get('last_operation_id', '') == ''
+          || ownEmailField(request.resource.data, 'updated_by')
+        );
       allow delete: if isAdmin();
     }
 
