@@ -51,20 +51,29 @@ jobs:
               raise SystemExit('Không tìm thấy regex movementPayload cần nới thụt dòng.')
           text = text.replace(old_pattern, new_pattern, 1)
 
-          label = "'release item fields'"
-          label_pos = text.find(label)
-          if label_pos < 0:
-              raise SystemExit('Không tìm thấy nhãn release item fields.')
-          block_start = text.rfind('    seg = rep(', 0, label_pos)
-          block_end = text.find('    )', label_pos)
-          if block_start < 0 or block_end < 0:
-              raise SystemExit('Không xác định được khối release item fields.')
-          block_end += len('    )')
-          block = text[block_start:block_end]
-          if block.count('             ') < 2:
-              raise SystemExit('Khối release item fields không có khoảng thụt 13 ký tự như dự kiến.')
-          block = block.replace('             ', '            ')
-          text = text[:block_start] + block + text[block_end:]
+          def shift_label_block(source, label, shifts):
+              marker = repr(label)
+              label_pos = source.find(marker)
+              if label_pos < 0:
+                  raise SystemExit(f'Không tìm thấy nhãn {label}.')
+              block_start = source.rfind('    seg = rep(', 0, label_pos)
+              block_end = source.find('    )', label_pos)
+              if block_start < 0 or block_end < 0:
+                  raise SystemExit(f'Không xác định được khối {label}.')
+              block_end += len('    )')
+              block = source[block_start:block_end]
+              for old_size, new_size in shifts:
+                  old_spaces = ' ' * old_size
+                  if old_spaces not in block:
+                      raise SystemExit(f'Khối {label} thiếu khoảng thụt {old_size} ký tự.')
+                  block = block.replace(old_spaces, ' ' * new_size)
+              return source[:block_start] + block + source[block_end:]
+
+          text = shift_label_block(text, 'release item fields', [(13, 12)])
+          text = shift_label_block(text, 'release request revision', [(11, 10)])
+          text = shift_label_block(text, 'release activity anchor', [(9, 8)])
+          text = shift_label_block(text, 'release activity operation', [(11, 10), (9, 8)])
+          text = shift_label_block(text, 'release return result', [(7, 6)])
 
           path.write_text(text, encoding='utf-8')
           PY
