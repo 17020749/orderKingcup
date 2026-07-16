@@ -51,15 +51,20 @@ jobs:
               raise SystemExit('Không tìm thấy regex movementPayload cần nới thụt dòng.')
           text = text.replace(old_pattern, new_pattern, 1)
 
-          old_release_item = '''        "             updated_at: serverTimestamp(),\\n             source: 'kingcup_firestore'\\n",
-              "             updated_at: serverTimestamp(),\\n             operation_id: operationId,\\n             last_operation_id: operationId,\\n             revision: 1,\\n             source: 'kingcup_firestore'\\n",
-          '''
-          new_release_item = '''        "            updated_at: serverTimestamp(),\\n            source: 'kingcup_firestore'\\n",
-              "            updated_at: serverTimestamp(),\\n            operation_id: operationId,\\n            last_operation_id: operationId,\\n            revision: 1,\\n            source: 'kingcup_firestore'\\n",
-          '''
-          if old_release_item not in text:
-              raise SystemExit('Không tìm thấy đoạn patch item của luồng release cần chỉnh thụt dòng.')
-          text = text.replace(old_release_item, new_release_item, 1)
+          label = "'release item fields'"
+          label_pos = text.find(label)
+          if label_pos < 0:
+              raise SystemExit('Không tìm thấy nhãn release item fields.')
+          block_start = text.rfind('    seg = rep(', 0, label_pos)
+          block_end = text.find('    )', label_pos)
+          if block_start < 0 or block_end < 0:
+              raise SystemExit('Không xác định được khối release item fields.')
+          block_end += len('    )')
+          block = text[block_start:block_end]
+          if block.count('             ') < 2:
+              raise SystemExit('Khối release item fields không có khoảng thụt 13 ký tự như dự kiến.')
+          block = block.replace('             ', '            ')
+          text = text[:block_start] + block + text[block_end:]
 
           path.write_text(text, encoding='utf-8')
           PY
