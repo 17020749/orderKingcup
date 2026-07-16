@@ -1,4 +1,4 @@
-name: Verify final V7.5 diagnostics
+name: Fix and verify final V7.5 rules
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  verify:
+  fix-and-verify:
     if: github.event.pull_request.head.ref == 'feature/v7.5-transaction-hardening' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -21,6 +21,89 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
           persist-credentials: true
+
+      - name: Apply operation-backed stock rule patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('firestore.rules')
+          text = path.read_text(encoding='utf-8')
+
+          anchor = """    function canWriteInventoryCore() {
+              return hasAnyPerm([
+                'import.create',
+                'import.edit',
+                'import.delete',
+                'export.create',
+                'export.edit',
+                'export.delete',
+                'inventory.adjust',
+                'export_requests.release',
+                'export_requests.process'
+              ]);
+            }
+          """
+          helper = anchor + """
+            function warehouseOperationAfterValid(operationId) {
+              let path = /databases/$(database)/documents/warehouse_operations/$(operationId);
+              let operation = getAfter(path).data;
+              return operationId is string
+                && operationId != ''
+                && operation.get('operation_id', '') == operationId
+                && operation.get('status', '') == 'completed'
+                && ownEmailField(operation, 'created_by');
+            }
+          """
+          if text.count(anchor) != 1:
+              raise SystemExit(f'Không tìm thấy helper canWriteInventoryCore duy nhất: {text.count(anchor)}')
+          text = text.replace(anchor, helper, 1)
+
+          old_movement = """      allow create: if canWriteInventoryCore()
+                && quantityIsNumber(request.resource.data)
+                && request.resource.data.get('quantity', 0) != 0
+                && ownEmailField(request.resource.data, 'created_by');
+          """
+          new_movement = """      allow create: if (
+                  (
+                    request.resource.data.get('operation_id', '') != ''
+                    && warehouseOperationAfterValid(request.resource.data.get('operation_id', ''))
+                  )
+                  || (
+                    request.resource.data.get('operation_id', '') == ''
+                    && canWriteInventoryCore()
+                    && ownEmailField(request.resource.data, 'created_by')
+                  )
+                )
+                && quantityIsNumber(request.resource.data)
+                && request.resource.data.get('quantity', 0) != 0;
+          """
+          if text.count(old_movement) != 1:
+              raise SystemExit(f'Không tìm thấy rule stock_movements duy nhất: {text.count(old_movement)}')
+          text = text.replace(old_movement, new_movement, 1)
+
+          old_balance = """      allow create, update: if canWriteInventoryCore()
+                && balanceQuantityIsSafe();
+          """
+          new_balance = """      allow create, update: if (
+                  (
+                    request.resource.data.get('last_operation_id', '') != ''
+                    && warehouseOperationAfterValid(request.resource.data.get('last_operation_id', ''))
+                  )
+                  || (
+                    request.resource.data.get('last_operation_id', '') == ''
+                    && canWriteInventoryCore()
+                  )
+                )
+                && balanceQuantityIsSafe();
+          """
+          if text.count(old_balance) != 1:
+              raise SystemExit(f'Không tìm thấy rule inventory_balances duy nhất: {text.count(old_balance)}')
+          text = text.replace(old_balance, new_balance, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -39,28 +122,15 @@ jobs:
           pnpm install --no-frozen-lockfile --ignore-scripts
 
       - name: Run all Firestore tests
-        id: tests
-        shell: bash
-        run: |
-          set +e
-          pnpm run test:rules > /tmp/v7.5-final-tests.log 2>&1
-          code=$?
-          cat /tmp/v7.5-final-tests.log
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          exit 0
+        run: pnpm run test:rules
 
-      - name: Record test diagnostic
-        if: steps.tests.outputs.exit_code != '0'
+      - name: Commit verified rules and tests
         shell: bash
         run: |
-          cp /tmp/v7.5-final-tests.log v7.5-final-tests-error.log
+          rm -f .github/workflows/verify-v7.5.yml v7.5-final-tests-error.log
+          git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f v7.5-final-tests-error.log
-          git commit -m "chore: record final v7.5 test failure"
+          git add firestore.rules tests/warehouse.transactions.test.mjs package.json .github/workflows/verify-v7.5.yml v7.5-final-tests-error.log
+          git commit -m "test: verify v7.5 idempotency and revision concurrency"
           git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
-          exit 1
-
-      - name: Confirm tests pass
-        if: steps.tests.outputs.exit_code == '0'
-        run: echo "All Firestore tests passed."
