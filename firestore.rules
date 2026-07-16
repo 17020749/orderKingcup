@@ -486,14 +486,11 @@ service cloud.firestore {
         );
     }
 
-    function warehouseOperationAfterValid(operationId) {
+    function warehouseOperationExistsAfter(operationId) {
       let path = /databases/$(database)/documents/warehouse_operations/$(operationId);
-      let operation = getAfter(path).data;
       return operationId is string
         && operationId != ''
-        && operation.get('operation_id', '') == operationId
-        && operation.get('status', '') == 'completed'
-        && ownEmailField(operation, 'created_by');
+        && existsAfter(path);
     }
 
     function quantityIsNumber(data) {
@@ -1222,13 +1219,13 @@ service cloud.firestore {
     match /stock_movements/{docId} {
       allow read: if canReadInventoryCore();
       allow create: if (
-          (
-            request.resource.data.get('operation_id', '') != ''
-            && warehouseOperationAfterValid(request.resource.data.get('operation_id', ''))
+          request.resource.data.get('operation_id', '') != ''
+          ? (
+            warehouseOperationExistsAfter(request.resource.data.get('operation_id', ''))
+            && ownEmailField(request.resource.data, 'created_by')
           )
-          || (
-            request.resource.data.get('operation_id', '') == ''
-            && canWriteInventoryCore()
+          : (
+            canWriteInventoryCore()
             && ownEmailField(request.resource.data, 'created_by')
           )
         )
@@ -1243,14 +1240,12 @@ service cloud.firestore {
     match /inventory_balances/{docId} {
       allow read: if canReadInventoryCore();
       allow create, update: if (
-          (
-            request.resource.data.get('last_operation_id', '') != ''
-            && warehouseOperationAfterValid(request.resource.data.get('last_operation_id', ''))
+          request.resource.data.get('last_operation_id', '') != ''
+          ? (
+            warehouseOperationExistsAfter(request.resource.data.get('last_operation_id', ''))
+            && ownEmailField(request.resource.data, 'updated_by')
           )
-          || (
-            request.resource.data.get('last_operation_id', '') == ''
-            && canWriteInventoryCore()
-          )
+          : canWriteInventoryCore()
         )
         && balanceQuantityIsSafe();
       allow delete: if isAdmin();

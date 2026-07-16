@@ -134,6 +134,7 @@ test('V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction ch
       transaction.set(balanceRef, {
         quantity: currentQuantity + 5,
         last_operation_id: operationId,
+        updated_by: STOCK,
         updated_at: 'now'
       }, { merge: true })
       return 'applied'

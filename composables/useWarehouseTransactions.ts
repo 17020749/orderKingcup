@@ -170,7 +170,7 @@ function applyDelta(map: Map<string, BalanceDelta>, delta: BalanceDelta) {
   current.delta += delta.delta
 }
 
-function balancePayload(delta: BalanceDelta, nextQuantity: number, operationId = '') {
+function balancePayload(delta: BalanceDelta, nextQuantity: number, operationId = '', updatedBy = '') {
   return {
     id: delta.id,
     warehouse_id: delta.warehouse.id,
@@ -188,7 +188,8 @@ function balancePayload(delta: BalanceDelta, nextQuantity: number, operationId =
     active: true,
     deleted: false,
     source: 'nuxt',
-    last_operation_id: operationId
+    last_operation_id: operationId,
+    updated_by: updatedBy
   }
 }
 
@@ -423,7 +424,7 @@ export function useWarehouseTransactions() {
         const snap = balanceSnaps.get(delta.id)
         const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
         const next = current + delta.delta
-        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId), { merge: true })
+        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId, createdBy), { merge: true })
       }
 
       tx.set(operationRef, warehouseOperationPayload({
@@ -717,7 +718,7 @@ export function useWarehouseTransactions() {
         const snap = balanceSnaps.get(delta.id)
         const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
         const next = current + delta.delta
-        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId), { merge: true })
+        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId, updatedBy), { merge: true })
       }
 
       tx.set(operationRef, warehouseOperationPayload({
@@ -858,7 +859,7 @@ export function useWarehouseTransactions() {
         const snap = balanceSnaps.get(delta.id)
         const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
         const next = current + delta.delta
-        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId), { merge: true })
+        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId, deletedBy), { merge: true })
       }
 
       tx.set(operationRef, warehouseOperationPayload({
@@ -1088,7 +1089,7 @@ export function useWarehouseTransactions() {
         const snap = balanceSnaps.get(delta.id)
         const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
         const next = current + delta.delta
-        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId), { merge: true })
+        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId, createdBy), { merge: true })
       }
 
       tx.set(operationRef, warehouseOperationPayload({
@@ -1438,7 +1439,7 @@ export function useWarehouseTransactions() {
       for (const delta of balanceDeltas.values()) {
         const snap = balanceSnaps.get(delta.id)
         const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
-        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, current + delta.delta, operationId), { merge: true })
+        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, current + delta.delta, operationId, updatedBy), { merge: true })
       }
 
       tx.set(operationRef, warehouseOperationPayload({
@@ -1647,7 +1648,7 @@ export function useWarehouseTransactions() {
       for (const delta of balanceDeltas.values()) {
         const snap = balanceSnaps.get(delta.id)
         const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
-        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, current + delta.delta, operationId), { merge: true })
+        tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, current + delta.delta, operationId, deletedBy), { merge: true })
       }
 
       tx.set(operationRef, warehouseOperationPayload({
@@ -1764,7 +1765,7 @@ export function useWarehouseTransactions() {
         createdBy,
         operationId
       }))
-      tx.set(balanceRef, balancePayload(delta, next, operationId), { merge: true })
+      tx.set(balanceRef, balancePayload(delta, next, operationId, createdBy), { merge: true })
       tx.set(operationRef, warehouseOperationPayload({
         operationId,
         action: 'inventory_adjust',
@@ -1972,7 +1973,7 @@ export function useWarehouseTransactions() {
           const snap = balanceSnaps.get(delta.id)
           const current = snap.exists() ? toNumber(snap.data()?.quantity) : 0
           const next = current + delta.delta
-          tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId), { merge: true })
+          tx.set(doc(db, 'inventory_balances', delta.id), balancePayload(delta, next, operationId, createdBy), { merge: true })
         }
         tx.set(doc(collection(db, 'activity_logs')), activity('export_orders', 'create_from_request', code, orderPayload, operationId))
       }
