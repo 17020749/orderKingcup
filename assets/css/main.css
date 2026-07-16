@@ -115,6 +115,12 @@ button {
   background: #dcefe3;
   color: #146b3a;
 }
+.nav a.nav-standalone-link {
+  margin: 0 4px;
+  padding: 11px 10px;
+  font-size: 14px;
+  font-weight: 800;
+}
 .brand-wordmark {
   display: inline-flex;
   align-items: baseline;
