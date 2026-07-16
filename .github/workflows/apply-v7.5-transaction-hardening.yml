@@ -26,6 +26,22 @@ jobs:
         id: patch
         shell: bash
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply-v7.5-transaction-hardening.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''    "  createdBy: string\\n}) {",
+              "  createdBy: string\\n  operationId: string\\n}) {",
+              'movementPayload input'
+          '''
+          new = '''    "  reason: string\\n  createdBy: string\\n}) {",
+              "  reason: string\\n  createdBy: string\\n  operationId: string\\n}) {",
+              'movementPayload input'
+          '''
+          if old not in text:
+              raise SystemExit('Không tìm thấy đoạn patch movementPayload cần thu hẹp.')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
           set +e
           python scripts/apply-v7.5-transaction-hardening.py > /tmp/v7.5-patch.log 2>&1
           code=$?
