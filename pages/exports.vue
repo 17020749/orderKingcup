@@ -7,6 +7,7 @@ import type {
 } from "~/types/models";
 import {
   formatDateTime,
+  makeId,
   normalizeText,
   toNumber,
   todayKey,
@@ -41,6 +42,7 @@ const form = reactive({
   customer_name: "",
   source_order_code: "",
   note: "",
+  operation_id: makeId("op_export_create"),
   lines: [newBlankLine()],
 });
 
@@ -222,6 +224,7 @@ function openCreateModal() {
     customer_name: "",
     source_order_code: "",
     note: "",
+    operation_id: makeId("op_export_create"),
     lines: [newBlankLine()],
   });
   showCreateModal.value = true;
@@ -247,6 +250,7 @@ function openEditModal(row: ExportOrderDoc) {
     customer_name: row.customer_name || row.destination_name || "",
     source_order_code: row.source_order_code || "",
     note: row.note || "",
+    operation_id: makeId("op_export_update"),
     lines: orderItems.length
       ? orderItems.map((item) => ({
           product_id: item.product_id || "",
@@ -282,6 +286,8 @@ async function cancelExportOrder(row: ExportOrderDoc) {
       order: row,
       existingItems: itemsByOrder.value.get(row.id) || [],
       reason: "Hủy phiếu xuất từ trang Xuất kho thật",
+      operation_id: `export_cancel:${row.id}:${toNumber((row as any).revision)}`,
+      expected_revision: toNumber((row as any).revision),
     });
     showToast(`Đã hủy phiếu ${codeOf(row)} và hoàn tồn.`, "success");
     await loadRows(true);
@@ -350,6 +356,7 @@ async function saveExportOrder() {
           : form.customer_name,
       toWarehouse,
       note: form.note,
+      operation_id: form.operation_id,
       lines: validLines.map((line) => ({
         product: findProduct(line.product_id),
         fromWarehouse,
@@ -364,6 +371,7 @@ async function saveExportOrder() {
           ...payload,
           order: editing.value,
           existingItems: itemsByOrder.value.get(editing.value.id) || [],
+          expected_revision: toNumber((editing.value as any).revision),
         })
       : await createExportOrder(payload);
     showCreateModal.value = false;

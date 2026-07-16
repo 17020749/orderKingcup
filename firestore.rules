@@ -201,6 +201,9 @@ service cloud.firestore {
         'cancelled_by',
         'cancel_reason',
         'updated_by',
+        'operation_id',
+        'last_operation_id',
+        'revision',
         'updated_at'
       ]);
     }
@@ -455,18 +458,34 @@ service cloud.firestore {
     }
 
     function canWriteInventoryCore() {
-      return hasAnyPerm([
-        'import.create',
-        'import.edit',
-        'import.delete',
-        'export.create',
-        'export.edit',
-        'export.delete',
-        'inventory.adjust',
-        'export_requests.release',
-        'export_requests.process'
-      ]);
+      let path = userPath();
+      let user = get(path).data;
+      let permissions = user.get('permissions_flat', []);
+      return signedIn()
+        && exists(path)
+        && activeUserData(user)
+        && (
+          user.get('is_admin', false) == true
+          || (
+            permissions is list
+            && (
+              '*' in permissions
+              || permissions.hasAny([
+                'import.create',
+                'import.edit',
+                'import.delete',
+                'export.create',
+                'export.edit',
+                'export.delete',
+                'inventory.adjust',
+                'export_requests.release',
+                'export_requests.process'
+              ])
+            )
+          )
+        );
     }
+
 
     function quantityIsNumber(data) {
       return data.get('quantity', 0) is int
@@ -619,6 +638,9 @@ service cloud.firestore {
           'actual_export_summary_json',
           'stock_movement_ids',
           'request_timeline_json',
+          'operation_id',
+          'last_operation_id',
+          'revision',
           'updated_at'
         ])
         && ownEmailField(request.resource.data, 'warehouse_handled_by')
@@ -1240,9 +1262,51 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+
+    match /warehouse_operations/{docId} {
+      allow read: if canReadInventoryCore();
+      allow create: if canWriteInventoryCore()
+        && request.resource.data.get('operation_id', '') == docId
+        && request.resource.data.get('status', '') == 'processing'
+        && ownEmailField(request.resource.data, 'created_by');
+      allow update: if resource.data.get('operation_id', '') == docId
+        && request.resource.data.get('operation_id', '') == docId
+        && resource.data.get('created_by', '').lower() == email()
+        && unchanged([
+          'operation_id',
+          'action',
+          'target_collection',
+          'target_id',
+          'created_by',
+          'created_at',
+          'source'
+        ])
+        && onlyChanged([
+          'status',
+          'processing_at',
+          'completed_at',
+          'failed_at',
+          'failure_message',
+          'result_code',
+          'target_revision'
+        ])
+        && (
+          (
+            resource.data.get('status', '') == 'processing'
+            && ['completed', 'failed'].hasAny([request.resource.data.get('status', '')])
+          )
+          || (
+            ['failed', 'pending'].hasAny([resource.data.get('status', '')])
+            && request.resource.data.get('status', '') == 'processing'
+          )
+        );
+      allow delete: if false;
+    }
+
     match /stock_movements/{docId} {
       allow read: if canReadInventoryCore();
       allow create: if canWriteInventoryCore()
+        && request.resource.data.get('operation_id', '') != ''
         && quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) != 0
         && ownEmailField(request.resource.data, 'created_by');
@@ -1255,6 +1319,8 @@ service cloud.firestore {
     match /inventory_balances/{docId} {
       allow read: if canReadInventoryCore();
       allow create, update: if canWriteInventoryCore()
+        && request.resource.data.get('last_operation_id', '') != ''
+        && ownEmailField(request.resource.data, 'updated_by')
         && balanceQuantityIsSafe();
       allow delete: if isAdmin();
     }

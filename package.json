@@ -8,7 +8,7 @@
     "build": "nuxt build",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "test:rules": "firebase emulators:exec --only firestore \"node --test tests/firestore.rules.test.mjs\"",
+    "test:rules": "firebase emulators:exec --only firestore \"node --test --test-concurrency=1 tests/firestore.rules.test.mjs tests/warehouse.transactions.test.mjs\"",
     "deploy": "npm run generate && firebase deploy --only hosting"
   },
   "dependencies": {
