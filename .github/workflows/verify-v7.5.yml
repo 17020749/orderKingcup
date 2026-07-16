@@ -31,20 +31,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Pin npm
-        run: npm install --global npm@10.9.2 --no-audit --no-fund
+      - name: Install pnpm
+        run: npm install --global pnpm@9.15.9 --no-audit --no-fund
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
 
       - name: Prepare Nuxt
-        run: npx nuxi prepare
+        run: pnpm exec nuxi prepare
 
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
       - name: Generate
-        run: npm run generate
+        run: pnpm run generate
 
       - name: Firestore rules tests
-        run: npm run test:rules
+        run: pnpm run test:rules
