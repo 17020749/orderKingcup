@@ -30,17 +30,27 @@ jobs:
           from pathlib import Path
           path = Path('scripts/apply-v7.5-transaction-hardening.py')
           text = path.read_text(encoding='utf-8')
-          old = '''    "  createdBy: string\\n}) {",
+
+          old_target = '''    "  createdBy: string\\n}) {",
               "  createdBy: string\\n  operationId: string\\n}) {",
               'movementPayload input'
           '''
-          new = '''    "  reason: string\\n  createdBy: string\\n}) {",
+          new_target = '''    "  reason: string\\n  createdBy: string\\n}) {",
               "  reason: string\\n  createdBy: string\\n  operationId: string\\n}) {",
               'movementPayload input'
           '''
-          if old not in text:
+          if old_target not in text:
               raise SystemExit('Không tìm thấy đoạn patch movementPayload cần thu hẹp.')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text = text.replace(old_target, new_target, 1)
+
+          old_pattern = '''        r"(movementPayload\\(\\{[\\s\\S]*?\\n(?P<indent>\\s*)createdBy(?:\\s*:\\s*[A-Za-z_][A-Za-z0-9_]*)?)(\\n(?P=indent)\\}\\)\\))"
+          '''
+          new_pattern = '''        r"(movementPayload\\(\\{[\\s\\S]*?\\n(?P<indent>\\s*)createdBy(?:\\s*:\\s*[A-Za-z_][A-Za-z0-9_]*)?)(\\n\\s*\\}\\)\\))"
+          '''
+          if old_pattern not in text:
+              raise SystemExit('Không tìm thấy regex movementPayload cần nới thụt dòng.')
+          text = text.replace(old_pattern, new_pattern, 1)
+          path.write_text(text, encoding='utf-8')
           PY
           set +e
           python scripts/apply-v7.5-transaction-hardening.py > /tmp/v7.5-patch.log 2>&1
