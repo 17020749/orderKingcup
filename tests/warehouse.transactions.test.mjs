@@ -86,78 +86,81 @@ test('V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction ch
   const movementRef = doc(db, 'stock_movements', 'move-v75-concurrent-import')
   const balanceRef = doc(db, 'inventory_balances', 'wh-a__product-existing__no_logo')
 
-  await setDoc(operationRef, {
-    id: operationId,
-    operation_id: operationId,
-    action: 'import_create',
-    target_collection: 'import_orders',
-    target_id: 'import-v75-concurrent',
-    result_code: '',
-    target_revision: 0,
-    created_by: STOCK,
-    status: 'pending',
-    active: true,
-    deleted: false
-  })
-
-  async function applyOnce() {
+  async function claim() {
     return runTransaction(db, async transaction => {
-      const operationSnap = await transaction.get(operationRef)
-      if (operationSnap.data()?.status === 'completed') return 'replayed'
-
-      const balanceSnap = await transaction.get(balanceRef)
-      const currentQuantity = Number(balanceSnap.data()?.quantity || 0)
-
-      transaction.update(operationRef, {
-        status: 'completed',
+      const snapshot = await transaction.get(operationRef)
+      if (snapshot.exists()) return String(snapshot.data()?.status || '') === 'processing' ? 'busy' : 'replayed'
+      transaction.set(operationRef, {
+        id: operationId,
+        operation_id: operationId,
+        action: 'import_create',
+        target_collection: 'import_orders',
+        target_id: 'import-v75-concurrent',
         result_code: 'PNK-V75-CONCURRENT',
         target_revision: 1,
-        completed_at: 'now'
-      })
-      transaction.set(movementRef, {
-        id: 'move-v75-concurrent-import',
-        movement_type: 'import',
-        direction: 'in',
-        movement_date: '2026-07-16',
-        product_id: 'product-existing',
-        product_code: 'SP001',
-        product_name: 'Sản phẩm test V7.5',
-        warehouse_id: 'wh-a',
-        warehouse_name: 'Kho A',
-        logo: '',
-        unit: 'Cái',
-        quantity: 5,
-        source_collection: 'import_orders',
-        source_doc_id: 'import-v75-concurrent',
-        source_item_id: 'import-item-v75-concurrent',
-        source_code: 'PNK-V75-CONCURRENT',
-        reason: 'Kiểm thử idempotency V7.5',
         created_by: STOCK,
-        operation_id: operationId,
+        status: 'processing',
         active: true,
-        deleted: false,
-        source: 'test'
+        deleted: false
       })
-      transaction.set(balanceRef, {
-        quantity: currentQuantity + 5,
-        last_operation_id: operationId,
-        updated_by: STOCK,
-        updated_at: 'now'
-      }, { merge: true })
-      return 'applied'
+      return 'claimed'
     })
   }
 
-  const results = await Promise.all([applyOnce(), applyOnce()])
-  assert.equal(results.filter(result => result === 'applied').length, 1)
-  assert.equal(results.filter(result => result === 'replayed').length, 1)
+  const claims = await Promise.all([claim(), claim()])
+  assert.equal(claims.filter(result => result === 'claimed').length, 1)
+  assert.equal(claims.filter(result => result === 'busy').length, 1)
 
-  const balanceSnap = await getDoc(balanceRef)
-  const movementSnap = await getDoc(movementRef)
-  const operationSnap = await getDoc(operationRef)
-  assert.equal(Number(balanceSnap.data()?.quantity || 0), 15)
-  assert.equal(movementSnap.exists(), true)
-  assert.equal(operationSnap.exists(), true)
+  await runTransaction(db, async transaction => {
+    const movementSnapshot = await transaction.get(movementRef)
+    if (movementSnapshot.exists()) return
+    const balanceSnapshot = await transaction.get(balanceRef)
+    const currentQuantity = Number(balanceSnapshot.data()?.quantity || 0)
+    transaction.set(movementRef, {
+      id: 'move-v75-concurrent-import',
+      movement_type: 'import',
+      direction: 'in',
+      movement_date: '2026-07-16',
+      product_id: 'product-existing',
+      product_code: 'SP001',
+      product_name: 'Sản phẩm test V7.5',
+      warehouse_id: 'wh-a',
+      warehouse_name: 'Kho A',
+      logo: '',
+      unit: 'Cái',
+      quantity: 5,
+      source_collection: 'import_orders',
+      source_doc_id: 'import-v75-concurrent',
+      source_item_id: 'import-item-v75-concurrent',
+      source_code: 'PNK-V75-CONCURRENT',
+      reason: 'Kiểm thử idempotency V7.5',
+      created_by: STOCK,
+      operation_id: operationId,
+      active: true,
+      deleted: false,
+      source: 'test'
+    })
+    transaction.set(balanceRef, {
+      quantity: currentQuantity + 5,
+      last_operation_id: operationId,
+      updated_by: STOCK,
+      updated_at: 'now'
+    }, { merge: true })
+  })
+
+  await updateDoc(operationRef, {
+    status: 'completed',
+    result_code: 'PNK-V75-CONCURRENT',
+    target_revision: 1,
+    completed_at: 'now'
+  })
+
+  const balanceSnapshot = await getDoc(balanceRef)
+  const movementSnapshot = await getDoc(movementRef)
+  const operationSnapshot = await getDoc(operationRef)
+  assert.equal(Number(balanceSnapshot.data()?.quantity || 0), 15)
+  assert.equal(movementSnapshot.exists(), true)
+  assert.equal(operationSnapshot.data()?.status, 'completed')
 })
 
 test('V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tại cùng phiên bản', async () => {
@@ -175,7 +178,7 @@ test('V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tạ
       result_code: '',
       target_revision: 0,
       created_by: STOCK,
-      status: 'pending',
+      status: 'processing',
       active: true,
       deleted: false
     })
@@ -188,12 +191,6 @@ test('V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tạ
       const revision = Number(orderSnap.data()?.revision || 0)
       if (revision !== 0) throw new Error(`STALE_REVISION:${revision}`)
 
-      transaction.update(operationRef, {
-        status: 'completed',
-        result_code: 'PX-V75-REVISION',
-        target_revision: 1,
-        completed_at: 'now'
-      })
       transaction.update(orderRef, {
         note: operationId,
         revision: 1,

@@ -1275,7 +1275,7 @@ test('V7.5 cho phép nghiệp vụ kho tạo operation key bất biến', async 
     result_code: '',
     target_revision: 0,
     created_by: STOCK,
-    status: 'pending',
+    status: 'processing',
     active: true,
     deleted: false
   }))
@@ -1298,7 +1298,7 @@ test('V7.5 người không có quyền kho không được tạo operation key',
     target_collection: 'import_orders',
     target_id: 'import-v75-editor',
     created_by: EDITOR,
-    status: 'pending',
+    status: 'processing',
     active: true,
     deleted: false
   }))

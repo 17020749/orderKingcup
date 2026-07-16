@@ -487,13 +487,13 @@ service cloud.firestore {
     }
 
 
-    function warehousePendingOperationOwned(operationId) {
+    function warehouseProcessingOperationOwned(operationId) {
       let path = /databases/$(database)/documents/warehouse_operations/$(operationId);
       let operation = get(path).data;
       return operationId is string
         && operationId != ''
         && exists(path)
-        && operation.get('status', '') == 'pending'
+        && operation.get('status', '') == 'processing'
         && operation.get('created_by', '').lower() == email();
     }
 
@@ -1213,15 +1213,23 @@ service cloud.firestore {
       allow read: if canReadInventoryCore();
       allow create: if canWriteInventoryCore()
         && request.resource.data.get('operation_id', '') == docId
-        && request.resource.data.get('status', '') == 'pending'
+        && request.resource.data.get('status', '') == 'processing'
         && ownEmailField(request.resource.data, 'created_by');
-      allow update: if resource.data.get('status', '') == 'pending'
-        && request.resource.data.get('status', '') == 'completed'
-        && resource.data.get('operation_id', '') == docId
+      allow update: if resource.data.get('operation_id', '') == docId
         && request.resource.data.get('operation_id', '') == docId
         && resource.data.get('created_by', '').lower() == email()
         && request.resource.data.get('created_by', '') == resource.data.get('created_by', '')
-        && request.resource.data.get('action', '') == resource.data.get('action', '');
+        && request.resource.data.get('action', '') == resource.data.get('action', '')
+        && (
+          (
+            resource.data.get('status', '') == 'processing'
+            && ['completed', 'failed'].hasAny([request.resource.data.get('status', '')])
+          )
+          || (
+            ['failed', 'pending'].hasAny([resource.data.get('status', '')])
+            && request.resource.data.get('status', '') == 'processing'
+          )
+        );
       allow delete: if false;
     }
 
@@ -1230,7 +1238,7 @@ service cloud.firestore {
       allow create: if (
           request.resource.data.get('operation_id', '') != ''
           ? (
-            warehousePendingOperationOwned(request.resource.data.get('operation_id', ''))
+            warehouseProcessingOperationOwned(request.resource.data.get('operation_id', ''))
             && ownEmailField(request.resource.data, 'created_by')
           )
           : (
@@ -1251,7 +1259,7 @@ service cloud.firestore {
       allow create, update: if (
           request.resource.data.get('last_operation_id', '') != ''
           ? (
-            warehousePendingOperationOwned(request.resource.data.get('last_operation_id', ''))
+            warehouseProcessingOperationOwned(request.resource.data.get('last_operation_id', ''))
             && ownEmailField(request.resource.data, 'updated_by')
           )
           : canWriteInventoryCore()
