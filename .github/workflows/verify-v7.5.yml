@@ -1,20 +1,24 @@
 name: Verify V7.5 build and rules
 
 on:
-  push:
+  pull_request:
     branches:
-      - feature/v7.5-transaction-hardening
+      - feature/v7.4-stability-fixes
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
 
 jobs:
   verify:
+    if: github.event.pull_request.head.ref == 'feature/v7.5-transaction-hardening'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout V7.5
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
