@@ -2,10 +2,21 @@ name: Warehouse CI
 
 on:
   workflow_dispatch:
+
   pull_request:
     branches:
-      - feature/v7.4-stability-fixes
-    types: [opened, synchronize, reopened, ready_for_review]
+      - dev
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+  push:
+    branches:
+      - dev
+      - main
 
 permissions:
   contents: read
