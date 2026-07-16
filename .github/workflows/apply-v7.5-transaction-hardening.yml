@@ -51,16 +51,21 @@ jobs:
               raise SystemExit('Không tìm thấy regex movementPayload cần nới thụt dòng.')
           text = text.replace(old_pattern, new_pattern, 1)
 
-          def shift_label_block(source, label, shifts):
+          def find_label_block(source, label):
               marker = repr(label)
               label_pos = source.find(marker)
               if label_pos < 0:
                   raise SystemExit(f'Không tìm thấy nhãn {label}.')
               block_start = source.rfind('    seg = rep(', 0, label_pos)
+              if block_start < 0:
+                  block_start = source.rfind('    seg = rep_last(', 0, label_pos)
               block_end = source.find('    )', label_pos)
               if block_start < 0 or block_end < 0:
                   raise SystemExit(f'Không xác định được khối {label}.')
-              block_end += len('    )')
+              return block_start, block_end + len('    )')
+
+          def shift_label_block(source, label, shifts):
+              block_start, block_end = find_label_block(source, label)
               block = source[block_start:block_end]
               for old_size, new_size in shifts:
                   old_spaces = ' ' * old_size
@@ -74,6 +79,13 @@ jobs:
           text = shift_label_block(text, 'release activity anchor', [(9, 8)])
           text = shift_label_block(text, 'release activity operation', [(11, 10), (9, 8)])
           text = shift_label_block(text, 'release return result', [(7, 6)])
+
+          return_start, return_end = find_label_block(text, 'release return result')
+          return_block = text[return_start:return_end]
+          if 'seg = rep(' not in return_block:
+              raise SystemExit('Khối release return result không dùng rep như dự kiến.')
+          return_block = return_block.replace('seg = rep(', 'seg = rep_last(', 1)
+          text = text[:return_start] + return_block + text[return_end:]
 
           path.write_text(text, encoding='utf-8')
           PY
