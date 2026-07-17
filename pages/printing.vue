@@ -2,6 +2,8 @@
 import type {
   PrintOrderDoc,
   PrintOrderItemDoc,
+  OrderDoc,
+  OrderItemDoc,
   ProductDoc,
   SupplierDoc,
 } from '~/types/models'
@@ -11,6 +13,7 @@ import {
   formatDateTime,
   makeId,
   normalizeText,
+  safeJsonParse,
   toNumber,
 } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
@@ -36,9 +39,16 @@ type PrintProductForm = PrintLineForm & {
   logo_lines: PrintLineForm[]
 }
 
-const { loadPrintOrders, loadPrintOrderItems, loadProducts, loadSuppliers } = useScopedQueries()
+const {
+  loadPrintOrders,
+  loadPrintOrderItems,
+  loadPrintingSourceOrders,
+  loadPrintingSourceOrderItems,
+  loadProducts,
+  loadSuppliers,
+} = useScopedQueries()
 const { savePrintOrder, deletePrintOrder } = usePrintingProgress()
-const { hasPermission } = useAuth()
+const { appUser, hasPermission } = useAuth()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
@@ -46,6 +56,8 @@ const rows = ref<PrintOrderDoc[]>([])
 const items = ref<PrintOrderItemDoc[]>([])
 const products = ref<ProductDoc[]>([])
 const suppliers = ref<SupplierDoc[]>([])
+const sourceOrders = ref<OrderDoc[]>([])
+const sourceOrderItems = ref<OrderItemDoc[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
@@ -58,12 +70,14 @@ const statusTick = ref(Date.now())
 let statusTimer: ReturnType<typeof setInterval> | null = null
 
 const form = reactive<{
+  order_id: string
   order_code: string
   am_code: string
   supplier_id: string
   note: string
   products: PrintProductForm[]
 }>({
+  order_id: '',
   order_code: '',
   am_code: '',
   supplier_id: '',
@@ -75,11 +89,11 @@ const canCreate = computed(() => hasPermission('printing.create') || hasPermissi
 const canEdit = computed(() => hasPermission('printing.edit') || hasPermission('*'))
 const canDelete = computed(() => hasPermission('printing.delete') || hasPermission('*'))
 
-const productOptions = computed(() => products.value.map(product => ({
-  value: product.id,
-  label: product.product_code || product.id,
-  subLabel: product.product_name,
-  search: `${product.product_code || ''} ${product.product_name || ''}`,
+const orderOptions = computed(() => sourceOrders.value.map(order => ({
+  value: order.id,
+  label: order.order_code,
+  subLabel: [order.customer_name, order.customer_code, order.order_status].filter(Boolean).join(' · '),
+  search: `${order.order_code} ${order.customer_name || ''} ${order.customer_code || ''} ${order.phone || ''}`,
 })))
 
 const supplierOptions = computed(() => suppliers.value.map(supplier => ({
@@ -233,13 +247,58 @@ function groupsFromItems(orderItems: PrintOrderItemDoc[]) {
   return result.length ? result : [blankProductGroup()]
 }
 
+function groupsFromSourceOrder(orderId: string) {
+  const orderItems = sourceOrderItems.value.filter(item => item.order_id === orderId && item.deleted !== true)
+  return orderItems.map(item => {
+    const logos = safeJsonParse(item.logo_json, [])
+    if (Array.isArray(logos) && logos.length) {
+      const group = blankProductGroup({
+        product_id: item.product_id,
+        product_code: item.product_code,
+        product_name: item.product_name,
+      })
+      group.use_logo = true
+      group.print_quantity = 0
+      group.logo_lines = logos.map((line: any) => blankLine({
+        logo: String(line.logo || ''),
+        print_quantity: toNumber(line.quantity ?? line.qty),
+        actual_print_quantity: 0,
+      }))
+      return group
+    }
+    return blankProductGroup({
+      product_id: item.product_id,
+      product_code: item.product_code,
+      product_name: item.product_name,
+      print_quantity: toNumber(item.quantity),
+      actual_print_quantity: 0,
+    })
+  }).filter(group => group.product_id && (
+    group.use_logo
+      ? group.logo_lines.some(line => toNumber(line.print_quantity) > 0)
+      : toNumber(group.print_quantity) > 0
+  ))
+}
+
+function chooseSourceOrder() {
+  const order = sourceOrders.value.find(item => item.id === form.order_id)
+  form.order_code = order?.order_code || ''
+  form.products = order ? groupsFromSourceOrder(order.id) : []
+  if (order && !form.products.length) {
+    showToast('Đơn hàng đã chọn chưa có sản phẩm hợp lệ.', 'error')
+  }
+}
+
 function resetForm(order?: PrintOrderDoc) {
   editing.value = order || null
+  form.order_id = order?.order_id
+    || sourceOrders.value.find(item => item.order_code === order?.order_code)?.id
+    || ''
   form.order_code = order?.order_code || ''
-  form.am_code = order?.am_code || ''
+  form.am_code = order?.am_code || String(appUser.value?.user_code || '').trim().toUpperCase()
   form.supplier_id = order?.supplier_id || ''
   form.note = order?.note || ''
-  form.products = order ? groupsFromItems(itemsForOrder(order)) : [blankProductGroup()]
+  form.products = order ? groupsFromItems(itemsForOrder(order)) : []
 }
 
 function openCreateModal() {
@@ -262,30 +321,6 @@ function openDetail(order: PrintOrderDoc) {
 function closeFormModal() {
   showFormModal.value = false
   editing.value = null
-}
-
-function addProductGroup() {
-  form.products.push(blankProductGroup())
-}
-
-function removeProductGroup(index: number) {
-  if (form.products.length === 1) {
-    form.products[0] = blankProductGroup()
-    return
-  }
-  form.products.splice(index, 1)
-}
-
-function toggleLogoMode(group: PrintProductForm) {
-  if (group.use_logo && !group.logo_lines.length) group.logo_lines.push(blankLine())
-}
-
-function addLogoLine(group: PrintProductForm) {
-  group.logo_lines.push(blankLine())
-}
-
-function removeLogoLine(group: PrintProductForm, index: number) {
-  group.logo_lines.splice(index, 1)
 }
 
 function selectedProduct(productId: string) {
@@ -313,7 +348,8 @@ function collectItems(): PrintItemInput[] {
         actual_print_quantity: toNumber(line.actual_print_quantity),
         print_started_at: line.print_started_at,
         expected_done_at: line.expected_done_at,
-        is_completed: line.is_completed,
+        is_completed: toNumber(line.print_quantity) > 0
+          && toNumber(line.actual_print_quantity) >= toNumber(line.print_quantity),
         completed_at: line.completed_at,
         note: line.note,
       })
@@ -339,6 +375,9 @@ async function submitForm() {
   if (editing.value ? !canEdit.value : !canCreate.value) {
     return showToast('Bạn không có quyền thực hiện thao tác này.', 'error')
   }
+  if (!form.order_id || !form.order_code) {
+    return showToast('Vui lòng chọn mã đơn hàng.', 'error')
+  }
 
   let printItems: PrintItemInput[]
   try {
@@ -356,6 +395,7 @@ async function submitForm() {
         : null)
     const result = await savePrintOrder({
       order: editing.value,
+      order_id: form.order_id,
       order_code: form.order_code,
       am_code: form.am_code,
       supplier,
@@ -398,14 +438,18 @@ async function removeOrder(order: PrintOrderDoc) {
 async function loadRows(force = false) {
   loading.value = true
   try {
-    const [orderRows, itemRows, productRows, supplierRows] = await Promise.all([
+    const [orderRows, itemRows, sourceOrderRows, sourceItemRows, productRows, supplierRows] = await Promise.all([
       loadPrintOrders(force),
       loadPrintOrderItems(force),
+      loadPrintingSourceOrders(force),
+      loadPrintingSourceOrderItems(force),
       loadProducts(force, true),
       loadSuppliers(force),
     ])
     rows.value = orderRows
     items.value = itemRows
+    sourceOrders.value = sourceOrderRows
+    sourceOrderItems.value = sourceItemRows
     products.value = productRows
     suppliers.value = supplierRows
   } catch (error) {
@@ -508,7 +552,13 @@ onBeforeUnmount(() => {
       <div class="form-grid printing-header-form">
         <div class="form-group">
           <label>Mã đơn hàng *</label>
-          <input v-model="form.order_code" class="input" placeholder="Nhập mã đơn hàng" />
+          <SearchableSelect
+            v-model="form.order_id"
+            :options="orderOptions"
+            placeholder="Tìm theo mã đơn, khách hàng hoặc SĐT..."
+            @change="chooseSourceOrder"
+          />
+          <div class="small subtle">Chọn đơn hàng để tự động lấy toàn bộ sản phẩm và số lượng cần in.</div>
         </div>
         <div class="form-group">
           <label>Mã AM</label>
@@ -527,60 +577,46 @@ onBeforeUnmount(() => {
 
       <div class="form-section-label">
         <span>Sản phẩm in</span>
-        <span class="product-row-count">{{ form.products.length }} sản phẩm</span>
+        <span class="product-row-count">{{ form.products.length }} nhóm sản phẩm</span>
       </div>
 
       <div v-for="(group, productIndex) in form.products" :key="group.key" class="product-row-card print-product-card">
         <div class="product-row-header">
-          <span class="product-row-title">Sản phẩm {{ productIndex + 1 }}</span>
-          <button class="product-row-remove" type="button" title="Xóa sản phẩm" @click="removeProductGroup(productIndex)">×</button>
-        </div>
-
-        <div class="print-product-head">
-          <div class="form-group">
-            <label>Sản phẩm *</label>
-            <SearchableSelect v-model="group.product_id" :options="productOptions" placeholder="Tìm theo mã hoặc tên sản phẩm" />
-          </div>
-          <label class="logo-mode-checkbox">
-            <input v-model="group.use_logo" type="checkbox" @change="toggleLogoMode(group)" />
-            <span><b>Số lượng theo logo</b><small>Mỗi logo có số lượng và thời gian riêng</small></span>
-          </label>
+          <span class="product-row-title">
+            {{ productIndex + 1 }}. {{ selectedProduct(group.product_id)?.product_code || group.product_id }}
+            - {{ selectedProduct(group.product_id)?.product_name || 'Sản phẩm trong đơn' }}
+          </span>
         </div>
 
         <div v-if="!group.use_logo" class="print-fields-grid">
-          <div class="form-group"><label>Số lượng in *</label><input v-model.number="group.print_quantity" class="input" type="number" min="0" step="1" /></div>
+          <div class="form-group"><label>SL cần in</label><input :value="group.print_quantity" class="input readonly-field" readonly /></div>
           <div class="form-group"><label>SL in thực tế</label><input v-model.number="group.actual_print_quantity" class="input" type="number" min="0" step="1" /></div>
           <div class="form-group"><label>Bắt đầu in</label><input v-model="group.print_started_at" class="input" type="datetime-local" /></div>
           <div class="form-group"><label>Dự kiến xong</label><input v-model="group.expected_done_at" class="input" type="datetime-local" /></div>
           <div class="form-group"><label>Ghi chú dòng</label><input v-model="group.note" class="input" placeholder="Ghi chú" /></div>
-          <label class="complete-checkbox"><input v-model="group.is_completed" type="checkbox" /> Hoàn thành</label>
         </div>
 
         <div v-else class="logo-items-box print-logo-box">
-          <div class="logo-mode-note">Mỗi logo được tính là một dòng tiến độ độc lập.</div>
+          <div class="logo-mode-note">Sản phẩm và số lượng theo logo được lấy tự động từ đơn hàng.</div>
           <div class="table-wrap">
             <table class="print-logo-table">
-              <thead><tr><th>Logo *</th><th>SL in *</th><th>SL thực tế</th><th>Bắt đầu</th><th>Dự kiến xong</th><th>Ghi chú</th><th>Hoàn thành</th><th></th></tr></thead>
+              <thead><tr><th>Logo</th><th>SL cần in</th><th>SL in thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Ghi chú dòng</th></tr></thead>
               <tbody>
                 <tr v-for="(line, logoIndex) in group.logo_lines" :key="line.id || logoIndex">
-                  <td><input v-model="line.logo" class="input" placeholder="VD: Logo A" /></td>
-                  <td><input v-model.number="line.print_quantity" class="input" type="number" min="0" step="1" /></td>
+                  <td><input :value="line.logo" class="input readonly-field" readonly /></td>
+                  <td><input :value="line.print_quantity" class="input readonly-field" readonly /></td>
                   <td><input v-model.number="line.actual_print_quantity" class="input" type="number" min="0" step="1" /></td>
                   <td><input v-model="line.print_started_at" class="input" type="datetime-local" /></td>
                   <td><input v-model="line.expected_done_at" class="input" type="datetime-local" /></td>
                   <td><input v-model="line.note" class="input" placeholder="Ghi chú" /></td>
-                  <td class="check-cell"><input v-model="line.is_completed" type="checkbox" /></td>
-                  <td><button class="btn-sm btn-delete" type="button" @click="removeLogoLine(group, logoIndex)">Xóa</button></td>
                 </tr>
-                <tr v-if="!group.logo_lines.length"><td colspan="8" class="empty">Chưa có logo. Hãy thêm ít nhất một dòng logo.</td></tr>
+                <tr v-if="!group.logo_lines.length"><td colspan="6" class="empty">Đơn hàng chưa có dòng logo hợp lệ.</td></tr>
               </tbody>
             </table>
           </div>
-          <button class="btn" type="button" style="margin-top: 10px" @click="addLogoLine(group)">+ Thêm logo</button>
         </div>
       </div>
-
-      <button class="btn" type="button" @click="addProductGroup">+ Thêm sản phẩm</button>
+      <div v-if="!form.products.length" class="empty print-source-empty">Hãy chọn mã đơn hàng để tự động hiển thị sản phẩm.</div>
     </BaseModal>
 
     <BaseModal
@@ -639,23 +675,18 @@ onBeforeUnmount(() => {
 .printing-toolbar .select { width: 220px; }
 .printing-table { min-width: 1320px; }
 .printing-header-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.print-product-head { display: grid; grid-template-columns: minmax(300px, 1.6fr) minmax(260px, .8fr); gap: 14px; align-items: end; }
-.logo-mode-checkbox { min-height: 44px; display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; background: #fff; }
-.logo-mode-checkbox b, .logo-mode-checkbox small { display: block; }
-.logo-mode-checkbox small { margin-top: 2px; color: var(--muted); }
-.print-fields-grid { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)) auto; gap: 10px; align-items: end; margin-top: 14px; }
-.complete-checkbox { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 10px; font-weight: 800; white-space: nowrap; }
-.print-logo-table { min-width: 1430px; }
+.print-fields-grid { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 10px; align-items: end; margin-top: 14px; }
+.print-logo-table { min-width: 1120px; }
+.print-source-empty { margin-top: 12px; border: 1px dashed var(--line); border-radius: 12px; }
 .printing-detail-table { min-width: 1520px; }
 .check-cell { text-align: center; vertical-align: middle; }
-.check-cell input, .complete-checkbox input, .logo-mode-checkbox input { width: 18px; height: 18px; }
 @media (max-width: 1180px) {
   .printing-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .printing-header-form, .print-product-head, .print-fields-grid { grid-template-columns: 1fr 1fr; }
+  .printing-header-form, .print-fields-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 700px) {
   .printing-card { margin: 12px 0; }
-  .printing-summary, .printing-header-form, .print-product-head, .print-fields-grid { grid-template-columns: 1fr; }
+  .printing-summary, .printing-header-form, .print-fields-grid { grid-template-columns: 1fr; }
   .printing-toolbar .input, .printing-toolbar .select { max-width: none; width: 100%; }
 }
 </style>

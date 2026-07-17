@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { collection, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, where, writeBatch } from 'firebase/firestore'
-import { INVOICE_STATUS_OPTIONS, ORDER_STATUS_OPTIONS, VAT_RATE_OPTIONS } from '~/constants/permissions'
+import { collection, doc, runTransaction, serverTimestamp, writeBatch } from 'firebase/firestore'
+import { INVOICE_STATUS_OPTIONS, ORDER_CLASSIFICATION_OPTIONS, ORDER_STATUS_OPTIONS, VAT_RATE_OPTIONS } from '~/constants/permissions'
 import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, ProductDoc } from '~/types/models'
 import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
-import { buildOrderCode, normalizeUserCode, ORDER_SEQUENCE_START, userCodeValidationError } from '~/utils/orderCode'
+import { buildOrderCode, customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, ORDER_SEQUENCE_START, userCodeValidationError } from '~/utils/orderCode'
+import { generateCustomerCode } from '~/utils/customerCode'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
 const { db } = useFirebaseServices()
 const { appUser, hasPermission } = useAuth()
 const { calcItems, computePaymentStatus, parseLogoLines } = useOrderLogic()
-const { invalidateScopedCache, saveDoc } = useRepo()
+const { invalidateScopedCache } = useRepo()
+const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
 const { loadScopedOrders, loadScopedOrderItems, loadScopedPayments, loadScopedExportRequests, loadScopedCustomers, loadProducts } = useScopedQueries()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
@@ -36,7 +38,7 @@ const formItems = ref<any[]>([])
 const customerForm = reactive<any>({})
 
 const filtered = computed(() => rows.value.filter(row =>
-  normalizeText(`${row.order_code} ${row.customer_name} ${row.phone} ${row.order_status} ${row.payment_status} ${row.invoice_status}`).includes(normalizeText(search.value))
+  normalizeText(`${row.order_code} ${row.customer_name} ${row.phone} ${row.order_classification} ${row.order_status} ${row.payment_status} ${row.invoice_status}`).includes(normalizeText(search.value))
 ))
 const canEditOrders = computed(() => hasPermission('orders.edit'))
 const canManageInvoiceStatus = computed(() => editing.value
@@ -109,7 +111,7 @@ const selectedDetailExportLineRows = computed(() => selectedDetailRequests.value
 ))
 const customerOptions = computed(() => customers.value.map(customer => ({
   value: customer.id,
-  label: `${customer.customer_name || 'Khách chưa tên'}${customer.phone ? ` - ${customer.phone}` : ''}`,
+  label: `${customer.customer_code ? `[${customer.customer_code}] ` : ''}${customer.customer_name || 'Khách chưa tên'}${customer.phone ? ` - ${customer.phone}` : ''}`,
   subLabel: [customer.company_name, customer.email].filter(Boolean).join(' · '),
   search: `${customer.customer_name || ''} ${customer.phone || ''} ${customer.email || ''} ${customer.company_name || ''}`
 })))
@@ -122,7 +124,8 @@ const productOptions = computed(() => products.value.map(product => ({
 
 const orderDetailLabels: Record<string, string> = {
   order_code: 'Mã đơn hàng', order_date: 'Ngày giờ đơn', customer_id: 'ID khách hàng',
-  order_sequence: 'Số thứ tự theo người dùng', user_code: 'Mã người dùng',
+  order_sequence: 'Số thứ tự theo khách hàng', user_code: 'Mã người dùng', customer_code: 'Mã khách hàng',
+  order_classification: 'Phân loại đơn',
   customer_name: 'Khách hàng', phone: 'Số điện thoại', sale_name: 'Sale phụ trách',
   order_status: 'Trạng thái đơn', operation_status: 'Trạng thái vận hành',
   expected_delivery_date: 'Ngày giao dự kiến', completed_date: 'Ngày hoàn thành',
@@ -214,6 +217,7 @@ function chooseCustomer() {
   if (!c) return
   form.customer_name = c.customer_name
   form.phone = c.phone
+  form.customer_code = c.customer_code || ''
 }
 
 function openCustomerModal() {
@@ -223,7 +227,7 @@ function openCustomerModal() {
   }
   Object.assign(customerForm, {
     id: makeId('cus'),
-    customer_code: '',
+    customer_code: generateCustomerCode(),
     customer_name: '',
     company_name: '',
     phone: '',
@@ -248,7 +252,7 @@ async function saveCustomer() {
 
   savingCustomer.value = true
   try {
-    const record = await saveDoc('customers', {
+    const record = await saveManagedCustomer({
       ...customerForm,
       customer_name: customerName,
       phone: String(customerForm.phone || '').trim(),
@@ -258,12 +262,13 @@ async function saveCustomer() {
       status: 'active',
       active: true,
       deleted: false
-    }, customerForm.id, { isCreate: true }) as CustomerDoc
+    }) as CustomerDoc
 
     customers.value = [record, ...customers.value.filter(customer => customer.id !== record.id)]
     form.customer_id = record.id
     form.customer_name = record.customer_name
     form.phone = record.phone || ''
+    form.customer_code = record.customer_code || ''
     showCustomerModal.value = false
     showToast('Đã thêm và chọn khách hàng mới', 'success')
   } catch (error) {
@@ -417,6 +422,9 @@ function openModal(row?: OrderDoc) {
   Object.assign(form, row ? { ...row, order_date: dateTimeLocal(row.order_date) || row.order_date } : {
     id: makeId('ord'),
     order_code: '',
+    order_sequence: '',
+    user_code: '',
+    customer_code: '',
     order_date: nowDateTimeLocal(),
     customer_id: '',
     customer_name: '',
@@ -425,6 +433,7 @@ function openModal(row?: OrderDoc) {
     sale_email: appUser.value?.email || '',
     owner_email: appUser.value?.email || '',
     order_status: 'Mới tạo',
+    order_classification: 'Chăm sóc',
     invoice_status: 'Không xuất',
     vat_rate: 0,
     note: '',
@@ -504,6 +513,18 @@ async function saveOrder() {
     const ownerEmail = form.owner_email || appUser.value?.email || ''
     const saleEmail = form.sale_email || appUser.value?.email || ''
     const createdBy = editing.value ? (form.created_by || appUser.value?.email || '') : (appUser.value?.email || '')
+    let selectedCustomer = customers.value.find(customer => customer.id === form.customer_id)
+    if (!editing.value && selectedCustomer && !selectedCustomer.customer_code) {
+      if (!hasPermission('customers.edit')) {
+        throw new Error('Khách hàng chưa có Mã khách tự động. Vui lòng cấp quyền sửa khách hàng hoặc cập nhật khách tại trang Khách hàng trước khi tạo đơn.')
+      }
+      selectedCustomer = await saveManagedCustomer({ ...selectedCustomer, customer_code: generateCustomerCode() }, selectedCustomer)
+      customers.value = customers.value.map(customer => customer.id === selectedCustomer?.id ? selectedCustomer as CustomerDoc : customer)
+      form.customer_code = selectedCustomer.customer_code || ''
+    }
+    const customerCode = normalizeCustomerCode(form.customer_code || selectedCustomer?.customer_code)
+    const customerCodeError = customerCodeValidationError(customerCode)
+    if (!editing.value && customerCodeError) throw new Error(customerCodeError)
     const saveItems = buildSaveItems()
     const exportError = validateNotBelowExported(saveItems)
     if (exportError) throw new Error(exportError)
@@ -536,6 +557,7 @@ async function saveOrder() {
       order_code: form.order_code,
       ...(form.order_sequence ? { order_sequence: toNumber(form.order_sequence) } : {}),
       ...(form.user_code ? { user_code: normalizeUserCode(form.user_code) } : {}),
+      ...(form.customer_code ? { customer_code: normalizeCustomerCode(form.customer_code) } : {}),
       vat_rate: toNumber(form.vat_rate),
       owner_email: ownerEmail,
       sale_email: saleEmail,
@@ -585,30 +607,27 @@ async function saveOrder() {
         throw new Error(`${userCodeError} Vui lòng nhờ quản trị viên cập nhật tài khoản.`)
       }
 
-      const sequenceRef = doc(db, 'order_sequences', createdBy)
-      const currentSequence = await getDoc(sequenceRef)
-      const existingOrderCount = currentSequence.exists()
-        ? 0
-        : (await getDocs(query(collection(db, 'orders'), where('created_by', '==', createdBy)))).size
-      const codeDate = new Date()
+      const sequenceRef = doc(db, 'order_sequences', form.customer_id)
 
       await runTransaction(db, async transaction => {
         const sequenceSnapshot = await transaction.get(sequenceRef)
         const nextNumber = sequenceSnapshot.exists()
           ? Math.max(ORDER_SEQUENCE_START - 1, toNumber(sequenceSnapshot.data().last_number)) + 1
-          : ORDER_SEQUENCE_START + existingOrderCount
-        const orderCode = buildOrderCode(userCode, nextNumber, codeDate)
+          : ORDER_SEQUENCE_START
+        const orderCode = buildOrderCode(userCode, customerCode, nextNumber)
 
         form.order_code = orderCode
         form.order_sequence = nextNumber
         form.user_code = userCode
+        form.customer_code = customerCode
         baseOrder.order_code = orderCode
         baseOrder.order_sequence = nextNumber
         baseOrder.user_code = userCode
+        baseOrder.customer_code = customerCode
 
         transaction.set(sequenceRef, {
-          user_email: createdBy,
-          user_code: userCode,
+          customer_id: form.customer_id,
+          customer_code: customerCode,
           last_number: nextNumber,
           updated_by: createdBy,
           updated_at: serverTimestamp(),
@@ -799,10 +818,10 @@ onMounted(loadRows)
       </div>
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
-        <table style="min-width:1320px">
+        <table style="min-width:1420px">
           <thead>
             <tr>
-              <th>Mã / Ngày</th><th>Khách / SĐT</th><th>Trạng thái</th><th>Thanh toán</th><th>Hóa đơn</th>
+              <th>Mã / Ngày</th><th>Khách / SĐT</th><th>Phân loại</th><th>Trạng thái</th><th>Thanh toán</th><th>Hóa đơn</th>
               <th>Tạm tính</th><th>VAT</th><th>Tổng tiền</th><th>Đã thu</th><th>Công nợ</th><th>Xuất kho</th><th>Thao tác</th>
             </tr>
           </thead>
@@ -810,6 +829,7 @@ onMounted(loadRows)
             <tr v-for="row in filtered" :key="row.id">
               <td><b style="color:#384bdc">{{ row.order_code }}</b><div class="small subtle">{{ formatDateTime(row.order_date) }}</div></td>
               <td>{{ row.customer_name }}<div class="small subtle">{{ row.phone }}</div></td>
+              <td><span class="badge">{{ row.order_classification || '-' }}</span></td>
               <td><span class="badge blue">{{ row.order_status || 'Mới tạo' }}</span></td>
               <td><span class="badge green">{{ row.payment_status || 'Chưa thanh toán' }}</span></td>
               <td><span class="badge">{{ row.invoice_status || 'Không xuất' }}</span></td>
@@ -852,11 +872,11 @@ onMounted(loadRows)
           <label>Mã đơn</label>
           <input
             v-model="form.order_code"
-            class="input"
+            class="input readonly-field"
             readonly
             :placeholder="editing ? '' : 'Tự động tạo khi lưu đơn'"
           />
-          <div v-if="!editing" class="small subtle">Năm-tháng-ngày + Mã Người dùng + số thứ tự riêng.</div>
+          <div v-if="!editing" class="small subtle">Mã Người dùng - Mã khách - số thứ tự riêng của khách, bắt đầu từ 0001.</div>
         </div>
         <div class="form-group"><label>Ngày giờ đơn</label><input v-model="form.order_date" class="input" type="datetime-local" /></div>
         <div class="form-group"><label>Sale phụ trách</label><input v-model="form.sale_name" class="input" /></div>
@@ -872,6 +892,7 @@ onMounted(loadRows)
           />
         </div>
         <div class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
+        <div class="form-group"><label>Phân loại đơn</label><select v-model="form.order_classification" class="select"><option v-for="s in ORDER_CLASSIFICATION_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div class="form-group">
         <label>Hóa đơn</label>
@@ -943,7 +964,11 @@ onMounted(loadRows)
       @save="saveCustomer"
     >
       <div class="form-grid">
-        <div class="form-group"><label>Mã khách</label><input v-model="customerForm.customer_code" class="input" /></div>
+        <div class="form-group">
+          <label>Mã khách (tự động)</label>
+          <input v-model="customerForm.customer_code" class="input readonly-field" readonly />
+          <div class="small subtle">Gồm 3 chữ cái in hoa và 3 chữ số; không thể nhập thủ công.</div>
+        </div>
         <div class="form-group"><label>Tên khách *</label><input v-model="customerForm.customer_name" class="input" /></div>
         <div class="form-group"><label>Công ty</label><input v-model="customerForm.company_name" class="input" /></div>
         <div class="form-group"><label>SĐT</label><input v-model="customerForm.phone" class="input" /></div>
@@ -962,7 +987,7 @@ onMounted(loadRows)
       :record="selectedDetail"
       :labels="orderDetailLabels"
       :field-order="[
-        'id','order_code','order_sequence','user_code','order_date','customer_id','customer_name','phone','sale_name','sale_email',
+        'id','order_code','order_sequence','user_code','customer_code','order_classification','order_date','customer_id','customer_name','phone','sale_name','sale_email',
         'owner_email','created_by','created_at','updated_at','order_status','operation_status',
         'expected_delivery_date','completed_date','items_count','subtotal_no_vat','vat_rate','vat_amount',
         'total_vat','actual_revenue','paid_amount','debt_amount','payment_status','invoice_status',

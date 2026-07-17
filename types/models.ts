@@ -98,6 +98,8 @@ export interface OrderDoc {
   order_code: string
   order_sequence?: number
   user_code?: string
+  customer_code?: string
+  order_classification?: string
   order_date?: string
   customer_id?: string
   customer_name?: string
@@ -129,6 +131,8 @@ export interface OrderDoc {
   warehouse_fulfillment_status?: string
   warehouse_request_status?: string
   status?: string
+  created_at?: any
+  updated_at?: any
 }
 
 export interface PaymentDoc {
@@ -192,6 +196,7 @@ export interface ShipmentDoc {
 
 export interface PrintOrderDoc {
   id: string
+  order_id?: string
   order_code: string
   am_code?: string
   supplier_id?: string

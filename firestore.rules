@@ -192,28 +192,81 @@ service cloud.firestore {
         && getAfter(path).data.get('email', '').lower() == userId.lower();
     }
 
-    function orderSequencePath(userEmail) {
-      return /databases/$(database)/documents/order_sequences/$(userEmail);
+    function customerPath(customerId) {
+      return /databases/$(database)/documents/customers/$(customerId);
+    }
+
+    function customerCodePath(customerCode) {
+      return /databases/$(database)/documents/customer_codes/$(customerCode);
+    }
+
+    function validCustomerCode(data) {
+      return data.get('customer_code', '') is string
+        && data.get('customer_code', '').matches('^[A-Z]{3}[0-9]{3}$');
+    }
+
+    function customerCodeReservationMatches(customerId, data) {
+      let code = data.get('customer_code', '');
+      let path = customerCodePath(code);
+      return validCustomerCode(data)
+        && existsAfter(path)
+        && getAfter(path).data.get('customer_code', '') == code
+        && getAfter(path).data.get('customer_id', '') == customerId;
+    }
+
+    function customerCodeUpdateSafe(customerId) {
+      return unchanged(['customer_code'])
+        || (
+          resource.data.get('customer_code', '') == ''
+          && customerCodeReservationMatches(customerId, request.resource.data)
+        );
+    }
+
+    function ownsCustomerById(customerId) {
+      let path = customerPath(customerId);
+      return customerId is string
+        && exists(path)
+        && get(path).data.get('deleted', false) != true
+        && ownEmailField(get(path).data, 'created_by');
+    }
+
+    function canUseCustomerForOrder(customerId) {
+      let path = customerPath(customerId);
+      return customerId is string
+        && exists(path)
+        && get(path).data.get('deleted', false) != true
+        && validCustomerCode(get(path).data)
+        && (isAdmin() || ownEmailField(get(path).data, 'created_by'));
+    }
+
+    function orderSequencePath(customerId) {
+      return /databases/$(database)/documents/order_sequences/$(customerId);
     }
 
     function validOrderNumberCreate() {
       let code = get(userPath()).data.get('user_code', '');
-      let path = orderSequencePath(email());
+      let customerId = request.resource.data.get('customer_id', '');
+      let customerCode = request.resource.data.get('customer_code', '');
+      let path = orderSequencePath(customerId);
       return code is string
         && code.matches('^[A-Z0-9]{1,12}$')
+        && customerId is string
+        && customerId != ''
+        && canUseCustomerForOrder(customerId)
+        && customerCode == get(customerPath(customerId)).data.get('customer_code', '')
         && request.resource.data.get('user_code', '') == code
         && request.resource.data.get('order_sequence', 0) is int
-        && request.resource.data.get('order_sequence', 0) >= 1000
+        && request.resource.data.get('order_sequence', 0) >= 1
         && request.resource.data.get('order_code', '') is string
-        && request.resource.data.get('order_code', '').matches('^[0-9]{6}' + code + '[0-9]{4,}$')
+        && request.resource.data.get('order_code', '').matches('^' + code + '-' + customerCode + '-[0-9]{4,}$')
         && existsAfter(path)
-        && getAfter(path).data.get('user_email', '').lower() == email()
-        && getAfter(path).data.get('user_code', '') == code
+        && getAfter(path).data.get('customer_id', '') == customerId
+        && getAfter(path).data.get('customer_code', '') == customerCode
         && getAfter(path).data.get('last_number', 0) == request.resource.data.get('order_sequence', 0)
         && (
           (
             !exists(path)
-            && getAfter(path).data.get('last_number', 0) >= 1000
+            && getAfter(path).data.get('last_number', 0) == 1
           )
           || (
             exists(path)
@@ -308,6 +361,12 @@ service cloud.firestore {
         && orderDataIsActive(order)
         && (
           hasPerm('orders.view_all')
+          || hasPerm('printing.view')
+          || (
+            hasPerm('customers.orders_view')
+            && order.get('customer_id', '') is string
+            && ownsCustomerById(order.get('customer_id', ''))
+          )
           || ownsOrderData(order)
         );
     }
@@ -407,6 +466,8 @@ service cloud.firestore {
         'order_code',
         'order_sequence',
         'user_code',
+        'customer_id',
+        'customer_code',
         'owner_email',
         'created_by',
         'sale_email',
@@ -550,6 +611,16 @@ service cloud.firestore {
           || data.get('actual_print_quantity', 0) is float
         )
         && data.get('actual_print_quantity', 0) >= 0;
+    }
+
+    function printOrderSourceMatches(data) {
+      let orderId = data.get('order_id', '');
+      let path = orderPath(orderId);
+      return orderId is string
+        && orderId != ''
+        && exists(path)
+        && orderDataIsActive(get(path).data)
+        && data.get('order_code', '') == get(path).data.get('order_code', '');
     }
 
     function balanceQuantityIsSafe() {
@@ -741,37 +812,35 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    match /order_sequences/{userId} {
+    match /order_sequences/{customerId} {
       allow get: if isAdmin()
         || (
           signedIn()
-          && userId == email()
           && hasPerm('orders.create')
+          && canUseCustomerForOrder(customerId)
         );
       allow list: if isAdmin();
 
       allow create: if isAdmin()
         || (
           signedIn()
-          && userId == email()
           && hasPerm('orders.create')
-          && ownEmailField(request.resource.data, 'user_email')
           && ownEmailField(request.resource.data, 'updated_by')
-          && request.resource.data.get('user_code', '') == get(userPath()).data.get('user_code', '')
+          && canUseCustomerForOrder(customerId)
+          && request.resource.data.get('customer_id', '') == customerId
+          && request.resource.data.get('customer_code', '') == get(customerPath(customerId)).data.get('customer_code', '')
           && request.resource.data.get('last_number', 0) is int
-          && request.resource.data.get('last_number', 0) >= 1000
+          && request.resource.data.get('last_number', 0) == 1
         );
 
       allow update: if isAdmin()
         || (
           signedIn()
-          && userId == email()
           && hasPerm('orders.create')
-          && unchanged(['user_email', 'created_at'])
-          && onlyChanged(['last_number', 'user_code', 'updated_by', 'updated_at'])
-          && ownEmailField(request.resource.data, 'user_email')
+          && canUseCustomerForOrder(customerId)
+          && unchanged(['customer_id', 'customer_code', 'created_at'])
+          && onlyChanged(['last_number', 'updated_by', 'updated_at'])
           && ownEmailField(request.resource.data, 'updated_by')
-          && request.resource.data.get('user_code', '') == get(userPath()).data.get('user_code', '')
           && resource.data.get('last_number', 0) is int
           && request.resource.data.get('last_number', 0) == resource.data.get('last_number', 0) + 1
         );
@@ -800,24 +869,30 @@ service cloud.firestore {
           && ownEmailField(resource.data, 'created_by')
         );
 
-      allow create: if isAdmin()
-        || (
-          hasPerm('customers.create')
-          && ownEmailField(request.resource.data, 'created_by')
+      allow create: if customerCodeReservationMatches(docId, request.resource.data)
+        && (
+          isAdmin()
+          || (
+            hasPerm('customers.create')
+            && ownEmailField(request.resource.data, 'created_by')
+          )
         );
 
-      allow update: if isAdmin()
-        || (
-          ownEmailField(resource.data, 'created_by')
-          && unchanged(['created_by', 'created_at'])
-          && (
-            (
-              hasPerm('customers.edit')
-              && unchanged(['deleted', 'active', 'status', 'deleted_at'])
-            )
-            || (
-              hasPerm('customers.delete')
-              && softDeleteOnly()
+      allow update: if customerCodeUpdateSafe(docId)
+        && (
+          isAdmin()
+          || (
+            ownEmailField(resource.data, 'created_by')
+            && unchanged(['created_by', 'created_at'])
+            && (
+              (
+                hasPerm('customers.edit')
+                && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+              )
+              || (
+                hasPerm('customers.delete')
+                && softDeleteOnly()
+              )
             )
           )
         );
@@ -825,6 +900,23 @@ service cloud.firestore {
             // Customers are always removed through soft-delete updates.
       allow delete: if false;
 
+    }
+
+    match /customer_codes/{customerCode} {
+      allow get: if isAdmin()
+        || hasAnyPerm(['customers.create', 'customers.edit']);
+      allow list: if isAdmin();
+      allow create: if hasAnyPerm(['customers.create', 'customers.edit'])
+        && request.resource.data.get('customer_code', '') == customerCode
+        && request.resource.data.get('customer_id', '') is string
+        && ownEmailField(request.resource.data, 'created_by')
+        && existsAfter(customerPath(request.resource.data.get('customer_id', '')))
+        && getAfter(customerPath(request.resource.data.get('customer_id', ''))).data.get('customer_code', '') == customerCode
+        && ownEmailField(
+          getAfter(customerPath(request.resource.data.get('customer_id', ''))).data,
+          'created_by'
+        );
+      allow update, delete: if false;
     }
 
     match /products/{docId} {
@@ -864,6 +956,12 @@ service cloud.firestore {
 
     match /orders/{docId} {
       allow read: if hasPerm('orders.view_all')
+        || hasPerm('printing.view')
+        || (
+          hasPerm('customers.orders_view')
+          && resource.data.get('customer_id', '') is string
+          && ownsCustomerById(resource.data.get('customer_id', ''))
+        )
         || (
           hasPerm('orders.view')
           && ownsOrderData(resource.data)
@@ -924,6 +1022,12 @@ service cloud.firestore {
 
     match /order_items/{docId} {
       allow read: if hasPerm('orders.view_all')
+        || hasPerm('printing.view')
+        || (
+          hasPerm('customers.orders_view')
+          && resource.data.order_id is string
+          && canReadOrderById(resource.data.order_id)
+        )
         || (
           hasPerm('orders.view')
           && (
@@ -1075,6 +1179,7 @@ service cloud.firestore {
       allow create: if hasPerm('printing.create')
         && request.resource.data.get('order_code', '') is string
         && request.resource.data.get('order_code', '') != ''
+        && printOrderSourceMatches(request.resource.data)
         && ownEmailField(request.resource.data, 'created_by');
 
       allow update: if isAdmin()
@@ -1083,6 +1188,7 @@ service cloud.firestore {
           && warehouseDocIdentitySafe()
           && request.resource.data.get('order_code', '') is string
           && request.resource.data.get('order_code', '') != ''
+          && printOrderSourceMatches(request.resource.data)
           && unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
         )
         || (

@@ -23,6 +23,7 @@ export type PrintItemInput = {
 
 type SavePrintOrderInput = {
   order?: PrintOrderDoc | null
+  order_id: string
   order_code: string
   am_code?: string
   supplier?: SupplierDoc | null
@@ -133,7 +134,8 @@ export function usePrintingProgress() {
     if (!actor) throw new Error('Bạn chưa đăng nhập.')
 
     const orderCode = text(input.order_code)
-    if (!orderCode) throw new Error('Vui lòng nhập mã đơn hàng.')
+    const sourceOrderId = text(input.order_id)
+    if (!sourceOrderId || !orderCode) throw new Error('Vui lòng chọn mã đơn hàng.')
     validateItems(input.items)
 
     const orderId = input.order?.id || makeId('prt')
@@ -155,6 +157,7 @@ export function usePrintingProgress() {
 
     const orderPayload = {
       id: orderId,
+      order_id: sourceOrderId,
       order_code: orderCode,
       am_code: text(input.am_code),
       supplier_id: text(supplier?.id),
@@ -203,6 +206,7 @@ export function usePrintingProgress() {
       doc(collection(db, 'activity_logs')),
       activity(input.order ? 'update' : 'create', orderCode, {
         id: orderId,
+        order_id: sourceOrderId,
         order_code: orderCode,
         am_code: text(input.am_code),
         supplier_id: text(supplier?.id),

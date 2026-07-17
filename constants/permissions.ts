@@ -71,6 +71,7 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'units.manage', group: 'Danh mục kho', name: 'Thêm/sửa/xóa đơn vị tính' },
 
   { key: 'customers.view', group: 'Khách hàng', name: 'Xem khách hàng' },
+  { key: 'customers.orders_view', group: 'Khách hàng', name: 'Xem danh sách đơn hàng của khách' },
   { key: 'customers.create', group: 'Khách hàng', name: 'Thêm khách hàng' },
   { key: 'customers.edit', group: 'Khách hàng', name: 'Sửa khách hàng' },
   { key: 'customers.delete', group: 'Khách hàng', name: 'Xóa khách hàng' },
@@ -104,6 +105,7 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
 ]
 
 export const ORDER_STATUS_OPTIONS = ['Mới tạo', 'Đã báo giá', 'Đã cọc', 'Đang sản xuất', 'Chờ xuất kho', 'Đang giao', 'Đã hoàn thành', 'Đã hủy']
+export const ORDER_CLASSIFICATION_OPTIONS = ['Chăm sóc', 'Số mới', 'Đại lý']
 export const PAYMENT_STATUS_OPTIONS = ['Chưa thanh toán', 'Đã cọc', 'Đã cọc + thanh toán 1 phần', 'Thanh toán một phần', 'Đã thanh toán', 'Thanh toán thừa']
 export const PAYMENT_TYPES = ['Cọc', 'Thu 1', 'Thu 2', 'Thu 3', 'Thanh toán đủ']
 export const PAYMENT_METHODS = ['Chuyển khoản', 'Tiền mặt']
