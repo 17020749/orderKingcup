@@ -35,6 +35,7 @@ export { useConfirmDialog } from '../composables/useConfirmDialog';
 export { useFirebaseServices } from '../composables/useFirebaseServices';
 export { WAREHOUSE_NOTIFICATION_PERMISSIONS, resolveSaleNotificationRecipients, buildNotificationPayload, useNotifications, NotificationPayloadInput, SaleNotificationRecipientInput } from '../composables/useNotifications';
 export { useOrderLogic } from '../composables/useOrderLogic';
+export { usePrintingProgress, PrintItemInput } from '../composables/usePrintingProgress';
 export { useRepo } from '../composables/useRepo';
 export { invalidateScopedCache, useScopedQueries } from '../composables/useScopedQueries';
 export { useUi } from '../composables/useUi';

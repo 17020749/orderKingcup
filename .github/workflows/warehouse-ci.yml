@@ -2,10 +2,20 @@ name: Warehouse CI
 
 on:
   workflow_dispatch:
+
   pull_request:
     branches:
-      - feature/v7.4-stability-fixes
-    types: [opened, synchronize, reopened, ready_for_review]
+      - dev
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+  push:
+    branches:
+      - dev
+      - main
 
 permissions:
   contents: read
@@ -19,6 +29,14 @@ jobs:
     name: Build, generate and rules tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      NUXT_PUBLIC_FIREBASE_API_KEY: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ci.invalid
+      NUXT_PUBLIC_FIREBASE_PROJECT_ID: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+      NUXT_PUBLIC_FIREBASE_APP_ID: '1:000000000000:web:0000000000000000000000'
+      NUXT_PUBLIC_APP_NAME: KINGCUP CI
 
     steps:
       - name: Checkout source
@@ -55,3 +73,321 @@ jobs:
 
       - name: Firestore Rules and concurrency tests
         run: pnpm run test:rules
+
+  preview_dev:
+    name: Deploy staging rules and PR preview
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.base_ref == 'dev' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: dev
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    env:
+      EXPECTED_FIREBASE_PROJECT_ID: kingcupmanagerstaging
+
+    steps:
+      - name: Checkout merge result
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '9.15.9'
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
+
+      - name: Prepare Nuxt
+        run: pnpm exec nuxi prepare
+
+      - name: Load and validate Firebase web configuration
+        id: firebase_config
+        shell: bash
+        env:
+          FIREBASE_WEB_CONFIG: ${{ vars.FIREBASE_WEB_CONFIG }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+
+          const raw = process.env.FIREBASE_WEB_CONFIG || ''
+          const expectedProjectId = process.env.EXPECTED_FIREBASE_PROJECT_ID || ''
+          const requiredKeys = [
+            'apiKey',
+            'authDomain',
+            'projectId',
+            'storageBucket',
+            'messagingSenderId',
+            'appId'
+          ]
+
+          let config
+          try {
+            config = JSON.parse(raw)
+          } catch {
+            config = {}
+            for (const key of [...requiredKeys, 'appName']) {
+              const pattern = new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"'\\r\\n]+)["']`)
+              config[key] = raw.match(pattern)?.[1] || ''
+            }
+          }
+
+          const missingKeys = requiredKeys.filter((key) =>
+            typeof config[key] !== 'string' || config[key].trim() === ''
+          )
+
+          if (missingKeys.length > 0) {
+            console.error(`::error::FIREBASE_WEB_CONFIG is missing: ${missingKeys.join(', ')}`)
+            process.exit(1)
+          }
+
+          if (config.projectId !== expectedProjectId) {
+            console.error(
+              `::error::Environment points to ${config.projectId}; expected ${expectedProjectId}`
+            )
+            process.exit(1)
+          }
+
+          const values = {
+            NUXT_PUBLIC_FIREBASE_API_KEY: config.apiKey,
+            NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: config.authDomain,
+            NUXT_PUBLIC_FIREBASE_PROJECT_ID: config.projectId,
+            NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: config.storageBucket,
+            NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: config.messagingSenderId,
+            NUXT_PUBLIC_FIREBASE_APP_ID: config.appId,
+            NUXT_PUBLIC_APP_NAME: config.appName || 'KINGCUP Staging'
+          }
+
+          const output = Object.entries(values)
+            .map(([key, value]) => `${key}=${value}`)
+            .join('\n')
+
+          fs.appendFileSync(process.env.GITHUB_ENV, `${output}\n`)
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `project_id=${config.projectId}\n`)
+          NODE
+
+      - name: Validate staging service account
+        shell: bash
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          node <<'NODE'
+          let serviceAccount
+
+          try {
+            serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '')
+          } catch {
+            console.error('::error::FIREBASE_SERVICE_ACCOUNT is not valid JSON')
+            process.exit(1)
+          }
+
+          if (serviceAccount.project_id !== process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID) {
+            console.error(
+              `::error::Service account belongs to ${serviceAccount.project_id || 'unknown'}; ` +
+              `expected ${process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID}`
+            )
+            process.exit(1)
+          }
+          NODE
+
+      - name: Build for staging
+        run: pnpm run build
+
+      - name: Generate staging site
+        run: pnpm run generate
+
+      - name: Authenticate for Firestore Rules deployment
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: Deploy Firestore Rules to staging
+        run: >-
+          pnpm exec firebase deploy
+          --only firestore:rules
+          --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID"
+          --non-interactive
+
+      - name: Deploy Hosting Preview Channel
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: ${{ steps.firebase_config.outputs.project_id }}
+          expires: 7d
+          firebaseToolsVersion: '15.23.0'
+
+  deploy_live:
+    name: Deploy live Hosting and Rules
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
+    env:
+      EXPECTED_FIREBASE_PROJECT_ID: ${{ github.ref == 'refs/heads/main' && 'orderfirestore-501909' || 'kingcupmanagerstaging' }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '9.15.9'
+          run_install: false
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
+
+      - name: Prepare Nuxt
+        run: pnpm exec nuxi prepare
+
+      - name: Load and validate Firebase web configuration
+        id: firebase_config
+        shell: bash
+        env:
+          FIREBASE_WEB_CONFIG: ${{ vars.FIREBASE_WEB_CONFIG }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+
+          const raw = process.env.FIREBASE_WEB_CONFIG || ''
+          const expectedProjectId = process.env.EXPECTED_FIREBASE_PROJECT_ID || ''
+          const requiredKeys = [
+            'apiKey',
+            'authDomain',
+            'projectId',
+            'storageBucket',
+            'messagingSenderId',
+            'appId'
+          ]
+
+          let config
+          try {
+            config = JSON.parse(raw)
+          } catch {
+            config = {}
+            for (const key of [...requiredKeys, 'appName']) {
+              const pattern = new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"'\\r\\n]+)["']`)
+              config[key] = raw.match(pattern)?.[1] || ''
+            }
+          }
+
+          const missingKeys = requiredKeys.filter((key) =>
+            typeof config[key] !== 'string' || config[key].trim() === ''
+          )
+
+          if (missingKeys.length > 0) {
+            console.error(`::error::FIREBASE_WEB_CONFIG is missing: ${missingKeys.join(', ')}`)
+            process.exit(1)
+          }
+
+          if (config.projectId !== expectedProjectId) {
+            console.error(
+              `::error::Environment points to ${config.projectId}; expected ${expectedProjectId}`
+            )
+            process.exit(1)
+          }
+
+          const defaultAppName =
+            expectedProjectId === 'orderfirestore-501909'
+              ? 'KINGCUP Dashboard'
+              : 'KINGCUP Staging'
+
+          const values = {
+            NUXT_PUBLIC_FIREBASE_API_KEY: config.apiKey,
+            NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: config.authDomain,
+            NUXT_PUBLIC_FIREBASE_PROJECT_ID: config.projectId,
+            NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: config.storageBucket,
+            NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: config.messagingSenderId,
+            NUXT_PUBLIC_FIREBASE_APP_ID: config.appId,
+            NUXT_PUBLIC_APP_NAME: config.appName || defaultAppName
+          }
+
+          const output = Object.entries(values)
+            .map(([key, value]) => `${key}=${value}`)
+            .join('\n')
+
+          fs.appendFileSync(process.env.GITHUB_ENV, `${output}\n`)
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `project_id=${config.projectId}\n`)
+          NODE
+
+      - name: Validate deployment service account
+        shell: bash
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          node <<'NODE'
+          let serviceAccount
+
+          try {
+            serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '')
+          } catch {
+            console.error('::error::FIREBASE_SERVICE_ACCOUNT is not valid JSON')
+            process.exit(1)
+          }
+
+          if (serviceAccount.project_id !== process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID) {
+            console.error(
+              `::error::Service account belongs to ${serviceAccount.project_id || 'unknown'}; ` +
+              `expected ${process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID}`
+            )
+            process.exit(1)
+          }
+          NODE
+
+      - name: Build for selected environment
+        run: pnpm run build
+
+      - name: Firestore Rules and concurrency tests
+        run: pnpm run test:rules
+
+      - name: Generate selected environment site
+        run: pnpm run generate
+
+      - name: Authenticate for Firestore Rules deployment
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: Deploy Firestore Rules
+        run: >-
+          pnpm exec firebase deploy
+          --only firestore:rules
+          --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID"
+          --non-interactive
+
+      - name: Deploy Hosting live channel
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: ${{ steps.firebase_config.outputs.project_id }}
+          channelId: live
+          firebaseToolsVersion: '15.23.0'

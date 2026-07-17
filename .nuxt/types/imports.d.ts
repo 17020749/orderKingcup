@@ -140,6 +140,7 @@ declare global {
   const useNuxtData: typeof import('../../node_modules/nuxt/dist/app/composables/asyncData').useNuxtData
   const useOrderLogic: typeof import('../../composables/useOrderLogic').useOrderLogic
   const usePreviewMode: typeof import('../../node_modules/nuxt/dist/app/composables/preview').usePreviewMode
+  const usePrintingProgress: typeof import('../../composables/usePrintingProgress').usePrintingProgress
   const useRepo: typeof import('../../composables/useRepo').useRepo
   const useRequestEvent: typeof import('../../node_modules/nuxt/dist/app/composables/ssr').useRequestEvent
   const useRequestFetch: typeof import('../../node_modules/nuxt/dist/app/composables/ssr').useRequestFetch
@@ -214,6 +215,9 @@ declare global {
   // @ts-ignore
   export type { NotificationPayloadInput, SaleNotificationRecipientInput } from '../../composables/useNotifications'
   import('../../composables/useNotifications')
+  // @ts-ignore
+  export type { PrintItemInput } from '../../composables/usePrintingProgress'
+  import('../../composables/usePrintingProgress')
   // @ts-ignore
   export type { FulfillmentRow } from '../../composables/useWarehouseLogic'
   import('../../composables/useWarehouseLogic')
@@ -361,6 +365,7 @@ declare module 'vue' {
     readonly useNuxtData: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/composables/asyncData')['useNuxtData']>
     readonly useOrderLogic: UnwrapRef<typeof import('../../composables/useOrderLogic')['useOrderLogic']>
     readonly usePreviewMode: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/composables/preview')['usePreviewMode']>
+    readonly usePrintingProgress: UnwrapRef<typeof import('../../composables/usePrintingProgress')['usePrintingProgress']>
     readonly useRepo: UnwrapRef<typeof import('../../composables/useRepo')['useRepo']>
     readonly useRequestEvent: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/composables/ssr')['useRequestEvent']>
     readonly useRequestFetch: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/composables/ssr')['useRequestFetch']>

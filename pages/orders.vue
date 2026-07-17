@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, where, writeBatch } from 'firebase/firestore'
 import { INVOICE_STATUS_OPTIONS, ORDER_STATUS_OPTIONS, VAT_RATE_OPTIONS } from '~/constants/permissions'
 import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, ProductDoc } from '~/types/models'
-import { dateTimeLocal, formatDateTime, isActive, makeCode, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
+import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
+import { buildOrderCode, normalizeUserCode, ORDER_SEQUENCE_START, userCodeValidationError } from '~/utils/orderCode'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
 const { db } = useFirebaseServices()
@@ -121,6 +122,7 @@ const productOptions = computed(() => products.value.map(product => ({
 
 const orderDetailLabels: Record<string, string> = {
   order_code: 'Mã đơn hàng', order_date: 'Ngày giờ đơn', customer_id: 'ID khách hàng',
+  order_sequence: 'Số thứ tự theo người dùng', user_code: 'Mã người dùng',
   customer_name: 'Khách hàng', phone: 'Số điện thoại', sale_name: 'Sale phụ trách',
   order_status: 'Trạng thái đơn', operation_status: 'Trạng thái vận hành',
   expected_delivery_date: 'Ngày giao dự kiến', completed_date: 'Ngày hoàn thành',
@@ -411,9 +413,10 @@ function requestStatusLabel(value: any) {
 function openModal(row?: OrderDoc) {
   if (row && !canEditRow(row)) return showToast('Đơn hàng đã xuất đủ trên Warehouse, không thể sửa.', 'error')
   editing.value = row || null
+  Object.keys(form).forEach(key => delete form[key])
   Object.assign(form, row ? { ...row, order_date: dateTimeLocal(row.order_date) || row.order_date } : {
     id: makeId('ord'),
-    order_code: makeCode('DH'),
+    order_code: '',
     order_date: nowDateTimeLocal(),
     customer_id: '',
     customer_name: '',
@@ -525,10 +528,14 @@ async function saveOrder() {
       ? {}
       : computePaymentStatus(baseOrder, paymentsByOrder.value[form.id] || [])
 
-    const orderBatch = writeBatch(db)
-    const orderPayload = {
+    const orderRef = doc(db, 'orders', form.id)
+    const activityRef = doc(collection(db, 'activity_logs'))
+    const makeOrderPayload = () => ({
       ...baseOrder,
       ...paymentSummary,
+      order_code: form.order_code,
+      ...(form.order_sequence ? { order_sequence: toNumber(form.order_sequence) } : {}),
+      ...(form.user_code ? { user_code: normalizeUserCode(form.user_code) } : {}),
       vat_rate: toNumber(form.vat_rate),
       owner_email: ownerEmail,
       sale_email: saleEmail,
@@ -544,20 +551,73 @@ async function saveOrder() {
         active: true,
         deleted: false
       })
-    }
-    orderBatch.set(doc(db, 'orders', form.id), orderPayload, { merge: true })
-    orderBatch.set(doc(collection(db, 'activity_logs')), {
+    })
+    const makeActivityPayload = () => ({
       module: 'orders',
       action: editing.value ? 'update' : 'create',
       item_code: form.order_code,
       item_name: form.customer_name || form.order_code,
       changed_by: appUser.value?.email || '',
-      after_json: JSON.stringify({ ...baseOrder, ...paymentSummary, owner_email: ownerEmail, sale_email: saleEmail, created_by: createdBy }),
+      after_json: JSON.stringify({
+        ...baseOrder,
+        ...paymentSummary,
+        order_code: form.order_code,
+        order_sequence: form.order_sequence,
+        user_code: form.user_code,
+        owner_email: ownerEmail,
+        sale_email: saleEmail,
+        created_by: createdBy
+      }),
       created_at: serverTimestamp(),
       active: true,
       deleted: false
     })
-    await orderBatch.commit()
+
+    if (editing.value) {
+      const orderBatch = writeBatch(db)
+      orderBatch.set(orderRef, makeOrderPayload(), { merge: true })
+      orderBatch.set(activityRef, makeActivityPayload())
+      await orderBatch.commit()
+    } else {
+      const userCode = normalizeUserCode(appUser.value?.user_code)
+      const userCodeError = userCodeValidationError(userCode)
+      if (userCodeError) {
+        throw new Error(`${userCodeError} Vui lòng nhờ quản trị viên cập nhật tài khoản.`)
+      }
+
+      const sequenceRef = doc(db, 'order_sequences', createdBy)
+      const currentSequence = await getDoc(sequenceRef)
+      const existingOrderCount = currentSequence.exists()
+        ? 0
+        : (await getDocs(query(collection(db, 'orders'), where('created_by', '==', createdBy)))).size
+      const codeDate = new Date()
+
+      await runTransaction(db, async transaction => {
+        const sequenceSnapshot = await transaction.get(sequenceRef)
+        const nextNumber = sequenceSnapshot.exists()
+          ? Math.max(ORDER_SEQUENCE_START - 1, toNumber(sequenceSnapshot.data().last_number)) + 1
+          : ORDER_SEQUENCE_START + existingOrderCount
+        const orderCode = buildOrderCode(userCode, nextNumber, codeDate)
+
+        form.order_code = orderCode
+        form.order_sequence = nextNumber
+        form.user_code = userCode
+        baseOrder.order_code = orderCode
+        baseOrder.order_sequence = nextNumber
+        baseOrder.user_code = userCode
+
+        transaction.set(sequenceRef, {
+          user_email: createdBy,
+          user_code: userCode,
+          last_number: nextNumber,
+          updated_by: createdBy,
+          updated_at: serverTimestamp(),
+          ...(sequenceSnapshot.exists() ? {} : { created_at: serverTimestamp() })
+        }, { merge: true })
+        transaction.set(orderRef, makeOrderPayload())
+        transaction.set(activityRef, makeActivityPayload())
+      })
+    }
 
     const existingItemIds = new Set((itemsByOrder.value[form.id] || []).map(item => item.id))
     const nextIds = new Set(totals.items.map((item: any) => item.id))
@@ -788,7 +848,16 @@ onMounted(loadRows)
       @save="saveOrder"
     >
       <div class="form-row-3">
-        <div class="form-group"><label>Mã đơn</label><input v-model="form.order_code" class="input" /></div>
+        <div class="form-group">
+          <label>Mã đơn</label>
+          <input
+            v-model="form.order_code"
+            class="input"
+            readonly
+            :placeholder="editing ? '' : 'Tự động tạo khi lưu đơn'"
+          />
+          <div v-if="!editing" class="small subtle">Năm-tháng-ngày + Mã Người dùng + số thứ tự riêng.</div>
+        </div>
         <div class="form-group"><label>Ngày giờ đơn</label><input v-model="form.order_date" class="input" type="datetime-local" /></div>
         <div class="form-group"><label>Sale phụ trách</label><input v-model="form.sale_name" class="input" /></div>
         <div class="form-group">
@@ -893,7 +962,7 @@ onMounted(loadRows)
       :record="selectedDetail"
       :labels="orderDetailLabels"
       :field-order="[
-        'id','order_code','order_date','customer_id','customer_name','phone','sale_name','sale_email',
+        'id','order_code','order_sequence','user_code','order_date','customer_id','customer_name','phone','sale_name','sale_email',
         'owner_email','created_by','created_at','updated_at','order_status','operation_status',
         'expected_delivery_date','completed_date','items_count','subtotal_no_vat','vat_rate','vat_amount',
         'total_vat','actual_revenue','paid_amount','debt_amount','payment_status','invoice_status',
