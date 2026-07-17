@@ -644,6 +644,7 @@ test('Quyền customers.orders_view chỉ đọc đơn của khách thuộc ph�
     where('order_id', '==', 'order-customer-view')
   )))
   await assertFails(getDoc(doc(db, 'orders', 'order-b')))
+  await assertFails(getDoc(doc(db, 'order_items', 'item-b')))
   await assertFails(getDocs(query(collection(db, 'orders'))))
 })
 

@@ -371,6 +371,16 @@ service cloud.firestore {
         );
     }
 
+    function customerCanReadOrderById(orderId) {
+      let path = orderPath(orderId);
+      let order = get(path).data;
+      return orderId is string
+        && exists(path)
+        && orderDataIsActive(order)
+        && order.get('customer_id', '') is string
+        && ownsCustomerById(order.get('customer_id', ''));
+    }
+
     function canMutateOrderById(orderId) {
       let path = orderPath(orderId);
       let order = get(path).data;
@@ -1026,7 +1036,7 @@ service cloud.firestore {
         || (
           hasPerm('customers.orders_view')
           && resource.data.order_id is string
-          && canReadOrderById(resource.data.order_id)
+          && customerCanReadOrderById(resource.data.order_id)
         )
         || (
           hasPerm('orders.view')
