@@ -70,30 +70,55 @@ jobs:
             exit 1
           fi
 
-          if ! jq -e '
-            def valid($value):
-              ($value | type) == "string" and ($value | length) > 0;
+          node <<'NODE'
+          const fs = require('node:fs')
 
-            valid(.apiKey) and
-            valid(.authDomain) and
-            valid(.projectId) and
-            valid(.storageBucket) and
-            valid(.messagingSenderId) and
-            valid(.appId)
-          ' >/dev/null <<< "$FIREBASE_WEB_CONFIG"; then
-            echo "::error::FIREBASE_WEB_CONFIG is not valid Firebase web configuration JSON"
-            exit 1
-          fi
+          const raw = process.env.FIREBASE_WEB_CONFIG || ''
+          const requiredKeys = [
+            'apiKey',
+            'authDomain',
+            'projectId',
+            'storageBucket',
+            'messagingSenderId',
+            'appId'
+          ]
 
-          {
-            echo "NUXT_PUBLIC_FIREBASE_API_KEY=$(jq -r '.apiKey' <<< "$FIREBASE_WEB_CONFIG")"
-            echo "NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN=$(jq -r '.authDomain' <<< "$FIREBASE_WEB_CONFIG")"
-            echo "NUXT_PUBLIC_FIREBASE_PROJECT_ID=$(jq -r '.projectId' <<< "$FIREBASE_WEB_CONFIG")"
-            echo "NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET=$(jq -r '.storageBucket' <<< "$FIREBASE_WEB_CONFIG")"
-            echo "NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=$(jq -r '.messagingSenderId' <<< "$FIREBASE_WEB_CONFIG")"
-            echo "NUXT_PUBLIC_FIREBASE_APP_ID=$(jq -r '.appId' <<< "$FIREBASE_WEB_CONFIG")"
-            echo "NUXT_PUBLIC_APP_NAME=$(jq -r '.appName // "KINGCUP Dashboard"' <<< "$FIREBASE_WEB_CONFIG")"
-          } >> "$GITHUB_ENV"
+          let config
+          try {
+            config = JSON.parse(raw)
+          } catch {
+            config = {}
+            for (const key of [...requiredKeys, 'appName']) {
+              const pattern = new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"'\\r\\n]+)["']`)
+              config[key] = raw.match(pattern)?.[1] || ''
+            }
+          }
+
+          const missingKeys = requiredKeys.filter((key) =>
+            typeof config[key] !== 'string' || config[key].trim() === ''
+          )
+
+          if (missingKeys.length > 0) {
+            console.error(`::error::FIREBASE_WEB_CONFIG is missing: ${missingKeys.join(', ')}`)
+            process.exit(1)
+          }
+
+          const values = {
+            NUXT_PUBLIC_FIREBASE_API_KEY: config.apiKey,
+            NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: config.authDomain,
+            NUXT_PUBLIC_FIREBASE_PROJECT_ID: config.projectId,
+            NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: config.storageBucket,
+            NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: config.messagingSenderId,
+            NUXT_PUBLIC_FIREBASE_APP_ID: config.appId,
+            NUXT_PUBLIC_APP_NAME: config.appName || 'KINGCUP Dashboard'
+          }
+
+          const output = Object.entries(values)
+            .map(([key, value]) => `${key}=${value}`)
+            .join('\n')
+
+          fs.appendFileSync(process.env.GITHUB_ENV, `${output}\n`)
+          NODE
 
       - name: Build
         run: pnpm run build
