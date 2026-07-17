@@ -179,6 +179,50 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields);
     }
 
+    function validUserCode(data) {
+      return data.get('user_code', '') is string
+        && data.get('user_code', '').matches('^[A-Z0-9]{1,12}$');
+    }
+
+    function userCodeReservationMatches(userId, data) {
+      let code = data.get('user_code', '');
+      let path = /databases/$(database)/documents/user_codes/$(code);
+      return validUserCode(data)
+        && existsAfter(path)
+        && getAfter(path).data.get('email', '').lower() == userId.lower();
+    }
+
+    function orderSequencePath(userEmail) {
+      return /databases/$(database)/documents/order_sequences/$(userEmail);
+    }
+
+    function validOrderNumberCreate() {
+      let code = get(userPath()).data.get('user_code', '');
+      let path = orderSequencePath(email());
+      return code is string
+        && code.matches('^[A-Z0-9]{1,12}$')
+        && request.resource.data.get('user_code', '') == code
+        && request.resource.data.get('order_sequence', 0) is int
+        && request.resource.data.get('order_sequence', 0) >= 1000
+        && request.resource.data.get('order_code', '') is string
+        && request.resource.data.get('order_code', '').matches('^[0-9]{6}' + code + '[0-9]{4,}$')
+        && existsAfter(path)
+        && getAfter(path).data.get('user_email', '').lower() == email()
+        && getAfter(path).data.get('user_code', '') == code
+        && getAfter(path).data.get('last_number', 0) == request.resource.data.get('order_sequence', 0)
+        && (
+          (
+            !exists(path)
+            && getAfter(path).data.get('last_number', 0) >= 1000
+          )
+          || (
+            exists(path)
+            && get(path).data.get('last_number', 0) is int
+            && getAfter(path).data.get('last_number', 0) == get(path).data.get('last_number', 0) + 1
+          )
+        );
+    }
+
     function softDeleteOnly() {
       return onlyChanged([
         'deleted',
@@ -360,6 +404,9 @@ service cloud.firestore {
 
     function orderIdentityUnchanged() {
       return unchanged([
+        'order_code',
+        'order_sequence',
+        'user_code',
         'owner_email',
         'created_by',
         'sale_email',
@@ -674,11 +721,62 @@ service cloud.firestore {
     match /users/{userId} {
       // A signed-in account can read only its own profile, even when inactive,
       // so the UI can show the correct disabled-account message.
-      allow get: if signedIn() && userId == email();
+      allow get: if (signedIn() && userId == email()) || isAdmin();
 
       // Only an absolute admin may enumerate or modify identities and grants.
       // A users.manage permission alone can no longer self-escalate to '*'.
-      allow list, create, update, delete: if isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && userCodeReservationMatches(userId, request.resource.data);
+      allow update: if isAdmin()
+        && (
+          unchanged(['user_code'])
+          || userCodeReservationMatches(userId, request.resource.data)
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /user_codes/{userCode} {
+      allow read, create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /order_sequences/{userId} {
+      allow get: if isAdmin()
+        || (
+          signedIn()
+          && userId == email()
+          && hasPerm('orders.create')
+        );
+      allow list: if isAdmin();
+
+      allow create: if isAdmin()
+        || (
+          signedIn()
+          && userId == email()
+          && hasPerm('orders.create')
+          && ownEmailField(request.resource.data, 'user_email')
+          && ownEmailField(request.resource.data, 'updated_by')
+          && request.resource.data.get('user_code', '') == get(userPath()).data.get('user_code', '')
+          && request.resource.data.get('last_number', 0) is int
+          && request.resource.data.get('last_number', 0) >= 1000
+        );
+
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && userId == email()
+          && hasPerm('orders.create')
+          && unchanged(['user_email', 'created_at'])
+          && onlyChanged(['last_number', 'user_code', 'updated_by', 'updated_at'])
+          && ownEmailField(request.resource.data, 'user_email')
+          && ownEmailField(request.resource.data, 'updated_by')
+          && request.resource.data.get('user_code', '') == get(userPath()).data.get('user_code', '')
+          && resource.data.get('last_number', 0) is int
+          && request.resource.data.get('last_number', 0) == resource.data.get('last_number', 0) + 1
+        );
+
+      allow delete: if false;
     }
 
     match /roles/{roleId} {
@@ -773,7 +871,8 @@ service cloud.firestore {
 
       allow create: if hasPerm('orders.create')
         && ownEmailField(request.resource.data, 'created_by')
-        && ownsOrderData(request.resource.data);
+        && ownsOrderData(request.resource.data)
+        && validOrderNumberCreate();
 
       allow update: if orderWarehouseSummaryUpdateAllowed()
         || isAdmin()

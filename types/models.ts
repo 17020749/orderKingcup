@@ -2,6 +2,7 @@ export type AnyDoc = Record<string, any> & { id?: string }
 
 export interface AppUser {
   email: string
+  user_code?: string
   display_name?: string
   role?: string
   roles?: string[]
@@ -95,6 +96,8 @@ export interface OrderItemDoc {
 export interface OrderDoc {
   id: string
   order_code: string
+  order_sequence?: number
+  user_code?: string
   order_date?: string
   customer_id?: string
   customer_name?: string

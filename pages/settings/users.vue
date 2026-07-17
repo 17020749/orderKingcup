@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import {
   collection,
+  getDoc,
   getDocs,
   doc,
+  query,
+  runTransaction,
   setDoc,
   serverTimestamp,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import {
@@ -12,6 +16,10 @@ import {
   type PermissionItem,
 } from "~/constants/permissions";
 import { isActive, normalizeEmail } from "~/utils/format";
+import {
+  normalizeUserCode,
+  userCodeValidationError,
+} from "~/utils/orderCode";
 import type { AppUser, RoleDoc } from "~/types/models";
 import { reportFirebaseError } from "~/utils/firebaseErrors";
 
@@ -29,8 +37,10 @@ const showRoleModal = ref(false);
 const showDetailModal = ref(false);
 const selectedDetail = ref<any>(null);
 const detailTitle = ref("Chi tiết");
+const editingUserEmail = ref("");
 const userForm = reactive<any>({});
 const roleForm = reactive<any>({});
+const isEditingUser = computed(() => !!editingUserEmail.value);
 
 const PERMISSION_GROUP_ORDER = [
   "Quản trị",
@@ -98,12 +108,15 @@ function openDetail(row: any, title: string) {
 }
 
 function openUserModal(row?: AppUser) {
+  editingUserEmail.value = row ? normalizeEmail(row.email) : "";
+  Object.keys(userForm).forEach((key) => delete userForm[key]);
   Object.assign(
     userForm,
     row
       ? { ...row, roles: roleNamesOfUser(row) }
       : {
           email: "",
+          user_code: "",
           display_name: "",
           roles: [],
           status: "active",
@@ -191,25 +204,143 @@ function userPermissionPatch(roleNames: string[], sourceRoles = roles.value) {
 }
 
 async function saveUser() {
-  const email = normalizeEmail(userForm.email);
+  const email = editingUserEmail.value || normalizeEmail(userForm.email);
   if (!email) return showToast("Thiếu email.", "error");
+  const userCode = normalizeUserCode(userForm.user_code);
+  const userCodeError = userCodeValidationError(userCode);
+  if (userCodeError) return showToast(userCodeError, "error");
+  const duplicate = users.value.find(
+    (user) =>
+      normalizeEmail(user.email) !== email &&
+      normalizeUserCode(user.user_code) === userCode,
+  );
+  if (duplicate) {
+    return showToast(
+      `Mã Người dùng ${userCode} đang thuộc về ${duplicate.email}.`,
+      "error",
+    );
+  }
+
   saving.value = true;
   try {
     const roleNames = Array.isArray(userForm.roles)
       ? userForm.roles.filter(Boolean)
       : [];
-    const payload = {
-      ...userForm,
+    const userRef = doc(db, "users", email);
+    const codeRef = doc(db, "user_codes", userCode);
+    const sequenceRef = doc(db, "order_sequences", email);
+    const existingSequence = await getDoc(sequenceRef);
+    const existingOrderCount = existingSequence.exists()
+      ? 0
+      : (
+          await getDocs(
+            query(collection(db, "orders"), where("created_by", "==", email)),
+          )
+        ).size;
+    const actorEmail = normalizeEmail(firebaseUser.value?.email || "");
+    let payload: any = null;
+
+    await runTransaction(db, async (transaction) => {
+      const existingUser = await transaction.get(userRef);
+      const reservedCode = await transaction.get(codeRef);
+      const sequence = await transaction.get(sequenceRef);
+      const oldUserCode = normalizeUserCode(
+        existingUser.exists() ? existingUser.data().user_code : "",
+      );
+
+      if (
+        reservedCode.exists() &&
+        normalizeEmail(reservedCode.data().email) !== email
+      ) {
+        throw new Error(
+          `Mã Người dùng ${userCode} đã được cấp cho tài khoản khác.`,
+        );
+      }
+
+      const { id: _id, firestore_id: _firestoreId, ...formData } = userForm;
+      payload = {
+        ...formData,
+        email,
+        user_code: userCode,
+        ...userPermissionPatch(roleNames),
+        active:
+          userForm.status !== "inactive" && userForm.status !== "deleted",
+        deleted: false,
+        updated_at: serverTimestamp(),
+        ...(existingUser.exists()
+          ? {}
+          : { created_at: serverTimestamp(), created_by: actorEmail }),
+      };
+      transaction.set(userRef, payload, { merge: true });
+
+      transaction.set(
+        codeRef,
+        {
+          user_code: userCode,
+          email,
+          active: true,
+          deleted: false,
+          updated_by: actorEmail,
+          updated_at: serverTimestamp(),
+          ...(reservedCode.exists() ? {} : { created_at: serverTimestamp() }),
+        },
+        { merge: true },
+      );
+
+      if (oldUserCode && oldUserCode !== userCode) {
+        transaction.set(
+          doc(db, "user_codes", oldUserCode),
+          {
+            user_code: oldUserCode,
+            email,
+            active: false,
+            deleted: false,
+            updated_by: actorEmail,
+            updated_at: serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+
+      if (!sequence.exists()) {
+        transaction.set(sequenceRef, {
+          user_email: email,
+          user_code: userCode,
+          last_number: 999 + existingOrderCount,
+          updated_by: actorEmail,
+          created_at: serverTimestamp(),
+          updated_at: serverTimestamp(),
+        });
+      } else if (normalizeUserCode(sequence.data().user_code) !== userCode) {
+        transaction.set(
+          sequenceRef,
+          {
+            user_code: userCode,
+            updated_by: actorEmail,
+            updated_at: serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+    });
+
+    const now = new Date().toISOString();
+    const localPayload = {
+      ...payload,
       email,
-      ...userPermissionPatch(roleNames),
-      active: userForm.status !== "inactive" && userForm.status !== "deleted",
-      deleted: false,
-      created_at: userForm.created_at || serverTimestamp(),
-    };
-    await setDoc(doc(db, "users", email), payload, { merge: true });
+      user_code: userCode,
+      updated_at: now,
+      created_at: userForm.created_at || now,
+    } as AppUser;
     const idx = users.value.findIndex((u) => normalizeEmail(u.email) === email);
-    if (idx >= 0) users.value[idx] = { ...users.value[idx], ...payload };
-    else users.value.unshift(payload as AppUser);
+    if (idx >= 0) users.value[idx] = { ...users.value[idx], ...localPayload };
+    else users.value.unshift(localPayload);
+    if (
+      firebaseUser.value &&
+      normalizeEmail(firebaseUser.value.email || "") === email
+    ) {
+      await loadProfile(firebaseUser.value);
+    }
     showUserModal.value = false;
     showToast("Đã lưu người dùng.", "success");
   } catch (error) {
@@ -442,6 +573,7 @@ onMounted(loadRows);
           <table>
             <thead>
               <tr>
+                <th>Mã người dùng</th>
                 <th>Email</th>
                 <th>Tên</th>
                 <th>Vai trò</th>
@@ -452,6 +584,9 @@ onMounted(loadRows);
             </thead>
             <tbody>
               <tr v-for="u in users" :key="u.email">
+                <td>
+                  <b>{{ u.user_code || "-" }}</b>
+                </td>
                 <td>
                   <b>{{ u.email }}</b>
                 </td>
@@ -548,7 +683,7 @@ onMounted(loadRows);
     </div>
     <BaseModal
       v-if="showUserModal"
-      title="Người dùng"
+      :title="isEditingUser ? 'Sửa người dùng' : 'Thêm người dùng'"
       size="xl"
       :loading="saving"
       @close="showUserModal = false"
@@ -556,7 +691,23 @@ onMounted(loadRows);
     >
       <div class="form-grid">
         <div class="form-group">
-          <label>Email</label><input v-model="userForm.email" class="input" />
+          <label>Email</label
+          ><input
+            v-model="userForm.email"
+            class="input"
+            :readonly="isEditingUser"
+          />
+        </div>
+        <div class="form-group">
+          <label>Mã Người dùng *</label
+          ><input
+            v-model="userForm.user_code"
+            class="input"
+            maxlength="12"
+            placeholder="VD: HIEU01"
+            @blur="userForm.user_code = normalizeUserCode(userForm.user_code)"
+          />
+          <div class="small subtle">Chỉ dùng chữ A-Z và số; mã không được trùng.</div>
         </div>
         <div class="form-group">
           <label>Tên hiển thị</label
@@ -651,6 +802,7 @@ onMounted(loadRows);
       :record="selectedDetail"
       :field-order="[
         'id',
+        'user_code',
         'email',
         'display_name',
         'name',
