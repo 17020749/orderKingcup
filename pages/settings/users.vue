@@ -1,14 +1,11 @@
 <script setup lang="ts">
 import {
   collection,
-  getDoc,
   getDocs,
   doc,
-  query,
   runTransaction,
   setDoc,
   serverTimestamp,
-  where,
   writeBatch,
 } from "firebase/firestore";
 import {
@@ -228,22 +225,12 @@ async function saveUser() {
       : [];
     const userRef = doc(db, "users", email);
     const codeRef = doc(db, "user_codes", userCode);
-    const sequenceRef = doc(db, "order_sequences", email);
-    const existingSequence = await getDoc(sequenceRef);
-    const existingOrderCount = existingSequence.exists()
-      ? 0
-      : (
-          await getDocs(
-            query(collection(db, "orders"), where("created_by", "==", email)),
-          )
-        ).size;
     const actorEmail = normalizeEmail(firebaseUser.value?.email || "");
     let payload: any = null;
 
     await runTransaction(db, async (transaction) => {
       const existingUser = await transaction.get(userRef);
       const reservedCode = await transaction.get(codeRef);
-      const sequence = await transaction.get(sequenceRef);
       const oldUserCode = normalizeUserCode(
         existingUser.exists() ? existingUser.data().user_code : "",
       );
@@ -302,26 +289,6 @@ async function saveUser() {
         );
       }
 
-      if (!sequence.exists()) {
-        transaction.set(sequenceRef, {
-          user_email: email,
-          user_code: userCode,
-          last_number: 999 + existingOrderCount,
-          updated_by: actorEmail,
-          created_at: serverTimestamp(),
-          updated_at: serverTimestamp(),
-        });
-      } else if (normalizeUserCode(sequence.data().user_code) !== userCode) {
-        transaction.set(
-          sequenceRef,
-          {
-            user_code: userCode,
-            updated_by: actorEmail,
-            updated_at: serverTimestamp(),
-          },
-          { merge: true },
-        );
-      }
     });
 
     const now = new Date().toISOString();

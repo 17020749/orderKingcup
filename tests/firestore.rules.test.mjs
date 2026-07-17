@@ -37,6 +37,7 @@ const WAREHOUSE_REJECT = 'warehousereject@example.com'
 const WAREHOUSE_RELEASE = 'warehouserelease@example.com'
 const PRINTING = 'printing@example.com'
 const PRINTING_VIEWER = 'printingviewer@example.com'
+const CUSTOMER_ORDER_VIEWER = 'customerorders@example.com'
 let env
 
 const userPermissions = [
@@ -118,8 +119,29 @@ async function seed() {
       setDoc(doc(db, 'order_export_requests', 'export-a-done'), { order_id: 'order-a-exported', requested_by: A, ...ownership(A), status: 'da_xuat', payload_json: '{}', active: true }),
       setDoc(doc(db, 'shipments', 'shipment-b'), { order_id: 'order-b', created_by: B, ...ownership(B), active: true }),
       setDoc(doc(db, 'invoices', 'invoice-b'), { order_id: 'order-b', created_by: B, ...ownership(B), active: true }),
-      setDoc(doc(db, 'customers', 'customer-a'), { customer_name: 'A', created_by: A, active: true }),
-      setDoc(doc(db, 'customers', 'customer-b'), { customer_name: 'B', created_by: B, active: true }),
+      setDoc(doc(db, 'customers', 'customer-a'), { customer_code: 'KHA001', customer_name: 'A', created_by: A, active: true }),
+      setDoc(doc(db, 'customers', 'customer-b'), { customer_code: 'KHB002', customer_name: 'B', created_by: B, active: true }),
+      setDoc(doc(db, 'customers', 'customer-legacy-code'), { customer_name: 'Khách cũ', created_by: A, active: true }),
+      setDoc(doc(db, 'customers', 'customer-orders'), { customer_code: 'KHC003', customer_name: 'Khách xem đơn', created_by: CUSTOMER_ORDER_VIEWER, active: true }),
+      setDoc(doc(db, 'orders', 'order-customer-view'), {
+        ...order(B, 'B01-KHC003-0001'),
+        customer_id: 'customer-orders',
+        customer_code: 'KHC003'
+      }),
+      setDoc(doc(db, 'order_items', 'item-customer-view'), {
+        order_id: 'order-customer-view',
+        created_by: B,
+        owner_email: B,
+        sale_email: B,
+        product_id: 'product-existing',
+        product_code: 'SP001',
+        product_name: 'Sản phẩm cũ',
+        quantity: 10,
+        unit_price: 1000,
+        active: true,
+        deleted: false,
+        status: 'active'
+      }),
       setDoc(doc(db, 'products', 'product-existing'), { product_code: 'SP001', product_name: 'Sản phẩm cũ', unit: 'Cái', created_by: A, active: true, deleted: false }),
       setDoc(doc(db, 'notifications', 'notification-a'), { to_email: A, created_by: B, status: 'unread', message: 'Test' }),
       setDoc(doc(db, 'notifications', 'notification-warehouse-a'), {
@@ -174,6 +196,12 @@ async function seed() {
         deleted: false,
         permissions_flat: ['page.printing', 'printing.view']
       }),
+      setDoc(doc(db, 'users', CUSTOMER_ORDER_VIEWER), {
+        email: CUSTOMER_ORDER_VIEWER,
+        active: true,
+        deleted: false,
+        permissions_flat: ['page.customers', 'customers.view', 'customers.orders_view']
+      }),
       setDoc(doc(db, 'warehouses', 'wh-a'), { id: 'wh-a', name: 'Kho A', created_by: CATALOG, active: true, deleted: false, source: 'test' }),
       setDoc(doc(db, 'suppliers', 'supplier-a'), { id: 'supplier-a', name: 'NCC A', created_by: CATALOG, active: true, deleted: false, source: 'test' }),
       setDoc(doc(db, 'units', 'unit-a'), { id: 'unit-a', name: 'Cái', created_by: CATALOG, active: true, deleted: false, source: 'test' }),
@@ -187,7 +215,7 @@ async function seed() {
       setDoc(doc(db, 'stock_movements', 'move-a'), { id: 'move-a', movement_type: 'import', product_id: 'product-existing', warehouse_id: 'wh-a', quantity: 5, created_by: STOCK, active: true, deleted: false, source: 'test' }),
       setDoc(doc(db, 'inventory_balances', 'wh-a__product-existing__no_logo'), { id: 'wh-a__product-existing__no_logo', product_id: 'product-existing', warehouse_id: 'wh-a', logo: '', quantity: 10, active: true, deleted: false }),
       setDoc(doc(db, 'print_orders', 'print-a'), {
-        id: 'print-a', order_code: 'DH-PRINT-A', supplier_id: 'supplier-a', supplier_name: 'NCC A',
+        id: 'print-a', order_id: 'order-a', order_code: 'order-a', supplier_id: 'supplier-a', supplier_name: 'NCC A',
         created_by: PRINTING, active: true, deleted: false, status: 'active', source: 'test'
       }),
       setDoc(doc(db, 'print_order_items', 'print-item-a'), {
@@ -555,6 +583,71 @@ test('Query customer theo created_by được phép, query toàn bộ bị chặ
   await assertFails(getDocs(query(collection(db, 'customers'))))
 })
 
+test('Mã khách tự động đúng định dạng, có reservation duy nhất và không thể đổi', async () => {
+  const db = env.authenticatedContext(A, { email: A }).firestore()
+  const createBatch = writeBatch(db)
+  createBatch.set(doc(db, 'customer_codes', 'TST123'), {
+    customer_code: 'TST123', customer_id: 'customer-new', created_by: A,
+    active: true, deleted: false
+  })
+  createBatch.set(doc(db, 'customers', 'customer-new'), {
+    id: 'customer-new', customer_code: 'TST123', customer_name: 'Khách mới',
+    created_by: A, active: true, deleted: false
+  })
+  await assertSucceeds(createBatch.commit())
+
+  const duplicateBatch = writeBatch(db)
+  duplicateBatch.set(doc(db, 'customers', 'customer-duplicate'), {
+    id: 'customer-duplicate', customer_code: 'TST123', customer_name: 'Trùng mã',
+    created_by: A, active: true, deleted: false
+  })
+  await assertFails(duplicateBatch.commit())
+
+  const invalidBatch = writeBatch(db)
+  invalidBatch.set(doc(db, 'customer_codes', 'AB1234'), {
+    customer_code: 'AB1234', customer_id: 'customer-invalid', created_by: A
+  })
+  invalidBatch.set(doc(db, 'customers', 'customer-invalid'), {
+    customer_code: 'AB1234', customer_name: 'Sai mã', created_by: A, active: true
+  })
+  await assertFails(invalidBatch.commit())
+
+  await assertFails(updateDoc(doc(db, 'customers', 'customer-new'), { customer_code: 'NEW456' }))
+})
+
+test('Khách hàng cũ chưa có mã được gán mã tự động đúng một lần', async () => {
+  const db = env.authenticatedContext(A, { email: A }).firestore()
+  const batch = writeBatch(db)
+  batch.set(doc(db, 'customer_codes', 'OLD001'), {
+    customer_code: 'OLD001', customer_id: 'customer-legacy-code', created_by: A,
+    active: true, deleted: false
+  })
+  batch.update(doc(db, 'customers', 'customer-legacy-code'), {
+    id: 'customer-legacy-code', customer_code: 'OLD001', updated_at: 'now'
+  })
+  await assertSucceeds(batch.commit())
+  await assertFails(updateDoc(doc(db, 'customers', 'customer-legacy-code'), {
+    customer_code: 'OLD002', updated_at: 'later'
+  }))
+})
+
+test('Quyền customers.orders_view chỉ đọc đơn của khách thuộc phạm vi người dùng', async () => {
+  const db = env.authenticatedContext(CUSTOMER_ORDER_VIEWER, { email: CUSTOMER_ORDER_VIEWER }).firestore()
+  await assertSucceeds(getDoc(doc(db, 'customers', 'customer-orders')))
+  await assertSucceeds(getDoc(doc(db, 'orders', 'order-customer-view')))
+  await assertSucceeds(getDocs(query(
+    collection(db, 'orders'),
+    where('customer_id', '==', 'customer-orders')
+  )))
+  await assertSucceeds(getDocs(query(
+    collection(db, 'order_items'),
+    where('order_id', '==', 'order-customer-view')
+  )))
+  await assertFails(getDoc(doc(db, 'orders', 'order-b')))
+  await assertFails(getDoc(doc(db, 'order_items', 'item-b')))
+  await assertFails(getDocs(query(collection(db, 'orders'))))
+})
+
 
 
 test('Query realtime Sale theo ownership và Kho theo toàn bộ phiếu được phép', async () => {
@@ -602,9 +695,6 @@ test('Mã người dùng mới phải được giữ chỗ và không được t
   createBatch.set(doc(db, 'user_codes', 'NV01'), {
     user_code: 'NV01', email: firstEmail, active: true, deleted: false
   })
-  createBatch.set(doc(db, 'order_sequences', firstEmail), {
-    user_email: firstEmail, user_code: 'NV01', last_number: 999, updated_by: ADMIN
-  })
   createBatch.set(doc(db, 'users', firstEmail), {
     email: firstEmail, user_code: 'NV01', active: true, deleted: false
   })
@@ -618,51 +708,68 @@ test('Mã người dùng mới phải được giữ chỗ và không được t
   }))
 })
 
-test('Mã đơn tăng riêng theo counter của người tạo và không được dùng lại số cũ', async () => {
+test('Mã đơn tăng riêng theo từng khách từ 0001 và không được dùng lại số cũ', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
-  const firstCode = '260717A011000'
-  const secondCode = '260717A011001'
+  const firstCode = 'A01-KHA001-0001'
+  const secondCode = 'A01-KHA001-0002'
 
   const firstBatch = writeBatch(db)
-  firstBatch.set(doc(db, 'order_sequences', A), {
-    user_email: A,
-    user_code: 'A01',
-    last_number: 1000,
+  firstBatch.set(doc(db, 'order_sequences', 'customer-a'), {
+    customer_id: 'customer-a',
+    customer_code: 'KHA001',
+    last_number: 1,
     updated_by: A
   })
   firstBatch.set(doc(db, 'orders', 'numbered-order-1'), {
     ...order(A, firstCode),
     id: 'numbered-order-1',
+    customer_id: 'customer-a',
+    customer_code: 'KHA001',
     user_code: 'A01',
-    order_sequence: 1000
+    order_sequence: 1
   })
   await assertSucceeds(firstBatch.commit())
 
   const secondBatch = writeBatch(db)
-  secondBatch.update(doc(db, 'order_sequences', A), {
-    user_code: 'A01',
-    last_number: 1001,
+  secondBatch.update(doc(db, 'order_sequences', 'customer-a'), {
+    last_number: 2,
     updated_by: A
   })
   secondBatch.set(doc(db, 'orders', 'numbered-order-2'), {
     ...order(A, secondCode),
     id: 'numbered-order-2',
+    customer_id: 'customer-a',
+    customer_code: 'KHA001',
     user_code: 'A01',
-    order_sequence: 1001
+    order_sequence: 2
   })
   await assertSucceeds(secondBatch.commit())
 
   await assertFails(setDoc(doc(db, 'orders', 'numbered-order-reused'), {
     ...order(A, secondCode),
     id: 'numbered-order-reused',
+    customer_id: 'customer-a',
+    customer_code: 'KHA001',
     user_code: 'A01',
-    order_sequence: 1001
+    order_sequence: 2
   }))
 
-  await assertFails(updateDoc(doc(db, 'order_sequences', A), {
-    last_number: 1003,
+  await assertFails(updateDoc(doc(db, 'order_sequences', 'customer-a'), {
+    last_number: 4,
     updated_by: A
   }))
+
+  const dbB = env.authenticatedContext(B, { email: B }).firestore()
+  const otherCustomerBatch = writeBatch(dbB)
+  otherCustomerBatch.set(doc(dbB, 'order_sequences', 'customer-b'), {
+    customer_id: 'customer-b', customer_code: 'KHB002', last_number: 1, updated_by: B
+  })
+  otherCustomerBatch.set(doc(dbB, 'orders', 'numbered-order-customer-b'), {
+    ...order(B, 'B01-KHB002-0001'),
+    id: 'numbered-order-customer-b', customer_id: 'customer-b', customer_code: 'KHB002',
+    user_code: 'B01', order_sequence: 1
+  })
+  await assertSucceeds(otherCustomerBatch.commit())
 })
 
 
@@ -1110,6 +1217,10 @@ test('Tiến độ in: người có printing.view đọc được đơn, chi ti�
   await assertSucceeds(getDoc(doc(viewerDb, 'print_order_items', 'print-item-a')))
   await assertSucceeds(getDoc(doc(viewerDb, 'products', 'product-existing')))
   await assertSucceeds(getDoc(doc(viewerDb, 'suppliers', 'supplier-a')))
+  await assertSucceeds(getDoc(doc(viewerDb, 'orders', 'order-a')))
+  await assertSucceeds(getDoc(doc(viewerDb, 'order_items', 'item-a')))
+  await assertSucceeds(getDocs(query(collection(viewerDb, 'orders'))))
+  await assertSucceeds(getDocs(query(collection(viewerDb, 'order_items'))))
   await assertFails(getDoc(doc(normalDb, 'print_orders', 'print-a')))
 })
 
@@ -1117,7 +1228,7 @@ test('Tiến độ in: tạo đơn và dòng sản phẩm hợp lệ trong cùng
   const db = env.authenticatedContext(PRINTING, { email: PRINTING }).firestore()
   const batch = writeBatch(db)
   batch.set(doc(db, 'print_orders', 'print-new'), {
-    id: 'print-new', order_code: 'DH-PRINT-NEW', am_code: 'AM-01',
+    id: 'print-new', order_id: 'order-a', order_code: 'order-a', am_code: 'AM-01',
     created_by: PRINTING, created_at: 'now', updated_at: 'now',
     active: true, deleted: false, status: 'active', source: 'nuxt'
   })
@@ -1129,7 +1240,7 @@ test('Tiến độ in: tạo đơn và dòng sản phẩm hợp lệ trong cùng
     active: true, deleted: false, status: 'active', source: 'nuxt'
   })
   batch.set(doc(collection(db, 'activity_logs')), {
-    module: 'print_orders', action: 'create', item_code: 'DH-PRINT-NEW',
+    module: 'print_orders', action: 'create', item_code: 'order-a',
     changed_by: PRINTING, created_at: 'now', active: true, deleted: false
   })
   await assertSucceeds(batch.commit())
@@ -1149,7 +1260,7 @@ test('Tiến độ in: chặn số lượng không hợp lệ và giả mạo ng
     active: true, deleted: false, source: 'nuxt'
   }))
   await assertFails(setDoc(doc(db, 'print_orders', 'print-forged'), {
-    id: 'print-forged', order_code: 'DH-FORGED', created_by: A,
+    id: 'print-forged', order_id: 'order-a', order_code: 'DH-FORGED', created_by: A,
     active: true, deleted: false, source: 'nuxt'
   }))
 })
@@ -1180,7 +1291,7 @@ test('Tiến độ in: sửa và xóa mềm nguyên tử với đúng quyền', 
 test('Tiến độ in: người chỉ có quyền xem không được tạo, sửa hoặc xóa', async () => {
   const db = env.authenticatedContext(PRINTING_VIEWER, { email: PRINTING_VIEWER }).firestore()
   await assertFails(setDoc(doc(db, 'print_orders', 'print-viewer-new'), {
-    id: 'print-viewer-new', order_code: 'DH-VIEWER', created_by: PRINTING_VIEWER,
+    id: 'print-viewer-new', order_id: 'order-a', order_code: 'order-a', created_by: PRINTING_VIEWER,
     active: true, deleted: false, source: 'nuxt'
   }))
   await assertFails(updateDoc(doc(db, 'print_orders', 'print-a'), {

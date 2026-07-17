@@ -1,4 +1,4 @@
-export const ORDER_SEQUENCE_START = 1000
+export const ORDER_SEQUENCE_START = 1
 
 export function normalizeUserCode(value) {
   return String(value || '').trim().toUpperCase()
@@ -13,21 +13,29 @@ export function userCodeValidationError(value) {
   return ''
 }
 
-export function orderDateCode(value = new Date()) {
-  const date = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(date.getTime())) throw new Error('Ngày tạo mã đơn không hợp lệ.')
-  const pad = number => String(number).padStart(2, '0')
-  return `${String(date.getFullYear()).slice(-2)}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+export function normalizeCustomerCode(value) {
+  return String(value || '').trim().toUpperCase()
 }
 
-export function buildOrderCode(userCode, sequence, value = new Date()) {
+export function customerCodeValidationError(value) {
+  const code = normalizeCustomerCode(value)
+  if (!code) return 'Khách hàng chưa có Mã khách.'
+  if (!/^[A-Z]{3}[0-9]{3}$/.test(code)) {
+    return 'Mã khách phải gồm đúng 3 chữ cái in hoa và 3 chữ số.'
+  }
+  return ''
+}
+
+export function buildOrderCode(userCode, customerCode, sequence) {
   const codeError = userCodeValidationError(userCode)
   if (codeError) throw new Error(codeError)
+  const customerError = customerCodeValidationError(customerCode)
+  if (customerError) throw new Error(customerError)
 
   const number = Number(sequence)
   if (!Number.isInteger(number) || number < ORDER_SEQUENCE_START) {
-    throw new Error(`Số thứ tự đơn phải bắt đầu từ ${ORDER_SEQUENCE_START}.`)
+    throw new Error('Số thứ tự đơn phải bắt đầu từ 0001.')
   }
 
-  return `${orderDateCode(value)}${normalizeUserCode(userCode)}${String(number).padStart(4, '0')}`
+  return `${normalizeUserCode(userCode)}-${normalizeCustomerCode(customerCode)}-${String(number).padStart(4, '0')}`
 }
