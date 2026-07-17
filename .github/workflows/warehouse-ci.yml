@@ -30,6 +30,8 @@ jobs:
     name: Build, test, generate and deploy
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment:
+      name: dev
 
     steps:
       - name: Checkout source
@@ -58,6 +60,41 @@ jobs:
       - name: Prepare Nuxt
         run: pnpm exec nuxi prepare
 
+      - name: Load Firebase web configuration
+        shell: bash
+        env:
+          FIREBASE_WEB_CONFIG: ${{ vars.FIREBASE_WEB_CONFIG }}
+        run: |
+          if [ -z "$FIREBASE_WEB_CONFIG" ]; then
+            echo "::error::FIREBASE_WEB_CONFIG is missing from the selected GitHub Environment"
+            exit 1
+          fi
+
+          if ! jq -e '
+            def valid($value):
+              ($value | type) == "string" and ($value | length) > 0;
+
+            valid(.apiKey) and
+            valid(.authDomain) and
+            valid(.projectId) and
+            valid(.storageBucket) and
+            valid(.messagingSenderId) and
+            valid(.appId)
+          ' >/dev/null <<< "$FIREBASE_WEB_CONFIG"; then
+            echo "::error::FIREBASE_WEB_CONFIG is not valid Firebase web configuration JSON"
+            exit 1
+          fi
+
+          {
+            echo "NUXT_PUBLIC_FIREBASE_API_KEY=$(jq -r '.apiKey' <<< "$FIREBASE_WEB_CONFIG")"
+            echo "NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN=$(jq -r '.authDomain' <<< "$FIREBASE_WEB_CONFIG")"
+            echo "NUXT_PUBLIC_FIREBASE_PROJECT_ID=$(jq -r '.projectId' <<< "$FIREBASE_WEB_CONFIG")"
+            echo "NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET=$(jq -r '.storageBucket' <<< "$FIREBASE_WEB_CONFIG")"
+            echo "NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=$(jq -r '.messagingSenderId' <<< "$FIREBASE_WEB_CONFIG")"
+            echo "NUXT_PUBLIC_FIREBASE_APP_ID=$(jq -r '.appId' <<< "$FIREBASE_WEB_CONFIG")"
+            echo "NUXT_PUBLIC_APP_NAME=$(jq -r '.appName // "KINGCUP Dashboard"' <<< "$FIREBASE_WEB_CONFIG")"
+          } >> "$GITHUB_ENV"
+
       - name: Build
         run: pnpm run build
 
@@ -74,11 +111,11 @@ jobs:
           github.event.pull_request.head.repo.full_name == github.repository
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_ORDERFIRESTORE_501909 }}
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT || secrets.FIREBASE_SERVICE_ACCOUNT_ORDERFIRESTORE_501909 }}
 
       - name: Deploy Firebase before merge
         if: >-
           github.event_name == 'pull_request' &&
           github.base_ref == 'dev' &&
           github.event.pull_request.head.repo.full_name == github.repository
-        run: pnpm exec firebase deploy --project orderfirestore-501909 --non-interactive
+        run: pnpm exec firebase deploy --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID" --non-interactive
