@@ -32,7 +32,7 @@ coverage
 # nyc test coverage
 .nyc_output
 
-# Grunt intermediate storage (http://gruntjs.com/creating-plugins#storing-task-files)
+# Grunt intermediate storage (http://gruntjs.com/creating-plugins/storing-task-files)
 .grunt
 
 # Bower dependency directory (https://bower.io/)
@@ -68,4 +68,8 @@ node_modules/
 # dataconnect generated files
 .dataconnect
 
+# Service-account and GitHub Actions credentials
+gha-creds-*.json
+service-account*.json
+*-firebase-adminsdk-*.json
 orderfirestore-501909-*.json
