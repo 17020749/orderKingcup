@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { OrderDoc, OrderItemDoc } from '~/types/models'
 import { buildCommercialPrintHtml, openPrintDocument, type CommercialPrintKind } from '~/utils/orderPrintDocuments'
+import { applyCommercialPrintAlignment } from '~/utils/commercialPrintAlignment'
 import { toNumber } from '~/utils/format'
 
 const props = defineProps<{
@@ -59,7 +60,10 @@ function printDocument(kind: CommercialPrintKind) {
     paymentDepositAmount: paymentDepositAmount.value,
     assetBase: window.location.origin,
   })
-  openPrintDocument(html, () => showToast('Trình duyệt đang chặn cửa sổ in. Hãy cho phép pop-up cho trang này.', 'error'))
+  openPrintDocument(
+    applyCommercialPrintAlignment(html),
+    () => showToast('Trình duyệt đang chặn cửa sổ in. Hãy cho phép pop-up cho trang này.', 'error'),
+  )
 }
 </script>
 
