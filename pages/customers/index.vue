@@ -2,8 +2,10 @@
 import type { CustomerDoc } from '~/types/models'
 import { makeId, normalizeText } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { generateCustomerCode } from '~/utils/customerCode'
 
-const { saveDoc, softDeleteDoc, listDocs, q } = useRepo()
+const { softDeleteDoc, listDocs, q } = useRepo()
+const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
 const { appUser, hasPermission, isAdmin } = useAuth()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
@@ -63,20 +65,31 @@ function openDetail(row: CustomerDoc) {
   showDetailModal.value = true
 }
 
+async function openCustomerOrders(row: CustomerDoc) {
+  if (!hasPermission('customers.orders_view')) {
+    showToast('Bạn chưa được cấp quyền xem đơn hàng của khách.', 'error')
+    return
+  }
+  await navigateTo(`/customers/${encodeURIComponent(row.id)}`)
+}
+
 function openModal(row?: CustomerDoc) {
   editing.value = row || null
-  Object.assign(form, row ? { ...row } : { id: makeId('cus'), customer_code: '', customer_name: '', company_name: '', phone: '', email: '', tax_code: '', billing_address: '', shipping_address: '', source: '', note: '', status: 'active' })
+  Object.keys(form).forEach(key => delete form[key])
+  Object.assign(form, row
+    ? { ...row, customer_code: row.customer_code || generateCustomerCode() }
+    : { id: makeId('cus'), customer_code: generateCustomerCode(), customer_name: '', company_name: '', phone: '', email: '', tax_code: '', billing_address: '', shipping_address: '', source: '', note: '', status: 'active' })
   showModal.value = true
 }
 async function saveCustomer() {
   if (!form.customer_name) return showToast('Thiếu tên khách hàng', 'error')
   saving.value = true
   try {
-    const record = await saveDoc('customers', {
+    const record = await saveManagedCustomer({
       ...form,
       customer_name_norm: normalizeText(form.customer_name),
       phone_norm: normalizeText(form.phone).replace(/\s/g, '')
-    }, form.id)
+    }, editing.value)
     const index = rows.value.findIndex(r => r.id === record.id)
     if (index >= 0) rows.value[index] = { ...rows.value[index], ...record } as CustomerDoc
     else rows.value.unshift(record as CustomerDoc)
@@ -115,11 +128,17 @@ onMounted(() => loadRows())
         <table>
           <thead><tr><th>Mã</th><th>Tên khách</th><th>Công ty</th><th>SĐT</th><th>Email</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
-            <tr v-for="row in filtered" :key="row.id">
+            <tr
+              v-for="row in filtered"
+              :key="row.id"
+              :class="{ 'clickable-row': hasPermission('customers.orders_view') }"
+              @click="openCustomerOrders(row)"
+            >
               <td>{{ row.customer_code || row.id }}</td><td><b>{{ row.customer_name }}</b></td><td>{{ row.company_name }}</td><td>{{ row.phone }}</td><td>{{ row.email }}</td>
               <td><span class="badge" :class="customerStatusClass(row.status)">{{ customerStatusLabel(row.status) }}</span></td>
-              <td class="row">
-                <button class="btn" @click="openDetail(row)">Xem</button>
+              <td class="row" @click.stop>
+                <button class="btn" @click="openDetail(row)">Chi tiết</button>
+                <button v-if="hasPermission('customers.orders_view')" class="btn" @click="openCustomerOrders(row)">Đơn hàng</button>
                 <button v-if="hasPermission('customers.edit')" class="btn" @click="openModal(row)">Sửa</button>
                 <button v-if="hasPermission('customers.delete')" class="btn danger" @click="removeCustomer(row)">Xóa</button>
               </td>
@@ -131,7 +150,11 @@ onMounted(() => loadRows())
     </div>
     <BaseModal v-if="showModal" :title="editing ? 'Sửa khách hàng' : 'Thêm khách hàng'" :loading="saving" @close="showModal=false" @save="saveCustomer">
       <div class="form-grid">
-        <div class="form-group"><label>Mã khách</label><input v-model="form.customer_code" class="input" /></div>
+        <div class="form-group">
+          <label>Mã khách (tự động)</label>
+          <input v-model="form.customer_code" class="input readonly-field" readonly />
+          <div class="small subtle">Gồm 3 chữ cái in hoa và 3 chữ số; không thể nhập hoặc đổi thủ công.</div>
+        </div>
         <div class="form-group"><label>Tên khách *</label><input v-model="form.customer_name" class="input" /></div>
         <div class="form-group"><label>Công ty</label><input v-model="form.company_name" class="input" /></div>
         <div class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>

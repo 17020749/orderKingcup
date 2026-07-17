@@ -715,6 +715,20 @@ export function useScopedQueries() {
     })).filter(isActive), 'created_at')
   }
 
+  async function loadPrintingSourceOrders(force = false) {
+    if (!hasPermission('printing.view') && !hasPermission('*')) return []
+    return sortNewest((await listCollection<OrderDoc>('orders', [], {
+      cacheKey: 'printing-source-all', ttlMs: 20_000, force
+    })).filter(isActive), 'order_date')
+  }
+
+  async function loadPrintingSourceOrderItems(force = false) {
+    if (!hasPermission('printing.view') && !hasPermission('*')) return []
+    return (await listCollection<OrderItemDoc>('order_items', [], {
+      cacheKey: 'printing-source-all', ttlMs: 20_000, force
+    })).filter(isActive)
+  }
+
   async function loadPrintOrderItems(force = false) {
     if (!hasPermission('printing.view') && !hasPermission('*')) return []
     return (await listCollection<PrintOrderItemDoc>('print_order_items', [], {
@@ -760,6 +774,8 @@ export function useScopedQueries() {
     loadStockMovements,
     loadPrintOrders,
     loadPrintOrderItems,
+    loadPrintingSourceOrders,
+    loadPrintingSourceOrderItems,
     loadScopedShipments,
     loadScopedInvoices,
     invalidateScopedCache

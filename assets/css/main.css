@@ -317,6 +317,20 @@ button {
   color: var(--text);
   outline: none;
 }
+.readonly-field,
+.input[readonly].readonly-field {
+  border-color: #cbd5e1;
+  background: #e2e8f0;
+  color: #334155;
+  font-weight: 750;
+  cursor: not-allowed;
+}
+.clickable-row {
+  cursor: pointer;
+}
+.clickable-row:hover td {
+  background: #f1f8f3;
+}
 .input:focus,
 .select:focus,
 .textarea:focus {
@@ -1034,11 +1048,11 @@ tr:hover td {
 }
 .notification-trigger {
   width: 100%;
-  border: 1px solid rgba(148, 163, 184, 0.28);
+  border: 1px solid #b8d7c2;
   border-radius: 12px;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #e2e8f0;
+  background: #e3f1e7;
+  color: #14532d;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1046,7 +1060,9 @@ tr:hover td {
   font-weight: 700;
 }
 .notification-trigger:hover {
-  background: rgba(255, 255, 255, 0.13);
+  border-color: #86b797;
+  background: #cfe7d6;
+  color: #0f4425;
 }
 .notification-count {
   min-width: 24px;
