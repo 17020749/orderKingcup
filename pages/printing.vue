@@ -348,8 +348,7 @@ function collectItems(): PrintItemInput[] {
         actual_print_quantity: toNumber(line.actual_print_quantity),
         print_started_at: line.print_started_at,
         expected_done_at: line.expected_done_at,
-        is_completed: toNumber(line.print_quantity) > 0
-          && toNumber(line.actual_print_quantity) >= toNumber(line.print_quantity),
+        is_completed: line.is_completed,
         completed_at: line.completed_at,
         note: line.note,
       })
@@ -594,13 +593,14 @@ onBeforeUnmount(() => {
           <div class="form-group"><label>Bắt đầu in</label><input v-model="group.print_started_at" class="input" type="datetime-local" /></div>
           <div class="form-group"><label>Dự kiến xong</label><input v-model="group.expected_done_at" class="input" type="datetime-local" /></div>
           <div class="form-group"><label>Ghi chú dòng</label><input v-model="group.note" class="input" placeholder="Ghi chú" /></div>
+          <label class="complete-checkbox"><input v-model="group.is_completed" type="checkbox" /> Hoàn thành</label>
         </div>
 
         <div v-else class="logo-items-box print-logo-box">
           <div class="logo-mode-note">Sản phẩm và số lượng theo logo được lấy tự động từ đơn hàng.</div>
           <div class="table-wrap">
             <table class="print-logo-table">
-              <thead><tr><th>Logo</th><th>SL cần in</th><th>SL in thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Ghi chú dòng</th></tr></thead>
+              <thead><tr><th>Logo</th><th>SL cần in</th><th>SL in thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Ghi chú dòng</th><th>Hoàn thành</th></tr></thead>
               <tbody>
                 <tr v-for="(line, logoIndex) in group.logo_lines" :key="line.id || logoIndex">
                   <td><input :value="line.logo" class="input readonly-field" readonly /></td>
@@ -609,8 +609,9 @@ onBeforeUnmount(() => {
                   <td><input v-model="line.print_started_at" class="input" type="datetime-local" /></td>
                   <td><input v-model="line.expected_done_at" class="input" type="datetime-local" /></td>
                   <td><input v-model="line.note" class="input" placeholder="Ghi chú" /></td>
+                  <td class="check-cell"><input v-model="line.is_completed" type="checkbox" /></td>
                 </tr>
-                <tr v-if="!group.logo_lines.length"><td colspan="6" class="empty">Đơn hàng chưa có dòng logo hợp lệ.</td></tr>
+                <tr v-if="!group.logo_lines.length"><td colspan="7" class="empty">Đơn hàng chưa có dòng logo hợp lệ.</td></tr>
               </tbody>
             </table>
           </div>
@@ -675,11 +676,13 @@ onBeforeUnmount(() => {
 .printing-toolbar .select { width: 220px; }
 .printing-table { min-width: 1320px; }
 .printing-header-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.print-fields-grid { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 10px; align-items: end; margin-top: 14px; }
-.print-logo-table { min-width: 1120px; }
+.print-fields-grid { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)) auto; gap: 10px; align-items: end; margin-top: 14px; }
+.complete-checkbox { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 10px; font-weight: 800; white-space: nowrap; }
+.print-logo-table { min-width: 1240px; }
 .print-source-empty { margin-top: 12px; border: 1px dashed var(--line); border-radius: 12px; }
 .printing-detail-table { min-width: 1520px; }
 .check-cell { text-align: center; vertical-align: middle; }
+.check-cell input, .complete-checkbox input { width: 18px; height: 18px; }
 @media (max-width: 1180px) {
   .printing-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .printing-header-form, .print-fields-grid { grid-template-columns: 1fr 1fr; }
