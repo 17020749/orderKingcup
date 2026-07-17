@@ -27,8 +27,12 @@ let observer: MutationObserver | null = null
 let installTimer: ReturnType<typeof setTimeout> | null = null
 let retryTimer: ReturnType<typeof setInterval> | null = null
 
-const isRequestPage = computed(() => route.path === '/export-requests')
-const isExportPage = computed(() => route.path === '/exports')
+const normalizedRoutePath = computed(() => {
+  const path = String(route.path || '/').replace(/\/+$/, '')
+  return path || '/'
+})
+const isRequestPage = computed(() => normalizedRoutePath.value === '/export-requests')
+const isExportPage = computed(() => normalizedRoutePath.value === '/exports')
 const canPrintRequest = computed(() => hasPermission('*') || hasPermission('orders.print'))
 const canPrintExport = computed(() => hasPermission('*') || hasPermission('export.print'))
 
