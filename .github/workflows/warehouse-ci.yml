@@ -27,9 +27,11 @@ concurrency:
 
 jobs:
   verify:
-    name: Build, generate and rules tests
+    name: Build, test, generate and deploy
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment:
+      name: dev
 
     steps:
       - name: Checkout source
@@ -58,11 +60,87 @@ jobs:
       - name: Prepare Nuxt
         run: pnpm exec nuxi prepare
 
+      - name: Load Firebase web configuration
+        shell: bash
+        env:
+          FIREBASE_WEB_CONFIG: ${{ vars.FIREBASE_WEB_CONFIG }}
+        run: |
+          if [ -z "$FIREBASE_WEB_CONFIG" ]; then
+            echo "::error::FIREBASE_WEB_CONFIG is missing from the selected GitHub Environment"
+            exit 1
+          fi
+
+          node <<'NODE'
+          const fs = require('node:fs')
+
+          const raw = process.env.FIREBASE_WEB_CONFIG || ''
+          const requiredKeys = [
+            'apiKey',
+            'authDomain',
+            'projectId',
+            'storageBucket',
+            'messagingSenderId',
+            'appId'
+          ]
+
+          let config
+          try {
+            config = JSON.parse(raw)
+          } catch {
+            config = {}
+            for (const key of [...requiredKeys, 'appName']) {
+              const pattern = new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"'\\r\\n]+)["']`)
+              config[key] = raw.match(pattern)?.[1] || ''
+            }
+          }
+
+          const missingKeys = requiredKeys.filter((key) =>
+            typeof config[key] !== 'string' || config[key].trim() === ''
+          )
+
+          if (missingKeys.length > 0) {
+            console.error(`::error::FIREBASE_WEB_CONFIG is missing: ${missingKeys.join(', ')}`)
+            process.exit(1)
+          }
+
+          const values = {
+            NUXT_PUBLIC_FIREBASE_API_KEY: config.apiKey,
+            NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: config.authDomain,
+            NUXT_PUBLIC_FIREBASE_PROJECT_ID: config.projectId,
+            NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: config.storageBucket,
+            NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: config.messagingSenderId,
+            NUXT_PUBLIC_FIREBASE_APP_ID: config.appId,
+            NUXT_PUBLIC_APP_NAME: config.appName || 'KINGCUP Dashboard'
+          }
+
+          const output = Object.entries(values)
+            .map(([key, value]) => `${key}=${value}`)
+            .join('\n')
+
+          fs.appendFileSync(process.env.GITHUB_ENV, `${output}\n`)
+          NODE
+
       - name: Build
         run: pnpm run build
+
+      - name: Firestore Rules and concurrency tests
+        run: pnpm run test:rules
 
       - name: Generate static site
         run: pnpm run generate
 
-      - name: Firestore Rules and concurrency tests
-        run: pnpm run test:rules
+      - name: Authenticate to Google Cloud
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.base_ref == 'dev' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT || secrets.FIREBASE_SERVICE_ACCOUNT_ORDERFIRESTORE_501909 }}
+
+      - name: Deploy Firebase before merge
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.base_ref == 'dev' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        run: pnpm exec firebase deploy --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID" --non-interactive
