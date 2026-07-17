@@ -23,6 +23,7 @@ type PrintStatus = 'Đang in' | 'Cảnh báo' | 'Quá hạn' | 'Hoàn thành'
 type PrintLineForm = {
   id?: string
   logo: string
+  logo_color: string
   print_quantity: number
   actual_print_quantity: number
   print_started_at: string
@@ -89,12 +90,27 @@ const canCreate = computed(() => hasPermission('printing.create') || hasPermissi
 const canEdit = computed(() => hasPermission('printing.edit') || hasPermission('*'))
 const canDelete = computed(() => hasPermission('printing.delete') || hasPermission('*'))
 
-const orderOptions = computed(() => sourceOrders.value.map(order => ({
-  value: order.id,
-  label: order.order_code,
-  subLabel: [order.customer_name, order.customer_code, order.order_status].filter(Boolean).join(' · '),
-  search: `${order.order_code} ${order.customer_name || ''} ${order.customer_code || ''} ${order.phone || ''}`,
-})))
+function sourceLogoLines(item: OrderItemDoc) {
+  const logos = safeJsonParse(item.logo_json, [])
+  return Array.isArray(logos)
+    ? logos.filter((line: any) => String(line?.logo || '').trim())
+    : []
+}
+
+const printableOrderIds = computed(() => new Set(
+  sourceOrderItems.value
+    .filter(item => item.deleted !== true && sourceLogoLines(item).length > 0)
+    .map(item => item.order_id),
+))
+
+const orderOptions = computed(() => sourceOrders.value
+  .filter(order => printableOrderIds.value.has(order.id))
+  .map(order => ({
+    value: order.id,
+    label: order.order_code,
+    subLabel: [order.customer_name, order.customer_code, order.order_status].filter(Boolean).join(' · '),
+    search: `${order.order_code} ${order.customer_name || ''} ${order.customer_code || ''} ${order.phone || ''}`,
+  })))
 
 const supplierOptions = computed(() => suppliers.value.map(supplier => ({
   value: supplier.id,
@@ -171,7 +187,7 @@ const filtered = computed(() => {
     if (statusFilter.value && row.print_status !== statusFilter.value) return false
     if (!query) return true
     const itemText = row.detailItems.map(item =>
-      `${item.product_code || ''} ${item.product_name || ''} ${item.logo || ''}`,
+      `${item.product_code || ''} ${item.product_name || ''} ${item.logo || ''} ${item.logo_color || ''}`,
     ).join(' ')
     return normalizeText(
       `${row.order_code} ${row.am_code || ''} ${row.supplier_name || ''} ${row.note || ''} ${row.created_by || ''} ${itemText}`,
@@ -196,6 +212,7 @@ function blankLine(item?: Partial<PrintOrderItemDoc>): PrintLineForm {
   return {
     id: item?.id,
     logo: String(item?.logo || ''),
+    logo_color: String(item?.logo_color || ''),
     print_quantity: toNumber(item?.print_quantity),
     actual_print_quantity: toNumber(item?.actual_print_quantity),
     print_started_at: dateTimeLocal(item?.print_started_at),
@@ -250,8 +267,8 @@ function groupsFromItems(orderItems: PrintOrderItemDoc[]) {
 function groupsFromSourceOrder(orderId: string) {
   const orderItems = sourceOrderItems.value.filter(item => item.order_id === orderId && item.deleted !== true)
   return orderItems.map(item => {
-    const logos = safeJsonParse(item.logo_json, [])
-    if (Array.isArray(logos) && logos.length) {
+    const logos = sourceLogoLines(item)
+    if (logos.length) {
       const group = blankProductGroup({
         product_id: item.product_id,
         product_code: item.product_code,
@@ -261,6 +278,7 @@ function groupsFromSourceOrder(orderId: string) {
       group.print_quantity = 0
       group.logo_lines = logos.map((line: any) => blankLine({
         logo: String(line.logo || ''),
+        logo_color: String(line.logo_color || line.color || ''),
         print_quantity: toNumber(line.quantity ?? line.qty),
         actual_print_quantity: 0,
       }))
@@ -344,6 +362,7 @@ function collectItems(): PrintItemInput[] {
         id: line.id,
         product,
         logo,
+        logo_color: line.logo_color,
         print_quantity: toNumber(line.print_quantity),
         actual_print_quantity: toNumber(line.actual_print_quantity),
         print_started_at: line.print_started_at,
@@ -554,10 +573,10 @@ onBeforeUnmount(() => {
           <SearchableSelect
             v-model="form.order_id"
             :options="orderOptions"
-            placeholder="Tìm theo mã đơn, khách hàng hoặc SĐT..."
+            placeholder="Tìm đơn có sản phẩm logo theo mã, khách hàng hoặc SĐT..."
             @change="chooseSourceOrder"
           />
-          <div class="small subtle">Chọn đơn hàng để tự động lấy toàn bộ sản phẩm và số lượng cần in.</div>
+          <div class="small subtle">Chỉ hiển thị đơn có ít nhất một sản phẩm logo.</div>
         </div>
         <div class="form-group">
           <label>Mã AM</label>
@@ -600,10 +619,11 @@ onBeforeUnmount(() => {
           <div class="logo-mode-note">Sản phẩm và số lượng theo logo được lấy tự động từ đơn hàng.</div>
           <div class="table-wrap">
             <table class="print-logo-table">
-              <thead><tr><th>Logo</th><th>SL cần in</th><th>SL in thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Ghi chú dòng</th><th>Hoàn thành</th></tr></thead>
+              <thead><tr><th>Logo</th><th>Màu logo</th><th>SL cần in</th><th>SL in thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Ghi chú dòng</th><th>Hoàn thành</th></tr></thead>
               <tbody>
                 <tr v-for="(line, logoIndex) in group.logo_lines" :key="line.id || logoIndex">
                   <td><input :value="line.logo" class="input readonly-field" readonly /></td>
+                  <td><input v-model="line.logo_color" class="input" placeholder="VD: Đỏ, xanh navy..." /></td>
                   <td><input :value="line.print_quantity" class="input readonly-field" readonly /></td>
                   <td><input v-model.number="line.actual_print_quantity" class="input" type="number" min="0" step="1" /></td>
                   <td><input v-model="line.print_started_at" class="input" type="datetime-local" /></td>
@@ -611,7 +631,7 @@ onBeforeUnmount(() => {
                   <td><input v-model="line.note" class="input" placeholder="Ghi chú" /></td>
                   <td class="check-cell"><input v-model="line.is_completed" type="checkbox" /></td>
                 </tr>
-                <tr v-if="!group.logo_lines.length"><td colspan="7" class="empty">Đơn hàng chưa có dòng logo hợp lệ.</td></tr>
+                <tr v-if="!group.logo_lines.length"><td colspan="8" class="empty">Đơn hàng chưa có dòng logo hợp lệ.</td></tr>
               </tbody>
             </table>
           </div>
@@ -638,12 +658,13 @@ onBeforeUnmount(() => {
 
       <div class="table-wrap">
         <table class="printing-detail-table">
-          <thead><tr><th>Sản phẩm</th><th>Mã SP</th><th>Logo</th><th>SL in</th><th>SL thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Hoàn thành lúc</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead>
+          <thead><tr><th>Sản phẩm</th><th>Mã SP</th><th>Logo</th><th>Màu logo</th><th>SL in</th><th>SL thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Hoàn thành lúc</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead>
           <tbody>
             <tr v-for="item in selectedItems" :key="item.id">
               <td>{{ item.product_name || '-' }}</td>
               <td><b>{{ item.product_code || '-' }}</b></td>
               <td><span v-if="item.logo" class="badge blue">{{ item.logo }}</span><span v-else>-</span></td>
+              <td>{{ item.logo_color || '-' }}</td>
               <td>{{ quantityText(item.print_quantity) }}</td>
               <td>{{ quantityText(item.actual_print_quantity) }}</td>
               <td>{{ formatDateTime(item.print_started_at) || '-' }}</td>
@@ -652,7 +673,7 @@ onBeforeUnmount(() => {
               <td><span class="badge" :class="statusClass(itemStatus(item))">{{ itemStatus(item) }}</span></td>
               <td>{{ item.note || '-' }}</td>
             </tr>
-            <tr v-if="!selectedItems.length"><td colspan="10" class="empty">Đơn in này chưa có sản phẩm.</td></tr>
+            <tr v-if="!selectedItems.length"><td colspan="11" class="empty">Đơn in này chưa có sản phẩm.</td></tr>
           </tbody>
         </table>
       </div>
@@ -678,9 +699,9 @@ onBeforeUnmount(() => {
 .printing-header-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .print-fields-grid { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)) auto; gap: 10px; align-items: end; margin-top: 14px; }
 .complete-checkbox { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 10px; font-weight: 800; white-space: nowrap; }
-.print-logo-table { min-width: 1240px; }
+.print-logo-table { min-width: 1400px; }
 .print-source-empty { margin-top: 12px; border: 1px dashed var(--line); border-radius: 12px; }
-.printing-detail-table { min-width: 1520px; }
+.printing-detail-table { min-width: 1650px; }
 .check-cell { text-align: center; vertical-align: middle; }
 .check-cell input, .complete-checkbox input { width: 18px; height: 18px; }
 @media (max-width: 1180px) {

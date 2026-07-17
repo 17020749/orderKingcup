@@ -91,6 +91,8 @@ export interface OrderItemDoc {
   logo_json?: string | any[]
   note?: string
   status?: string
+  active?: boolean
+  deleted?: boolean
 }
 
 export interface OrderDoc {
@@ -221,6 +223,7 @@ export interface PrintOrderItemDoc {
   product_code?: string
   product_name?: string
   logo?: string
+  logo_color?: string
   print_quantity: number
   actual_print_quantity?: number
   print_started_at?: string

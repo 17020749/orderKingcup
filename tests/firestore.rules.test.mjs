@@ -128,6 +128,20 @@ async function seed() {
         customer_id: 'customer-orders',
         customer_code: 'KHC003'
       }),
+      setDoc(doc(db, 'order_items', 'item-customer-view'), {
+        order_id: 'order-customer-view',
+        created_by: B,
+        owner_email: B,
+        sale_email: B,
+        product_id: 'product-existing',
+        product_code: 'SP001',
+        product_name: 'Sản phẩm cũ',
+        quantity: 10,
+        unit_price: 1000,
+        active: true,
+        deleted: false,
+        status: 'active'
+      }),
       setDoc(doc(db, 'products', 'product-existing'), { product_code: 'SP001', product_name: 'Sản phẩm cũ', unit: 'Cái', created_by: A, active: true, deleted: false }),
       setDoc(doc(db, 'notifications', 'notification-a'), { to_email: A, created_by: B, status: 'unread', message: 'Test' }),
       setDoc(doc(db, 'notifications', 'notification-warehouse-a'), {
@@ -624,6 +638,10 @@ test('Quyền customers.orders_view chỉ đọc đơn của khách thuộc ph�
   await assertSucceeds(getDocs(query(
     collection(db, 'orders'),
     where('customer_id', '==', 'customer-orders')
+  )))
+  await assertSucceeds(getDocs(query(
+    collection(db, 'order_items'),
+    where('order_id', '==', 'order-customer-view')
   )))
   await assertFails(getDoc(doc(db, 'orders', 'order-b')))
   await assertFails(getDocs(query(collection(db, 'orders'))))

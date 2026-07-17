@@ -12,6 +12,7 @@ export type PrintItemInput = {
   id?: string
   product: ProductDoc
   logo?: string
+  logo_color?: string
   print_quantity: number
   actual_print_quantity?: number
   print_started_at?: string
@@ -107,6 +108,7 @@ export function usePrintingProgress() {
       product_code: productCode(input.product),
       product_name: productName(input.product),
       logo: text(input.logo),
+      logo_color: text(input.logo_color),
       print_quantity: toNumber(input.print_quantity),
       actual_print_quantity: toNumber(input.actual_print_quantity),
       print_started_at: text(input.print_started_at),
