@@ -55,7 +55,7 @@ function formatNumber(value: any) {
 }
 
 function formatMoney(value: any) {
-  return toNumber(value).toLocaleString('vi-VN')
+  return `${toNumber(value).toLocaleString('vi-VN')} đ`
 }
 
 function toDate(value: any) {
@@ -131,68 +131,70 @@ function productDisplayName(item: any) {
   return item.logo ? `${base} - Logo: ${item.logo}` : base
 }
 
-function padRows<T>(rows: T[], count = 15): Array<T | null> {
-  return [...rows, ...Array.from({ length: Math.max(0, count - rows.length) }, () => null)]
-}
-
 function commonCss() {
   return `
-    @page { size: A4 portrait; margin: 19.05mm 6.35mm; }
+    @page { size: A4 portrait; margin: 8mm 9mm; }
     * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; background: #fff; color: #000; }
-    body { font-family: Roboto, Arial, sans-serif; font-size: 7.2pt; }
-    .print-toolbar { position: sticky; top: 0; z-index: 20; display: flex; justify-content: flex-end; gap: 8px; padding: 10px; background: #eef2ff; border-bottom: 1px solid #c7d2fe; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #111; }
+    body { font-family: "Times New Roman", serif; font-size: 12px; }
+    .print-toolbar { position: sticky; top: 0; z-index: 10; display: flex; justify-content: flex-end; gap: 8px; padding: 10px; background: #eef2ff; border-bottom: 1px solid #c7d2fe; }
     .print-toolbar button { border: 1px solid #94a3b8; background: #fff; border-radius: 7px; padding: 8px 14px; cursor: pointer; font: 600 13px Arial, sans-serif; }
     .print-toolbar button.primary { color: #fff; background: #1d4ed8; border-color: #1d4ed8; }
-    .sheet { width: 197.3mm; margin: 0 auto; }
-    table.form-sheet { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    .form-sheet td, .form-sheet th { border: .75pt solid #000; padding: 0 1.2mm; vertical-align: middle; overflow: hidden; }
-    .form-sheet td { height: 11.34pt; }
-    .center { text-align: center; }
-    .right { text-align: right; }
-    .bold { font-weight: 700; }
-    .company-title { height: 17.82pt; text-align: center; color: #f00; font-size: 10.08pt; font-weight: 700; white-space: nowrap; }
-    .company-line { height: 11.34pt; font-size: 7.2pt; white-space: nowrap; }
-    .logo-cell { padding: 0 1mm !important; vertical-align: top !important; }
-    .logo-cell img { width: 16mm; height: auto; margin-top: 1mm; display: block; }
-    .blank-cell { background: #fff; }
-    .doc-title { font-family: "Times New Roman", serif; font-size: 20.16pt; font-weight: 700; text-align: center; white-space: nowrap; }
-    .delivery-title { font-family: "Times New Roman", serif; font-size: 16.56pt; font-weight: 700; text-align: center; white-space: nowrap; }
-    .date-cell { font-size: 7.2pt; text-align: center; white-space: nowrap; }
-    .code-cell { font-size: 7.92pt; }
-    .info-cell { font-size: 8.64pt; }
-    .intro-cell { font-size: 8.64pt; }
-    .product-head th { height: 18.36pt; background: #a4c2f4; font-size: 8.64pt; font-weight: 700; text-align: center; }
-    .delivery-head th { background: #fff; font-size: 8.64pt; font-weight: 700; text-align: center; }
-    .item-row td { height: 11.34pt; font-size: 8.64pt; }
-    .summary-note { font-size: 7.92pt; vertical-align: middle !important; }
-    .summary-label, .summary-value { height: 11.34pt; font-size: 8.64pt; font-weight: 700; }
-    .summary-value { text-align: center; }
-    .red { color: #f00; }
-    .spacer-row td { height: 5.94pt; }
-    .note-title { font-size: 8.64pt; font-weight: 700; }
-    .note-line { font-size: 7.2pt; line-height: 1.15; }
-    .note-line.tall { height: 17.82pt; }
-    .note-line.taller { height: 18.9pt; }
-    .bank-prompt { font-size: 8.64pt; }
-    .bank-name { font-family: "Times New Roman", serif; font-size: 7.92pt; font-weight: 700; text-align: center; color: #081b3a; }
-    .bank-account { font-family: "Times New Roman", serif; font-size: 8.64pt; font-weight: 700; text-align: center; }
-    .qr-cell { padding: 0 !important; text-align: center; vertical-align: middle !important; }
-    .qr-cell img { width: 21.6mm; height: 24.48mm; object-fit: contain; }
-    .closing { font-size: 7.92pt; }
-    .delivery-note-box { height: 43.2pt !important; font-size: 7.92pt; vertical-align: top !important; padding-top: 2mm !important; white-space: pre-wrap; }
-    .delivery-subhead { height: 25.92pt !important; font-size: 9.36pt; font-weight: 700; text-align: center; line-height: 1.15; }
-    .delivery-legal { font-size: 7.92pt; }
-    .signature-cell { height: 31.32pt !important; font-size: 9.36pt; font-weight: 700; text-align: center; vertical-align: top !important; padding-top: 4mm !important; }
-    .signature-cell small { display: block; margin-top: .7mm; font-size: 7.2pt; font-weight: 400; font-style: italic; }
+    .sheet { width: 192mm; min-height: 275mm; margin: 0 auto; padding: 2mm 1mm; }
+    .header { display: grid; grid-template-columns: 48mm minmax(0, 1fr); align-items: start; gap: 7mm; min-height: 29mm; }
+    .logo { width: 46mm; height: auto; margin-top: 1mm; }
+    .company { text-align: center; font-size: 11px; line-height: 1.45; padding-top: .5mm; }
+    .company strong { display: block; color: #d60000; font-size: 16px; margin-bottom: 2px; }
+    .company-contact { display: grid; grid-template-columns: 1fr 1fr; column-gap: 7mm; }
+    .company-contact span:first-child { text-align: right; }
+    .company-contact span:last-child { text-align: left; }
+    h1 { margin: 3mm 0 2mm; text-align: center; font-size: 24px; line-height: 1.1; text-transform: uppercase; }
+    .meta { display: grid; grid-template-columns: 1fr 72mm; gap: 8mm; margin-bottom: 2mm; }
+    .meta-right { font-size: 12px; line-height: 1.7; }
+    .date-parts { display: grid; grid-template-columns: auto 1fr auto 1fr auto 1.35fr; align-items: baseline; column-gap: 2mm; white-space: nowrap; }
+    .date-value { min-width: 9mm; text-align: center; border-bottom: 1px dotted #777; }
+    .code-row { display: grid; grid-template-columns: 25mm 1fr; column-gap: 2mm; }
+    .info { line-height: 1.75; margin-bottom: 2mm; }
+    .info-row { display: grid; grid-template-columns: 34mm minmax(0, 1fr); min-height: 5mm; }
+    .info-row.two { grid-template-columns: 34mm minmax(0, 1fr) 25mm 42mm; }
+    .info-row.sale { grid-template-columns: 38mm minmax(0, 1fr) 25mm 42mm; }
+    .intro { margin: 1.5mm 0 2mm; line-height: 1.35; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { border: 1px solid #111; padding: 1.2mm 1.4mm; vertical-align: middle; }
+    th { background: #b9d2f6; font-weight: 700; text-align: center; }
+    td.center { text-align: center; }
+    td.right { text-align: right; }
+    .items td { height: 6.3mm; }
+    .summary-label { font-weight: 700; }
+    .summary-value { font-weight: 700; text-align: right; }
+    .grand-total { color: #e00000; }
+    .notes { margin-top: 2.5mm; font-size: 10.5px; line-height: 1.35; }
+    .notes strong { display: block; margin-bottom: 1mm; }
+    .notes p { margin: .8mm 0; }
+    .bottom-grid { display: grid; grid-template-columns: minmax(0, 1fr) 34mm; align-items: end; gap: 6mm; margin-top: 2mm; }
+    .qr-wrap { text-align: center; font: 700 8px Arial, sans-serif; }
+    .qr-wrap img { width: 28mm; height: 28mm; display: block; margin: 1mm auto; }
+    .qr-top { color: #1260a8; white-space: nowrap; }
+    .qr-bank { color: #e11d2e; }
+    .bank-info { margin-top: 2mm; font-size: 11px; line-height: 1.45; }
+    .bank-info strong { display: block; }
+    .closing { margin-top: 4mm; font-size: 11px; }
+    .delivery-title { font-size: 22px; margin-top: 2mm; }
+    .delivery-meta { width: 72mm; margin-left: auto; margin-bottom: 2mm; line-height: 1.7; }
+    .packing-head { background: #fff; }
+    .signatures { margin-top: 12mm; display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; font-weight: 700; font-size: 14px; }
+    .signatures small { display: block; font-weight: 400; font-style: italic; margin-top: 1mm; }
+    .legal-notes { margin-top: 3mm; font-size: 10.5px; line-height: 1.45; }
+    .legal-notes p { margin: .7mm 0; }
     @media screen {
-      body { padding: 12px 0 30px; background: #e5e7eb; }
-      .sheet { background: #fff; box-shadow: 0 8px 30px rgba(15,23,42,.18); }
+      body { padding: 10px 0 30px; background: #e5e7eb; }
+      .sheet { background: #fff; box-shadow: 0 8px 30px rgba(15, 23, 42, .18); }
     }
     @media print {
       .print-toolbar { display: none !important; }
       body { background: #fff; }
-      .sheet { width: 100%; margin: 0; box-shadow: none; }
+      .sheet { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; }
+      thead { display: table-header-group; }
       tr { break-inside: avoid; }
     }
   `
@@ -217,26 +219,33 @@ function pageShell(title: string, body: string) {
   </html>`
 }
 
-function companyRows(assetBase?: string) {
+function headerHtml(assetBase?: string) {
   return `
-    <tr>
-      <td class="logo-cell" colspan="2" rowspan="4"><img src="${absoluteAsset(assetBase, '/kingcup-logo.svg')}" alt="KINGCUP"></td>
-      <td class="blank-cell" rowspan="4"></td>
-      <td class="company-title" colspan="4">CÔNG TY TNHH KINGCUP VIỆT NAM</td>
-    </tr>
-    <tr><td class="company-line" colspan="4">Địa chỉ: Số 01 ngách 17 ngõ 1333 Giải Phóng, Hoàng Mai, TP.Hà Nội, Việt Nam</td></tr>
-    <tr><td class="company-line" colspan="4">Liên hệ: 033.570.2223&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Web: https://baobikingcup.vn/</td></tr>
-    <tr><td class="company-line" colspan="4">Email: vietnamkingcup@gmail.com</td></tr>`
+    <div class="header">
+      <img class="logo" src="${absoluteAsset(assetBase, '/kingcup-logo.svg')}" alt="KINGCUP">
+      <div class="company">
+        <strong>CÔNG TY TNHH KINGCUP VIỆT NAM</strong>
+        <div>Địa chỉ: Số 01 ngách 17 ngõ 1333 Giải Phóng, Hoàng Mai, TP. Hà Nội, Việt Nam</div>
+        <div class="company-contact"><span>Liên hệ: 033.570.2223</span><span>Web: https://baobikingcup.vn/</span></div>
+        <div>Email: vietnamkingcup@gmail.com</div>
+      </div>
+    </div>`
 }
 
-function commercialColumnGroup(kind: CommercialPrintKind) {
-  const widths = kind === 'quotation'
-    ? [9.29, 62.43, 10.43, 14.43, 22.43, 11, 19.29]
-    : kind === 'order'
-      ? [9.29, 62.43, 10.43, 14.43, 25.57, 15, 14.14]
-      : [9.29, 62.43, 10.43, 14.43, 26.86, 11, 15.43]
-  const total = widths.reduce((sum, value) => sum + value, 0)
-  return `<colgroup>${widths.map(value => `<col style="width:${(value / total * 100).toFixed(4)}%">`).join('')}</colgroup>`
+function metaHtml(order: any, dateLabel: string, codeLabel: string, value?: any) {
+  const date = dateParts(value || order.order_date || order.created_at)
+  return `
+    <div class="meta">
+      <div></div>
+      <div class="meta-right">
+        <div class="date-parts">
+          <span>Ngày</span><span class="date-value">${escapeHtml(date.day)}</span>
+          <span>Tháng</span><span class="date-value">${escapeHtml(date.month)}</span>
+          <span>Năm</span><span class="date-value">${escapeHtml(date.year)}</span>
+        </div>
+        <div class="code-row"><strong>${escapeHtml(codeLabel)}</strong><span>${escapeHtml(order.order_code || order.id || '')}</span></div>
+      </div>
+    </div>`
 }
 
 function commercialTerms(kind: CommercialPrintKind, depositPercent: number) {
@@ -244,13 +253,14 @@ function commercialTerms(kind: CommercialPrintKind, depositPercent: number) {
     ? `3. Chính sách Thanh toán: Quý khách vui lòng tạm ứng ${formatNumber(depositPercent)}% giá trị đơn hàng ngay sau khi xác nhận mẫu và báo giá.`
     : '3. Chính sách Thanh toán: Quý khách vui lòng tạm ứng 50% giá trị đơn hàng ngay sau khi xác nhận mẫu và báo giá.'
   const fifth = kind === 'payment'
-    ? '5. Thanh toán trước khi giao hàng'
-    : '5. Tiến độ sản xuất: * Thời gian hoàn thiện cụ thể theo từng đơn hàng, tính từ khi nhận đủ tiền cọc. Lưu ý: Thời gian không bao gồm Thứ 7, Chủ Nhật và các ngày Lễ, Tết theo quy định.'
+    ? '5. Thanh toán trước khi giao hàng.'
+    : '5. Tiến độ sản xuất: Thời gian hoàn thiện cụ thể theo từng đơn hàng, tính từ khi nhận đủ tiền cọc; không bao gồm Thứ 7, Chủ Nhật và các ngày Lễ, Tết theo quy định.'
+
   return [
     '1. Sản phẩm & Pháp lý: Đầy đủ giấy tờ chứng nhận chất lượng và nguồn gốc xuất xứ.',
-    '2. Số lượng sản xuất: Do đặc thù ngành in ấn, số lượng thực tế có thể dao động ±10% so với đơn đặt hàng. Quyết toán sẽ căn cứ trên số lượng thực giao',
+    '2. Số lượng sản xuất: Do đặc thù ngành in ấn, số lượng thực tế có thể dao động ±10% so với đơn đặt hàng. Quyết toán sẽ căn cứ trên số lượng thực giao.',
     third,
-    '4. Báo giá & Thuế: * Giá niêm yết đã bao gồm thuế VAT. Báo giá có hiệu lực tại thời điểm cung cấp và hỗ trợ giữ giá trong vòng 03 ngày.',
+    '4. Báo giá & Thuế: Giá niêm yết đã bao gồm thuế VAT. Báo giá có hiệu lực tại thời điểm cung cấp và hỗ trợ giữ giá trong vòng 03 ngày.',
     fifth,
   ]
 }
@@ -258,7 +268,6 @@ function commercialTerms(kind: CommercialPrintKind, depositPercent: number) {
 export function buildCommercialPrintHtml(options: CommercialPrintOptions) {
   const { kind, order, items, customer, assetBase } = options
   const rows = flattenOrderItems(items)
-  const printedRows = padRows(rows, 15)
   const info = customerData(order, customer)
   const subtotal = toNumber(order.subtotal_no_vat) || rows.reduce((sum: number, item: any) => sum + item.lineTotal, 0)
   const vatRate = toNumber(order.vat_rate)
@@ -268,31 +277,31 @@ export function buildCommercialPrintHtml(options: CommercialPrintOptions) {
   const orderDeposit = total * depositPercent / 100
   const paymentDeposit = Math.max(0, toNumber(options.paymentDepositAmount))
   const paymentRemaining = Math.max(0, total - paymentDeposit)
-  const date = dateParts(order.order_date || order.created_at)
   const title = kind === 'quotation' ? 'PHIẾU BÁO GIÁ' : kind === 'order' ? 'PHIẾU ĐẶT HÀNG' : 'PHIẾU THANH TOÁN'
   const codeLabel = kind === 'quotation' ? 'Số BG:' : 'Mã ĐH:'
+  const dateLabel = kind === 'quotation' ? 'Ngày BG' : 'Ngày ĐH'
   const intro = kind === 'quotation'
-    ? 'Chúng tôi xin gửi tới đến quý khách hàng báo giá chi tiết như sau:'
+    ? 'Chúng tôi xin gửi tới quý khách hàng báo giá chi tiết như sau:'
     : kind === 'order'
-      ? 'Chúng tôi xin gửi tới đến quý khách hàng nội dung đặt hàng chi tiết như sau:'
-      : 'Chúng tôi xin gửi tới đến quý khách hàng nội dung thanh toán chi tiết như sau:'
+      ? 'Chúng tôi xin gửi tới quý khách hàng nội dung đặt hàng chi tiết như sau:'
+      : 'Chúng tôi xin gửi tới quý khách hàng nội dung thanh toán chi tiết như sau:'
   const saleName = order.sale_name || order.sale_display_name || ''
   const salePhone = order.sale_phone || order.sale_phone_number || ''
-  const itemRows = printedRows.map((item: any, index) => `
-    <tr class="item-row">
+  const itemRows = rows.map((item: any, index) => `
+    <tr>
       <td class="center">${index + 1}</td>
-      <td>${item ? escapeHtml(productDisplayName(item)) : ''}</td>
-      <td class="center">${item ? escapeHtml(item.unit || '') : ''}</td>
-      <td class="center">${item ? formatNumber(item.quantity) : ''}</td>
-      <td class="right">${item ? formatMoney(item.unitPrice) : ''}</td>
-      <td class="center" colspan="2">${item ? formatMoney(item.lineTotal) : '0'}</td>
+      <td>${escapeHtml(productDisplayName(item))}</td>
+      <td class="center">${escapeHtml(item.unit || '')}</td>
+      <td class="right">${formatNumber(item.quantity)}</td>
+      <td class="right">${formatMoney(item.unitPrice)}</td>
+      <td class="right">${formatMoney(item.lineTotal)}</td>
     </tr>`).join('')
 
   const extraSummaryRows = kind === 'order'
-    ? `<tr><td class="summary-label">Số tiền cần đặt cọc (${formatNumber(depositPercent)}%)</td><td class="summary-value red" colspan="2">${formatMoney(orderDeposit)}</td></tr>`
+    ? `<tr><td class="summary-label">Số tiền cần đặt cọc (${formatNumber(depositPercent)}%)</td><td class="summary-value grand-total">${formatMoney(orderDeposit)}</td></tr>`
     : kind === 'payment'
-      ? `<tr><td class="summary-label">Số tiền cần đặt cọc</td><td class="summary-value" colspan="2">${formatMoney(paymentDeposit)}</td></tr>
-         <tr><td class="summary-label">Số tiền cần thanh toán</td><td class="summary-value red" colspan="2">${formatMoney(paymentRemaining)}</td></tr>`
+      ? `<tr><td class="summary-label">Số tiền cần đặt cọc</td><td class="summary-value">${formatMoney(paymentDeposit)}</td></tr>
+         <tr><td class="summary-label">Số tiền cần thanh toán</td><td class="summary-value grand-total">${formatMoney(paymentRemaining)}</td></tr>`
       : ''
   const summaryRowspan = kind === 'quotation' ? 3 : kind === 'order' ? 4 : 5
   const terms = commercialTerms(kind, depositPercent)
@@ -301,59 +310,55 @@ export function buildCommercialPrintHtml(options: CommercialPrintOptions) {
     : kind === 'order'
       ? 'Quý khách xin vui lòng thanh toán tiền cọc theo thông tin sau:'
       : 'Quý khách vui lòng thanh toán số tiền còn lại theo thông tin sau:'
-  const qrStartRowspan = 6
 
   return pageShell(`${title} - ${order.order_code || ''}`, `
     <section class="sheet">
-      <table class="form-sheet">
-        ${commercialColumnGroup(kind)}
+      ${headerHtml(assetBase)}
+      <h1>${title}</h1>
+      ${metaHtml(order, dateLabel, codeLabel)}
+      <div class="info">
+        <div class="info-row"><strong>Tên Công ty/HKD:</strong><span>${escapeHtml(info.company)}</span></div>
+        <div class="info-row"><strong>Mã số thuế:</strong><span>${escapeHtml(info.taxCode)}</span></div>
+        <div class="info-row two"><strong>Người đặt hàng:</strong><span>${escapeHtml(info.contact)}</span><strong>SĐT:</strong><span>${escapeHtml(info.phone)}</span></div>
+        <div class="info-row"><strong>Địa chỉ hóa đơn:</strong><span>${escapeHtml(info.billingAddress)}</span></div>
+        <div class="info-row"><strong>Địa chỉ giao hàng:</strong><span>${escapeHtml(info.shippingAddress)}</span></div>
+        <div class="info-row sale"><strong>Nhân viên kinh doanh:</strong><span>${escapeHtml(saleName)}</span><strong>SĐT:</strong><span>${escapeHtml(salePhone)}</span></div>
+      </div>
+      <div class="intro">
+        <div>Lời đầu tiên, KingCup Việt Nam xin trân trọng cảm ơn quý khách đã quan tâm tới sản phẩm của công ty chúng tôi.</div>
+        <div>${intro}</div>
+      </div>
+      <table class="items">
+        <colgroup><col style="width:7%"><col style="width:43%"><col style="width:8%"><col style="width:10%"><col style="width:15%"><col style="width:17%"></colgroup>
+        <thead><tr><th>STT</th><th>TÊN SẢN PHẨM</th><th>ĐVT</th><th>SỐ LƯỢNG</th><th>ĐƠN GIÁ</th><th>THÀNH TIỀN</th></tr></thead>
         <tbody>
-          ${companyRows(assetBase)}
-          <tr><td colspan="7" style="height:11.34pt"></td></tr>
-          <tr>
-            <td></td>
-            <td class="doc-title" colspan="3" rowspan="2">${title}</td>
-            <td class="date-cell" colspan="3">Ngày&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${escapeHtml(date.day)}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Tháng&nbsp;&nbsp;&nbsp;&nbsp;${escapeHtml(date.month)}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Năm&nbsp;&nbsp;&nbsp;&nbsp;${escapeHtml(date.year)}</td>
-          </tr>
-          <tr><td></td><td class="code-cell right" colspan="3"><strong>${codeLabel}</strong>&nbsp; ${escapeHtml(order.order_code || order.id || '')}</td></tr>
-          <tr><td class="info-cell" colspan="7"><strong>Tên Công ty/HKD:</strong>&nbsp; ${escapeHtml(info.company)}</td></tr>
-          <tr><td class="info-cell" colspan="7"><strong>Mã số thuế:</strong>&nbsp; ${escapeHtml(info.taxCode)}</td></tr>
-          <tr><td class="info-cell" colspan="4"><strong>Người đặt hàng:</strong>&nbsp; ${escapeHtml(info.contact)}</td><td class="info-cell" colspan="3"><strong>SĐT:</strong>&nbsp; ${escapeHtml(info.phone)}</td></tr>
-          <tr><td class="info-cell" colspan="7"><strong>Địa chỉ hóa đơn:</strong>&nbsp; ${escapeHtml(info.billingAddress)}</td></tr>
-          <tr><td class="info-cell" colspan="7"><strong>Địa chỉ giao hàng:</strong>&nbsp; ${escapeHtml(info.shippingAddress)}</td></tr>
-          <tr><td class="info-cell" colspan="4"><strong>Nhân viên kinh doanh:</strong>&nbsp; ${escapeHtml(saleName)}</td><td class="info-cell" colspan="3"><strong>SĐT:</strong>&nbsp; ${escapeHtml(salePhone)}</td></tr>
-          <tr><td class="intro-cell" colspan="7">Lời đầu tiên, KingCup Việt Nam xin trân trọng cảm ơn quý khách đã quan tâm tới sản phẩm của công ty chúng tôi.</td></tr>
-          <tr><td class="intro-cell" colspan="7">${intro}</td></tr>
-          <tr class="product-head"><th>STT</th><th>TÊN SẢN PHẨM</th><th>ĐVT</th><th>SỐ LƯỢNG</th><th>ĐƠN GIÁ</th><th colspan="2">THÀNH TIỀN</th></tr>
           ${itemRows}
-          <tr>
-            <td class="summary-note" colspan="4" rowspan="${summaryRowspan}"><strong>Ghi Chú:</strong> ${escapeHtml(order.note || 'Đơn giá chưa bao gồm vận chuyển')}</td>
-            <td class="summary-label">Cộng tiền hàng</td><td class="summary-value" colspan="2">${formatMoney(subtotal)}</td>
-          </tr>
-          <tr><td class="summary-label">Thuế VAT (${formatNumber(vatRate)}%)</td><td class="summary-value" colspan="2">${formatMoney(vatAmount)}</td></tr>
-          <tr><td class="summary-label">Thành tiền</td><td class="summary-value red" colspan="2">${formatMoney(total)}</td></tr>
+          <tr><td colspan="4" rowspan="${summaryRowspan}"><strong>Ghi chú:</strong> ${escapeHtml(order.note || 'Đơn giá chưa bao gồm vận chuyển')}</td><td class="summary-label">Cộng tiền hàng</td><td class="summary-value">${formatMoney(subtotal)}</td></tr>
+          <tr><td class="summary-label">Thuế VAT (${formatNumber(vatRate)}%)</td><td class="summary-value">${formatMoney(vatAmount)}</td></tr>
+          <tr><td class="summary-label">Thành tiền</td><td class="summary-value grand-total">${formatMoney(total)}</td></tr>
           ${extraSummaryRows}
-          <tr class="spacer-row"><td colspan="7"></td></tr>
-          <tr><td class="note-title" colspan="7">Lưu ý:</td></tr>
-          <tr><td class="note-line" colspan="7">${escapeHtml(terms[0])}</td></tr>
-          <tr><td class="note-line tall" colspan="7">${escapeHtml(terms[1])}</td></tr>
-          <tr><td class="note-line" colspan="7">${escapeHtml(terms[2])}</td></tr>
-          <tr><td class="note-line tall" colspan="5">${escapeHtml(terms[3])}</td><td class="qr-cell" colspan="2" rowspan="${qrStartRowspan}"><img src="${absoluteAsset(assetBase, '/kingcup-bank-qr.svg')}" alt="QR thanh toán"></td></tr>
-          <tr><td class="note-line taller" colspan="5">${escapeHtml(terms[4])}</td></tr>
-          <tr><td class="bank-prompt" colspan="5">${escapeHtml(bankPrompt)}</td></tr>
-          <tr><td class="bank-name" colspan="2">CÔNG TY TNHH KINGCUP VIỆT NAM</td><td colspan="3"></td></tr>
-          <tr><td class="bank-account" colspan="2">STK: 5699 8899 - Techcombank</td><td colspan="3"></td></tr>
-          <tr><td colspan="5"></td></tr>
-          <tr><td class="closing" colspan="7">Chúng tôi rất mong muốn nhận được sự hồi âm của Quý khách hàng trong thời gian sớm nhất. Chân thành cảm ơn!</td></tr>
         </tbody>
       </table>
+      <div class="bottom-grid">
+        <div>
+          <div class="notes">
+            <strong>Lưu ý:</strong>
+            ${terms.map(term => `<p>${escapeHtml(term)}</p>`).join('')}
+          </div>
+          <div class="bank-info">
+            <div>${escapeHtml(bankPrompt)}</div>
+            <strong>CÔNG TY TNHH KINGCUP VIỆT NAM</strong>
+            <strong>STK: 5699 8899 - Techcombank</strong>
+          </div>
+        </div>
+        <div class="qr-wrap">
+          <div class="qr-top">VIETQR · napas 247</div>
+          <img src="${absoluteAsset(assetBase, '/kingcup-bank-qr.svg')}" alt="QR thanh toán">
+          <div class="qr-bank">TECHCOMBANK</div>
+        </div>
+      </div>
+      <div class="closing">Chúng tôi rất mong muốn nhận được sự hồi âm của Quý khách hàng trong thời gian sớm nhất. Chân thành cảm ơn!</div>
     </section>`)
-}
-
-function deliveryColumnGroup() {
-  const widths = [9.29, 44.86, 10.43, 14.43, 17.71, 14.86, 21]
-  const total = widths.reduce((sum, value) => sum + value, 0)
-  return `<colgroup>${widths.map(value => `<col style="width:${(value / total * 100).toFixed(4)}%">`).join('')}</colgroup>`
 }
 
 function packingNumber(value: any) {
@@ -365,17 +370,12 @@ export function buildDeliveryPrintHtml(options: DeliveryPrintOptions) {
   const { order, request, customer, warehouseName, assetBase } = options
   const info = customerData(order, customer)
   const rows = (options.rows || []).filter(row => row.productName || row.productCode || toNumber(row.quantity))
-  const printedRows = padRows(rows, 15)
-  const date = dateParts(request.export_date || request.warehouse_handled_at || request.updated_at || request.requested_at || order.order_date)
   const note = safeJsonParse(request.payload_json, {}).note || request.warehouse_note || ''
   const saleName = order.sale_name || order.sale_display_name || safeJsonParse(request.payload_json, {}).sale_name || ''
   const salePhone = order.sale_phone || order.sale_phone_number || ''
   let totalQuantity = 0
   let totalBoxes = 0
-  const itemRows = printedRows.map((item: DeliveryPrintRow | null, index) => {
-    if (!item) {
-      return `<tr class="item-row"><td class="center">${index + 1}</td><td></td><td></td><td></td><td></td><td></td><td class="center">0</td></tr>`
-    }
+  const itemRows = rows.map((item: DeliveryPrintRow, index) => {
     const quantity = toNumber(item.quantity)
     const standard = packingNumber(item.packingStandard)
     const boxes = toNumber(item.boxQuantity) || (standard > 0 ? Math.floor(quantity / standard) : 0)
@@ -383,47 +383,59 @@ export function buildDeliveryPrintHtml(options: DeliveryPrintOptions) {
     totalQuantity += quantity
     totalBoxes += boxes
     const name = item.logo ? `${item.productName || item.productCode} - Logo: ${item.logo}` : (item.productName || item.productCode || '')
-    return `<tr class="item-row">
+    return `<tr>
       <td class="center">${index + 1}</td>
       <td>${escapeHtml(name)}</td>
       <td class="center">${escapeHtml(item.unit || '')}</td>
-      <td class="center">${formatNumber(quantity)}</td>
-      <td class="center">${standard ? formatNumber(standard) : escapeHtml(item.packingStandard || '')}</td>
-      <td class="center">${boxes ? formatNumber(boxes) : ''}</td>
-      <td class="center">${odd ? formatNumber(odd) : '0'}</td>
+      <td class="right">${formatNumber(quantity)}</td>
+      <td class="right">${standard ? formatNumber(standard) : escapeHtml(item.packingStandard || '')}</td>
+      <td class="right">${boxes ? formatNumber(boxes) : ''}</td>
+      <td class="right">${odd ? formatNumber(odd) : ''}</td>
     </tr>`
   }).join('')
 
+  const exportDate = request.export_date || request.warehouse_handled_at || request.updated_at || request.requested_at || order.order_date
+
   return pageShell(`Phiếu xuất kho - ${request.request_id || order.order_code || ''}`, `
     <section class="sheet">
-      <table class="form-sheet">
-        ${deliveryColumnGroup()}
+      ${headerHtml(assetBase)}
+      <h1 class="delivery-title">PHIẾU XUẤT KHO VÀ BIÊN BẢN BÀN GIAO</h1>
+      <div class="delivery-meta">
+        ${metaHtml(order, 'Ngày', 'Mã ĐH:', exportDate).replace('<div class="meta">', '<div class="meta" style="display:block;margin:0">').replace('<div></div>', '')}
+      </div>
+      <div class="info">
+        <div class="info-row"><strong>Tên Công ty/HKD:</strong><span>${escapeHtml(info.company)}</span></div>
+        <div class="info-row two"><strong>Họ tên người nhận:</strong><span>${escapeHtml(info.contact)}</span><strong>Số điện thoại:</strong><span>${escapeHtml(info.phone)}</span></div>
+        <div class="info-row"><strong>Địa chỉ người nhận:</strong><span>${escapeHtml(info.shippingAddress || info.billingAddress)}</span></div>
+        <div class="info-row"><strong>Lý do xuất kho:</strong><span>Xuất kho bán hàng cho ${escapeHtml(info.company || info.contact)}</span></div>
+        <div class="info-row"><strong>Xuất tại kho:</strong><span>${escapeHtml(warehouseName || '')}</span></div>
+        <div class="info-row sale"><strong>Nhân viên kinh doanh:</strong><span>${escapeHtml(saleName)}</span><strong>SĐT:</strong><span>${escapeHtml(salePhone)}</span></div>
+        ${note ? `<div class="info-row"><strong>Ghi chú:</strong><span>${escapeHtml(note)}</span></div>` : ''}
+      </div>
+      <table class="items">
+        <colgroup><col style="width:7%"><col style="width:34%"><col style="width:8%"><col style="width:11%"><col style="width:14%"><col style="width:13%"><col style="width:13%"></colgroup>
+        <thead>
+          <tr><th rowspan="2">STT</th><th rowspan="2">TÊN HÀNG</th><th rowspan="2">ĐVT</th><th rowspan="2">SỐ LƯỢNG</th><th colspan="3" class="packing-head">DIỄN GIẢI ĐÓNG GÓI</th></tr>
+          <tr><th>Quy cách<br>(chiếc/thùng)</th><th>Số thùng</th><th>Số dư lẻ<br>(chiếc)</th></tr>
+        </thead>
         <tbody>
-          ${companyRows(assetBase)}
-          <tr><td class="delivery-title" colspan="7" style="height:43.2pt">PHIẾU XUẤT KHO VÀ BIÊN BẢN BÀN GIAO</td></tr>
-          <tr><td colspan="4"></td><td class="date-cell" colspan="3">Ngày&nbsp;&nbsp;${escapeHtml(date.day)}&nbsp;&nbsp;&nbsp;Tháng&nbsp;&nbsp;${escapeHtml(date.month)}&nbsp;&nbsp;&nbsp;Năm&nbsp;&nbsp;${escapeHtml(date.year)}</td></tr>
-          <tr><td colspan="4"></td><td class="code-cell" colspan="3"><strong>Mã ĐH:</strong>&nbsp; ${escapeHtml(order.order_code || order.id || '')}</td></tr>
-          <tr><td class="info-cell" colspan="7"><strong>Tên Công ty/HKD:</strong>&nbsp; ${escapeHtml(info.company)}</td></tr>
-          <tr><td class="info-cell" colspan="4"><strong>Họ tên người nhận hàng:</strong>&nbsp; ${escapeHtml(info.contact)}</td><td class="info-cell" colspan="3"><strong>Số điện thoại:</strong>&nbsp; ${escapeHtml(info.phone)}</td></tr>
-          <tr><td class="info-cell" colspan="7"><strong>Địa chỉ người nhận:</strong>&nbsp; ${escapeHtml(info.shippingAddress || info.billingAddress)}</td></tr>
-          <tr><td class="info-cell" colspan="7"><strong>Lý do xuất kho:</strong>&nbsp; Xuất kho bán hàng cho ${escapeHtml(info.company || info.contact)}</td></tr>
-          <tr><td class="info-cell" colspan="7"><strong>Xuất tại kho:</strong>&nbsp; ${escapeHtml(warehouseName || '')}</td></tr>
-          <tr><td class="info-cell" colspan="4"><strong>Nhân viên kinh doanh:</strong>&nbsp; ${escapeHtml(saleName)}</td><td class="info-cell" colspan="3"><strong>SĐT:</strong>&nbsp; ${escapeHtml(salePhone)}</td></tr>
-          <tr><td class="delivery-note-box" colspan="7"><strong>LƯU Ý:</strong>&nbsp; ${escapeHtml(note)}</td></tr>
-          <tr class="delivery-head"><th rowspan="2">STT</th><th rowspan="2">TÊN HÀNG</th><th rowspan="2">ĐVT</th><th rowspan="2">Số lượng</th><th colspan="3">Diễn giải đóng gói</th></tr>
-          <tr class="delivery-head"><th class="delivery-subhead">Quy cách<br>(chiếc/thùng)</th><th class="delivery-subhead">Số thùng</th><th class="delivery-subhead">Số dư lẻ<br>(Chiếc)</th></tr>
           ${itemRows}
-          <tr><td></td><td class="center bold" style="font-size:12.96pt">Cộng</td><td class="center bold" style="font-size:12.96pt">x</td><td class="center bold">${formatNumber(totalQuantity)}</td><td></td><td class="center bold">${totalBoxes ? formatNumber(totalBoxes) : ''}</td><td></td></tr>
-          <tr class="spacer-row"><td colspan="7"></td></tr>
-          <tr><td class="note-title" colspan="7">Lưu ý:</td></tr>
-          <tr><td class="delivery-legal" colspan="7">- Biên bản này được xác nhận bởi hai bên.</td></tr>
-          <tr><td class="delivery-legal" colspan="7">- Người nhận kiểm tra sản lượng ngay tại thời điểm bàn giao hàng hóa. Khiếu nại phát sinh bên bán không xử lí.</td></tr>
-          <tr><td class="delivery-legal" colspan="7">- Người nhận xác nhận bên bán đã giao đúng loại hàng và số lượng hàng như trên.</td></tr>
-          <tr><td class="delivery-legal" colspan="7">- Phiếu xuất kho được làm thành 2 bản mỗi bên giữ một bản có giá trị pháp lí như nhau.</td></tr>
-          <tr><td class="delivery-legal" colspan="7">* Lưu ý: Trường hợp hàng hóa thiếu, nhầm bên nhận khiếu nại thời gian không quá 2 ngày.</td></tr>
-          <tr><td></td><td class="signature-cell" colspan="2">Thủ kho<small>(Ký, họ tên)</small></td><td class="signature-cell" colspan="2">Người giao hàng<small>(Ký, họ tên)</small></td><td class="signature-cell" colspan="2">Người nhận hàng<small>(Ký, họ tên)</small></td></tr>
+          <tr><td></td><td class="center"><strong>Cộng</strong></td><td class="center"><strong>x</strong></td><td class="right"><strong>${formatNumber(totalQuantity)}</strong></td><td></td><td class="right"><strong>${totalBoxes ? formatNumber(totalBoxes) : ''}</strong></td><td></td></tr>
         </tbody>
       </table>
+      <div class="legal-notes">
+        <strong>Lưu ý:</strong>
+        <p>- Biên bản này được xác nhận bởi hai bên.</p>
+        <p>- Người nhận kiểm tra sản lượng ngay tại thời điểm bàn giao hàng hóa. Khiếu nại phát sinh sau bàn giao bên bán không xử lý.</p>
+        <p>- Người nhận xác nhận bên bán đã giao đúng loại hàng và số lượng hàng như trên.</p>
+        <p>- Phiếu xuất kho được làm thành 02 bản, mỗi bên giữ 01 bản có giá trị pháp lý như nhau.</p>
+        <p>* Trường hợp hàng hóa thiếu, nhầm, bên nhận khiếu nại trong thời gian không quá 02 ngày.</p>
+      </div>
+      <div class="signatures">
+        <div>Thủ kho<small>(Ký, họ tên)</small></div>
+        <div>Người giao hàng<small>(Ký, họ tên)</small></div>
+        <div>Người nhận hàng<small>(Ký, họ tên)</small></div>
+      </div>
     </section>`)
 }
 
