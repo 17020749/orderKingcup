@@ -39,6 +39,7 @@ const commonLabels: Record<string, string> = {
   company_name: 'Tên công ty',
   phone: 'Số điện thoại',
   email: 'Email',
+  user_code: 'Mã người dùng',
   tax_code: 'Mã số thuế',
   billing_address: 'Địa chỉ hóa đơn',
   shipping_address: 'Địa chỉ giao hàng',

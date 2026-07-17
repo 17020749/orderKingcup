@@ -74,9 +74,9 @@ async function seed() {
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore()
     await Promise.all([
-      setDoc(doc(db, 'users', A), { email: A, active: true, deleted: false, permissions_flat: userPermissions }),
-      setDoc(doc(db, 'users', B), { email: B, active: true, deleted: false, permissions_flat: userPermissions }),
-      setDoc(doc(db, 'users', ADMIN), { email: ADMIN, active: true, deleted: false, is_admin: true, permissions_flat: ['*'] }),
+      setDoc(doc(db, 'users', A), { email: A, user_code: 'A01', active: true, deleted: false, permissions_flat: userPermissions }),
+      setDoc(doc(db, 'users', B), { email: B, user_code: 'B01', active: true, deleted: false, permissions_flat: userPermissions }),
+      setDoc(doc(db, 'users', ADMIN), { email: ADMIN, user_code: 'ADM', active: true, deleted: false, is_admin: true, permissions_flat: ['*'] }),
       setDoc(doc(db, 'users', WAREHOUSE), { email: WAREHOUSE, active: true, deleted: false, permissions_flat: ['export_requests.process'] }),
       setDoc(doc(db, 'users', WAREHOUSE_PAGE), {
         email: WAREHOUSE_PAGE,
@@ -584,6 +584,85 @@ test('Admin đọc và sửa dữ liệu của mọi user', async () => {
   const db = env.authenticatedContext(ADMIN, { email: ADMIN }).firestore()
   await assertSucceeds(getDoc(doc(db, 'payments', 'payment-b')))
   await assertSucceeds(updateDoc(doc(db, 'users', A), { display_name: 'Updated by admin' }))
+})
+
+test('Mã người dùng mới phải được giữ chỗ và không được trùng', async () => {
+  const db = env.authenticatedContext(ADMIN, { email: ADMIN }).firestore()
+  const firstEmail = 'new-user@example.com'
+  const secondEmail = 'other-user@example.com'
+
+  await assertFails(setDoc(doc(db, 'users', firstEmail), {
+    email: firstEmail,
+    user_code: 'NV01',
+    active: true,
+    deleted: false
+  }))
+
+  const createBatch = writeBatch(db)
+  createBatch.set(doc(db, 'user_codes', 'NV01'), {
+    user_code: 'NV01', email: firstEmail, active: true, deleted: false
+  })
+  createBatch.set(doc(db, 'order_sequences', firstEmail), {
+    user_email: firstEmail, user_code: 'NV01', last_number: 999, updated_by: ADMIN
+  })
+  createBatch.set(doc(db, 'users', firstEmail), {
+    email: firstEmail, user_code: 'NV01', active: true, deleted: false
+  })
+  await assertSucceeds(createBatch.commit())
+
+  await assertFails(setDoc(doc(db, 'users', secondEmail), {
+    email: secondEmail,
+    user_code: 'NV01',
+    active: true,
+    deleted: false
+  }))
+})
+
+test('Mã đơn tăng riêng theo counter của người tạo và không được dùng lại số cũ', async () => {
+  const db = env.authenticatedContext(A, { email: A }).firestore()
+  const firstCode = '260717A011000'
+  const secondCode = '260717A011001'
+
+  const firstBatch = writeBatch(db)
+  firstBatch.set(doc(db, 'order_sequences', A), {
+    user_email: A,
+    user_code: 'A01',
+    last_number: 1000,
+    updated_by: A
+  })
+  firstBatch.set(doc(db, 'orders', 'numbered-order-1'), {
+    ...order(A, firstCode),
+    id: 'numbered-order-1',
+    user_code: 'A01',
+    order_sequence: 1000
+  })
+  await assertSucceeds(firstBatch.commit())
+
+  const secondBatch = writeBatch(db)
+  secondBatch.update(doc(db, 'order_sequences', A), {
+    user_code: 'A01',
+    last_number: 1001,
+    updated_by: A
+  })
+  secondBatch.set(doc(db, 'orders', 'numbered-order-2'), {
+    ...order(A, secondCode),
+    id: 'numbered-order-2',
+    user_code: 'A01',
+    order_sequence: 1001
+  })
+  await assertSucceeds(secondBatch.commit())
+
+  await assertFails(setDoc(doc(db, 'orders', 'numbered-order-reused'), {
+    ...order(A, secondCode),
+    id: 'numbered-order-reused',
+    user_code: 'A01',
+    order_sequence: 1001
+  }))
+
+  await assertFails(updateDoc(doc(db, 'order_sequences', A), {
+    last_number: 1003,
+    updated_by: A
+  }))
 })
 
 
