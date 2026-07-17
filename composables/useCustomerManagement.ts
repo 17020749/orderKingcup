@@ -1,7 +1,7 @@
 import { collection, doc, runTransaction, serverTimestamp } from 'firebase/firestore'
 import type { CustomerDoc } from '~/types/models'
 import { generateCustomerCode, isValidCustomerCode } from '~/utils/customerCode'
-import { makeId, normalizeEmail, normalizeText } from '~/utils/format'
+import { normalizeEmail, normalizeText } from '~/utils/format'
 import { invalidateScopedCache } from '~/composables/useScopedQueries'
 
 type CustomerInput = Partial<CustomerDoc> & Record<string, any>
@@ -36,8 +36,12 @@ export function useCustomerManagement() {
     const customerName = String(data.customer_name || '').trim()
     if (!customerName) throw new Error('Thiếu tên khách hàng.')
 
-    let customerId = existing?.id || String(data.id || makeId('cus'))
     const isCreate = !existing
+    const customerId = isCreate
+      ? doc(collection(db, 'customers')).id
+      : String(existing?.id || existing?.firestore_id || data.id || '')
+    if (!customerId) throw new Error('Không xác định được khách hàng cần cập nhật.')
+
     const currentCode = String(existing?.customer_code || '').trim().toUpperCase()
     const preferredCode = String(data.customer_code || '').trim().toUpperCase()
     const maxAttempts = currentCode ? 1 : 12
@@ -52,12 +56,13 @@ export function useCustomerManagement() {
 
       try {
         await runTransaction(db, async transaction => {
-          const [customerSnapshot, codeSnapshot] = await Promise.all([
-            transaction.get(customerRef),
-            transaction.get(codeRef),
-          ])
+          // Customer reads are owner-scoped by Firestore Rules. Reading a new,
+          // non-existent customer before create is therefore rejected for a
+          // delegated user because the document has no created_by field yet.
+          // Firestore auto IDs avoid the need for that pre-read; only the
+          // customer-code reservation must be checked for collisions.
+          const codeSnapshot = await transaction.get(codeRef)
 
-          if (isCreate && customerSnapshot.exists()) throw new Error('CUSTOMER_ID_COLLISION')
           if (codeSnapshot.exists() && codeSnapshot.data().customer_id !== customerId) {
             throw new Error('CUSTOMER_CODE_COLLISION')
           }
@@ -112,10 +117,7 @@ export function useCustomerManagement() {
         invalidateScopedCache('activity_logs')
         return localCustomer(data, customerId, customerCode, isCreate)
       } catch (error: any) {
-        if (error?.message === 'CUSTOMER_ID_COLLISION' && isCreate) {
-          customerId = makeId('cus')
-        }
-        if (['CUSTOMER_CODE_COLLISION', 'CUSTOMER_ID_COLLISION'].includes(error?.message) && attempt + 1 < maxAttempts) {
+        if (error?.message === 'CUSTOMER_CODE_COLLISION' && attempt + 1 < maxAttempts) {
           continue
         }
         throw error
