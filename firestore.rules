@@ -1267,9 +1267,21 @@ service cloud.firestore {
         && printOrderSourceMatches(request.resource.data)
         && ownEmailField(request.resource.data, 'created_by');
 
+      // Check the soft-delete shape first so users with both edit and delete
+      // permissions do not exhaust the Rules expression budget on the edit path.
       allow update: if isAdmin()
         || (
-          hasPerm('printing.edit')
+          warehouseSoftDeleteOnly()
+          && hasPerm('printing.delete')
+          && (
+            hasPerm('printing.view_all')
+            || ownsPrintOrderData(resource.data)
+          )
+          && warehouseDocIdentitySafe()
+        )
+        || (
+          unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
+          && hasPerm('printing.edit')
           && (
             hasPerm('printing.view_all')
             || ownsPrintOrderData(resource.data)
@@ -1278,16 +1290,6 @@ service cloud.firestore {
           && request.resource.data.get('order_code', '') is string
           && request.resource.data.get('order_code', '') != ''
           && printOrderSourceMatches(request.resource.data)
-          && unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
-        )
-        || (
-          hasPerm('printing.delete')
-          && (
-            hasPerm('printing.view_all')
-            || ownsPrintOrderData(resource.data)
-          )
-          && warehouseDocIdentitySafe()
-          && warehouseSoftDeleteOnly()
         );
 
       allow delete: if isAdmin();
@@ -1305,21 +1307,22 @@ service cloud.firestore {
         && printQuantitiesAreValid(request.resource.data)
         && ownEmailField(request.resource.data, 'created_by');
 
+      // As with print_orders, evaluate the delete shape before the edit path.
       allow update: if isAdmin()
         || (
-          hasPerm('printing.edit')
-          && resource.data.print_order_id is string
-          && printingCanOperateProgressAfterById(resource.data.print_order_id)
-          && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
-          && unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
-          && printQuantitiesAreValid(request.resource.data)
-        )
-        || (
-          hasPerm('printing.delete')
+          warehouseSoftDeleteOnly()
+          && hasPerm('printing.delete')
           && resource.data.print_order_id is string
           && printingCanDeleteProgressAfterById(resource.data.print_order_id)
           && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
-          && warehouseSoftDeleteOnly()
+        )
+        || (
+          unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
+          && hasPerm('printing.edit')
+          && resource.data.print_order_id is string
+          && printingCanOperateProgressAfterById(resource.data.print_order_id)
+          && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
+          && printQuantitiesAreValid(request.resource.data)
         );
 
       allow delete: if isAdmin();
