@@ -633,6 +633,29 @@ service cloud.firestore {
         && data.get('order_code', '') == get(path).data.get('order_code', '');
     }
 
+    function printOrderPath(printOrderId) {
+      return /databases/$(database)/documents/print_orders/$(printOrderId);
+    }
+
+    function ownsPrintOrderData(data) {
+      return ownEmailField(data, 'created_by');
+    }
+
+    function ownsPrintOrderAfterById(printOrderId) {
+      let path = printOrderPath(printOrderId);
+      return printOrderId is string
+        && printOrderId != ''
+        && existsAfter(path)
+        && ownsPrintOrderData(getAfter(path).data);
+    }
+
+    function ownsActivePrintOrderAfterById(printOrderId) {
+      let path = printOrderPath(printOrderId);
+      return ownsPrintOrderAfterById(printOrderId)
+        && getAfter(path).data.get('deleted', false) != true
+        && getAfter(path).data.get('active', true) != false;
+    }
+
     function balanceQuantityIsSafe() {
       return quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) >= 0;

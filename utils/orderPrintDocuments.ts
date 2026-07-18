@@ -151,8 +151,8 @@ function commonCss() {
     h1 { margin: 3mm 0 2mm; text-align: center; font-size: 24px; line-height: 1.1; text-transform: uppercase; }
     .meta { display: grid; grid-template-columns: 1fr 72mm; gap: 8mm; margin-bottom: 2mm; }
     .meta-right { font-size: 12px; line-height: 1.7; }
-    .date-parts { display: grid; grid-template-columns: auto 1fr auto 1fr auto 1.35fr; align-items: baseline; column-gap: 2mm; white-space: nowrap; }
-    .date-value { min-width: 9mm; text-align: center; border-bottom: 1px dotted #777; }
+    .date-parts { display: inline-grid; grid-template-columns: auto 8mm auto 8mm auto 13mm; align-items: baseline; column-gap: 1mm; white-space: nowrap; }
+    .date-value { min-width: 0; text-align: center; border-bottom: 0; }
     .code-row { display: grid; grid-template-columns: 25mm 1fr; column-gap: 2mm; }
     .info { line-height: 1.75; margin-bottom: 2mm; }
     .info-row { display: grid; grid-template-columns: 34mm minmax(0, 1fr); min-height: 5mm; }
@@ -181,7 +181,7 @@ function commonCss() {
     .closing { margin-top: 4mm; font-size: 11px; }
     .delivery-title { font-size: 22px; margin-top: 2mm; }
     .delivery-meta { width: 72mm; margin-left: auto; margin-bottom: 2mm; line-height: 1.7; }
-    .packing-head { background: #fff; }
+    .packing-head { background: #b9d2f6; }
     .signatures { margin-top: 12mm; display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; font-weight: 700; font-size: 14px; }
     .signatures small { display: block; font-weight: 400; font-style: italic; margin-top: 1mm; }
     .legal-notes { margin-top: 3mm; font-size: 10.5px; line-height: 1.45; }
