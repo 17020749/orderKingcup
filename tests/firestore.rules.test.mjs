@@ -194,7 +194,7 @@ async function seed() {
         email: PRINTING_VIEWER,
         active: true,
         deleted: false,
-        permissions_flat: ['page.printing', 'printing.view']
+        permissions_flat: ['page.printing', 'printing.view', 'printing.view_all']
       }),
       setDoc(doc(db, 'users', CUSTOMER_ORDER_VIEWER), {
         email: CUSTOMER_ORDER_VIEWER,

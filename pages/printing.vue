@@ -49,7 +49,7 @@ const {
   loadSuppliers,
 } = useScopedQueries()
 const { savePrintOrder, deletePrintOrder } = usePrintingProgress()
-const { appUser, hasPermission } = useAuth()
+const { appUser, authReady, isAdmin, permissions, hasPermission } = useAuth()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
@@ -86,9 +86,23 @@ const form = reactive<{
   products: [],
 })
 
+const canViewAll = computed(() => hasPermission('printing.view_all') || hasPermission('*'))
 const canCreate = computed(() => hasPermission('printing.create') || hasPermission('*'))
 const canEdit = computed(() => hasPermission('printing.edit') || hasPermission('*'))
 const canDelete = computed(() => hasPermission('printing.delete') || hasPermission('*'))
+const currentEmail = computed(() => String(appUser.value?.email || '').trim().toLowerCase())
+
+function ownsPrintOrder(order: PrintOrderDoc | null | undefined) {
+  return Boolean(order && String(order.created_by || '').trim().toLowerCase() === currentEmail.value)
+}
+
+function canEditOrder(order: PrintOrderDoc | null | undefined) {
+  return isAdmin.value || (canEdit.value && ownsPrintOrder(order))
+}
+
+function canDeleteOrder(order: PrintOrderDoc | null | undefined) {
+  return isAdmin.value || (canDelete.value && ownsPrintOrder(order))
+}
 
 function sourceLogoLines(item: OrderItemDoc) {
   const logos = safeJsonParse(item.logo_json, [])
@@ -164,7 +178,11 @@ function quantityText(value: any) {
   return toNumber(value).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
 }
 
-const enrichedRows = computed(() => rows.value.map(order => {
+const visibleRows = computed(() => canViewAll.value
+  ? rows.value
+  : rows.value.filter(order => ownsPrintOrder(order)))
+
+const enrichedRows = computed(() => visibleRows.value.map(order => {
   const detailItems = itemsForOrder(order)
   const unfinishedDueDates = detailItems
     .filter(item => !isCompleted(item.is_completed))
@@ -265,37 +283,31 @@ function groupsFromItems(orderItems: PrintOrderItemDoc[]) {
 }
 
 function groupsFromSourceOrder(orderId: string) {
-  const orderItems = sourceOrderItems.value.filter(item => item.order_id === orderId && item.deleted !== true)
+  const orderItems = sourceOrderItems.value.filter(item =>
+    item.order_id === orderId
+    && item.deleted !== true
+    && sourceLogoLines(item).length > 0,
+  )
   return orderItems.map(item => {
     const logos = sourceLogoLines(item)
-    if (logos.length) {
-      const group = blankProductGroup({
-        product_id: item.product_id,
-        product_code: item.product_code,
-        product_name: item.product_name,
-      })
-      group.use_logo = true
-      group.print_quantity = 0
-      group.logo_lines = logos.map((line: any) => blankLine({
-        logo: String(line.logo || ''),
-        logo_color: String(line.logo_color || line.color || ''),
-        print_quantity: toNumber(line.quantity ?? line.qty),
-        actual_print_quantity: 0,
-      }))
-      return group
-    }
-    return blankProductGroup({
+    const group = blankProductGroup({
       product_id: item.product_id,
       product_code: item.product_code,
       product_name: item.product_name,
-      print_quantity: toNumber(item.quantity),
-      actual_print_quantity: 0,
     })
-  }).filter(group => group.product_id && (
-    group.use_logo
-      ? group.logo_lines.some(line => toNumber(line.print_quantity) > 0)
-      : toNumber(group.print_quantity) > 0
-  ))
+    group.use_logo = true
+    group.print_quantity = 0
+    group.logo_lines = logos.map((line: any) => blankLine({
+      logo: String(line.logo || ''),
+      logo_color: String(line.logo_color || line.color || ''),
+      print_quantity: toNumber(line.quantity ?? line.qty),
+      actual_print_quantity: 0,
+    }))
+    return group
+  }).filter(group =>
+    group.product_id
+    && group.logo_lines.some(line => toNumber(line.print_quantity) > 0),
+  )
 }
 
 function chooseSourceOrder() {
@@ -303,7 +315,7 @@ function chooseSourceOrder() {
   form.order_code = order?.order_code || ''
   form.products = order ? groupsFromSourceOrder(order.id) : []
   if (order && !form.products.length) {
-    showToast('Đơn hàng đã chọn chưa có sản phẩm hợp lệ.', 'error')
+    showToast('Đơn hàng đã chọn chưa có sản phẩm logo hợp lệ.', 'error')
   }
 }
 
@@ -326,7 +338,7 @@ function openCreateModal() {
 }
 
 function openEditModal(order: PrintOrderDoc) {
-  if (!canEdit.value) return showToast('Bạn không có quyền sửa tiến độ in ấn.', 'error')
+  if (!canEditOrder(order)) return showToast('Bạn chỉ được sửa tiến độ in ấn do mình tạo.', 'error')
   resetForm(order)
   showFormModal.value = true
 }
@@ -390,8 +402,10 @@ function collectItems(): PrintItemInput[] {
 }
 
 async function submitForm() {
-  if (editing.value ? !canEdit.value : !canCreate.value) {
-    return showToast('Bạn không có quyền thực hiện thao tác này.', 'error')
+  if (editing.value ? !canEditOrder(editing.value) : !canCreate.value) {
+    return showToast(editing.value
+      ? 'Bạn chỉ được sửa tiến độ in ấn do mình tạo.'
+      : 'Bạn không có quyền tạo tiến độ in ấn.', 'error')
   }
   if (!form.order_id || !form.order_code) {
     return showToast('Vui lòng chọn mã đơn hàng.', 'error')
@@ -432,7 +446,7 @@ async function submitForm() {
 }
 
 async function removeOrder(order: PrintOrderDoc) {
-  if (!canDelete.value) return showToast('Bạn không có quyền xóa tiến độ in ấn.', 'error')
+  if (!canDeleteOrder(order)) return showToast('Bạn chỉ được xóa tiến độ in ấn do mình tạo.', 'error')
   const confirmed = await askConfirm({
     title: 'Xóa tiến độ in ấn',
     message: `Bạn chắc chắn muốn xóa đơn in ${order.order_code}? Đơn và toàn bộ dòng tiến độ sẽ được xóa mềm.`,
@@ -477,8 +491,16 @@ async function loadRows(force = false) {
   }
 }
 
+watch(
+  () => `${authReady.value}|${appUser.value?.email || ''}|${permissions.value.slice().sort().join('|')}`,
+  () => {
+    if (!authReady.value || !appUser.value?.email) return
+    void loadRows(true)
+  },
+  { immediate: true },
+)
+
 onMounted(() => {
-  loadRows()
   statusTimer = setInterval(() => { statusTick.value = Date.now() }, 60_000)
 })
 
@@ -489,7 +511,7 @@ onBeforeUnmount(() => {
 
 <template>
   <AppShell>
-    <PageHeader title="Tiến độ in ấn" subtitle="Theo dõi số lượng, thời hạn và tiến độ in theo từng sản phẩm hoặc logo">
+    <PageHeader title="Tiến độ in ấn" :subtitle="canViewAll ? 'Theo dõi tất cả tiến độ in theo sản phẩm hoặc logo' : 'Chỉ hiển thị tiến độ in do bạn tạo'">
       <button v-if="canCreate" class="btn primary" @click="openCreateModal">+ Thêm đơn in</button>
       <button class="btn" @click="loadRows(true)">Làm mới</button>
     </PageHeader>
@@ -547,8 +569,8 @@ onBeforeUnmount(() => {
               <td>
                 <div class="action-buttons">
                   <button class="btn-sm btn-view" @click="openDetail(row)">Chi tiết</button>
-                  <button v-if="canEdit" class="btn-sm" @click="openEditModal(row)">Sửa</button>
-                  <button v-if="canDelete" class="btn-sm btn-delete" @click="removeOrder(row)">Xóa</button>
+                  <button v-if="canEditOrder(row)" class="btn-sm" @click="openEditModal(row)">Sửa</button>
+                  <button v-if="canDeleteOrder(row)" class="btn-sm btn-delete" @click="removeOrder(row)">Xóa</button>
                 </div>
               </td>
             </tr>
@@ -576,7 +598,7 @@ onBeforeUnmount(() => {
             placeholder="Tìm đơn có sản phẩm logo theo mã, khách hàng hoặc SĐT..."
             @change="chooseSourceOrder"
           />
-          <div class="small subtle">Chỉ hiển thị đơn có ít nhất một sản phẩm logo.</div>
+          <div class="small subtle">Chỉ hiển thị đơn và sản phẩm đã tick Có logo.</div>
         </div>
         <div class="form-group">
           <label>Mã AM</label>
@@ -616,7 +638,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-else class="logo-items-box print-logo-box">
-          <div class="logo-mode-note">Sản phẩm và số lượng theo logo được lấy tự động từ đơn hàng.</div>
+          <div class="logo-mode-note">Sản phẩm, logo, màu và số lượng được lấy tự động từ đơn hàng.</div>
           <div class="table-wrap">
             <table class="print-logo-table">
               <thead><tr><th>Logo</th><th>Màu logo</th><th>SL cần in</th><th>SL in thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Ghi chú dòng</th><th>Hoàn thành</th></tr></thead>
@@ -637,7 +659,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
-      <div v-if="!form.products.length" class="empty print-source-empty">Hãy chọn mã đơn hàng để tự động hiển thị sản phẩm.</div>
+      <div v-if="!form.products.length" class="empty print-source-empty">Hãy chọn mã đơn hàng để tự động hiển thị sản phẩm logo.</div>
     </BaseModal>
 
     <BaseModal

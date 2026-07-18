@@ -5,6 +5,10 @@ export default defineNuxtConfig({
     enabled: true
   },
 
+  modules: [
+    '~/modules/warehouse-cost'
+  ],
+
   app: {
     head: {
       title: 'KINGCUP Dashboard',

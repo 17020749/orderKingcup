@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import type { ExportOrderDoc, ExportOrderItemDoc, ImportOrderDoc, ImportOrderItemDoc, InventoryBalanceDoc, ProductDoc, StockMovementDoc, WarehouseDoc } from '~/types/models'
+import type {
+  ExportOrderDoc,
+  ExportOrderItemDoc,
+  ImportOrderDoc,
+  ImportOrderItemDoc,
+  InventoryBalanceDoc,
+  ProductDoc,
+  StockMovementDoc,
+  WarehouseDoc,
+} from '~/types/models'
 import { formatDateTime, normalizeText, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
@@ -10,9 +19,36 @@ type InventoryAuditRow = InventoryBalanceDoc & {
   movement_quantity: number
   difference: number
   has_balance: boolean
+  has_inbound_history: boolean
 }
 
-const { loadInventoryBalances, loadStockMovements, loadWarehouses, loadProducts, loadImportOrders, loadImportOrderItems, loadExportOrders, loadExportOrderItems } = useScopedQueries()
+type InventoryLotDetailRow = {
+  id: string
+  import_code: string
+  import_date: string
+  expiry_date: string
+  supplier_name: string
+  received_quantity: number
+  available_quantity: number
+  unit_cost: number | null
+  remaining_value: number | null
+  source: string
+  source_label: string
+  source_lot_id: string
+  cost_item_id: string
+}
+
+const {
+  loadInventoryBalances,
+  loadStockMovements,
+  loadWarehouses,
+  loadProducts,
+  loadImportOrders,
+  loadImportOrderItems,
+  loadExportOrders,
+  loadExportOrderItems,
+} = useScopedQueries()
+const { hasPermission } = useAuth()
 const { showToast } = useUi()
 
 const loading = ref(false)
@@ -29,20 +65,148 @@ const importItems = ref<ImportOrderItemDoc[]>([])
 const exportOrders = ref<ExportOrderDoc[]>([])
 const exportItems = ref<ExportOrderItemDoc[]>([])
 const selected = ref<InventoryAuditRow | null>(null)
-const showMovementModal = ref(false)
+const showDetailModal = ref(false)
+const detailTab = ref<'lots' | 'movements'>('movements')
 
-const activeProductIds = computed(() => new Set(products.value.map(row => String(row.id || '').trim()).filter(Boolean)))
+const canViewCost = computed(() => hasPermission('*') || hasPermission('import.view'))
+
+const activeProductIds = computed(() => new Set(
+  products.value.map(row => String(row.id || '').trim()).filter(Boolean),
+))
+
+const importItemById = computed(() => new Map(
+  importItems.value.map(item => [String(item.id || ''), item]),
+))
+
+const importOrderById = computed(() => new Map(
+  importOrders.value.map(order => [String(order.id || ''), order]),
+))
 
 function inventoryKey(row: any) {
   return [
     String(row?.warehouse_id || '').trim(),
     String(row?.product_id || '').trim(),
-    normalizeText(row?.logo || '')
+    normalizeText(row?.logo || ''),
   ].join('|')
 }
 
 function productIsVisible(row: any) {
   return activeProductIds.value.has(String(row?.product_id || '').trim())
+}
+
+function roundQuantity(value: any) {
+  return Math.round(toNumber(value) * 1000) / 1000
+}
+
+function balanceHasInboundOrigin(row: any) {
+  if (Array.isArray(row?.lots)) {
+    return row.lots.some((lot: any) => [
+      'import_order',
+      'warehouse_transfer',
+      'legacy_opening',
+    ].includes(String(lot?.source || '')))
+  }
+
+  // Dữ liệu tồn cũ chưa có cấu trúc lots nhưng đang có số lượng được coi là
+  // tồn mở đầu. Balance mới luôn có mảng lots nên điều kiện này không làm cho
+  // một điều chỉnh tăng mới trở thành lịch sử nhập kho.
+  return Math.abs(toNumber(row?.quantity)) >= 0.0001
+}
+
+function rawLotsForRow(row: any) {
+  const lots = Array.isArray(row?.lots)
+    ? row.lots
+        .filter((lot: any) => lot && String(lot.id || '').trim())
+        .map((lot: any) => ({
+          ...lot,
+          id: String(lot.id || '').trim(),
+          received_quantity: roundQuantity(lot.received_quantity),
+          available_quantity: roundQuantity(lot.available_quantity),
+        }))
+        .filter((lot: any) => lot.available_quantity > 0)
+    : []
+
+  const tracked = roundQuantity(lots.reduce(
+    (sum: number, lot: any) => sum + roundQuantity(lot.available_quantity),
+    0,
+  ))
+  const missing = roundQuantity(toNumber(row?.quantity) - tracked)
+
+  if (missing > 0.0001) {
+    lots.push({
+      id: `opening__${row.id}`,
+      import_code: 'OPENING',
+      import_date: '',
+      expiry_date: '',
+      received_quantity: missing,
+      available_quantity: missing,
+      cost_item_id: '',
+      source_lot_id: '',
+      source: 'legacy_opening',
+      status: 'available',
+    })
+  }
+
+  return lots
+}
+
+function sourceLabel(source: any) {
+  switch (String(source || '')) {
+    case 'import_order': return 'Nhập trực tiếp'
+    case 'warehouse_transfer': return 'Chuyển kho'
+    case 'inventory_adjustment': return 'Điều chỉnh tăng'
+    case 'legacy_opening': return 'Tồn mở đầu'
+    default: return String(source || 'Không xác định')
+  }
+}
+
+function lotDetailsForRow(row: any): InventoryLotDetailRow[] {
+  return rawLotsForRow(row)
+    .map((lot: any) => {
+      const costItemId = String(lot.cost_item_id || lot.import_order_item_id || '')
+      const costItem = costItemId ? importItemById.value.get(costItemId) : undefined
+      const importOrderId = String(lot.import_order_id || costItem?.import_order_id || '')
+      const importOrder = importOrderId ? importOrderById.value.get(importOrderId) : undefined
+      const hasCost = canViewCost.value
+        && Boolean(costItem)
+        && Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost')
+      const unitCost = hasCost ? toNumber((costItem as any).unit_cost) : null
+      const availableQuantity = roundQuantity(lot.available_quantity)
+
+      return {
+        id: String(lot.id || ''),
+        import_code: String(lot.import_code || importOrder?.code || importOrder?.import_code || 'OPENING'),
+        import_date: String(lot.import_date || importOrder?.import_date || ''),
+        expiry_date: String(lot.expiry_date || (costItem as any)?.expiry_date || ''),
+        supplier_name: String(lot.supplier_name || importOrder?.supplier_name || ''),
+        received_quantity: roundQuantity(lot.received_quantity),
+        available_quantity: availableQuantity,
+        unit_cost: unitCost,
+        remaining_value: unitCost === null
+          ? null
+          : Math.round(availableQuantity * unitCost * 100) / 100,
+        source: String(lot.source || ''),
+        source_label: sourceLabel(lot.source),
+        source_lot_id: String(lot.source_lot_id || ''),
+        cost_item_id: costItemId,
+      }
+    })
+    .sort((left, right) => {
+      const leftDate = left.import_date || '0000-00-00'
+      const rightDate = right.import_date || '0000-00-00'
+      return leftDate.localeCompare(rightDate) || left.id.localeCompare(right.id)
+    })
+}
+
+function lotCount(row: any) {
+  return rawLotsForRow(row).length
+}
+
+function lotValueForRow(row: any) {
+  return lotDetailsForRow(row).reduce(
+    (sum, lot) => sum + (lot.remaining_value === null ? 0 : lot.remaining_value),
+    0,
+  )
 }
 
 const auditRows = computed<InventoryAuditRow[]>(() => {
@@ -58,7 +222,8 @@ const auditRows = computed<InventoryAuditRow[]>(() => {
         movement_adjustment: 0,
         movement_quantity: 0,
         difference: 0,
-        has_balance: true
+        has_balance: true,
+        has_inbound_history: balanceHasInboundOrigin(row),
       })
     })
 
@@ -85,7 +250,8 @@ const auditRows = computed<InventoryAuditRow[]>(() => {
           movement_adjustment: 0,
           movement_quantity: 0,
           difference: 0,
-          has_balance: false
+          has_balance: false,
+          has_inbound_history: false,
         })
       }
 
@@ -101,37 +267,33 @@ const auditRows = computed<InventoryAuditRow[]>(() => {
         || type.includes('transfer_in')
         || type.includes('reverse_destination')
       const isExportMovement = sourceCollection === 'export_orders' && !isImportMovement
+      const qualifiesAsInboundHistory = quantity > 0 && (
+        sourceCollection === 'import_orders'
+        || type === 'import'
+        || type.includes('transfer_in')
+      )
 
-      if (isAdjustment) {
-        row.movement_adjustment += quantity
-      } else if (isImportMovement) {
-        // Số âm là movement đảo/xóa, nên tổng nhập hiển thị theo giá trị ròng.
-        row.movement_in += quantity
-      } else if (isExportMovement) {
-        // Xuất gốc có quantity âm; movement hoàn kho nguồn có quantity dương.
-        row.movement_out += -quantity
-      } else if (quantity >= 0) {
-        row.movement_in += quantity
-      } else {
-        row.movement_out += Math.abs(quantity)
-      }
+      if (qualifiesAsInboundHistory) row.has_inbound_history = true
+
+      if (isAdjustment) row.movement_adjustment += quantity
+      else if (isImportMovement) row.movement_in += quantity
+      else if (isExportMovement) row.movement_out += -quantity
+      else if (quantity >= 0) row.movement_in += quantity
+      else row.movement_out += Math.abs(quantity)
+
       row.movement_quantity += quantity
     })
 
   audit.forEach(row => {
-    row.movement_in = Math.round(row.movement_in * 1000) / 1000
-    row.movement_out = Math.round(row.movement_out * 1000) / 1000
-    row.movement_adjustment = Math.round(row.movement_adjustment * 1000) / 1000
-    row.movement_quantity = Math.round(row.movement_quantity * 1000) / 1000
-    row.difference = Math.round((toNumber(row.quantity) - row.movement_quantity) * 1000) / 1000
+    row.movement_in = roundQuantity(row.movement_in)
+    row.movement_out = roundQuantity(row.movement_out)
+    row.movement_adjustment = roundQuantity(row.movement_adjustment)
+    row.movement_quantity = roundQuantity(row.movement_quantity)
+    row.difference = roundQuantity(toNumber(row.quantity) - row.movement_quantity)
   })
 
   return Array.from(audit.values())
-    .filter(row =>
-      Math.abs(toNumber(row.quantity)) >= 0.0001
-      || Math.abs(row.movement_quantity) >= 0.0001
-      || Math.abs(row.difference) >= 0.0001
-    )
+    .filter(row => row.has_inbound_history)
     .sort((a, b) => {
       const left = `${a.warehouse_name || ''} ${a.product_code || ''} ${a.logo || ''}`
       const right = `${b.warehouse_name || ''} ${b.product_code || ''} ${b.logo || ''}`
@@ -146,13 +308,15 @@ const filtered = computed(() => {
     const hasLogo = String(row.logo || '').trim() !== ''
     const matchedLogo = !logoFilter.value || (logoFilter.value === 'logo' ? hasLogo : !hasLogo)
     const matchedReconcile = !reconcileFilter.value
-      || (reconcileFilter.value === 'matched' ? Math.abs(row.difference) < 0.0001 : Math.abs(row.difference) >= 0.0001)
+      || (reconcileFilter.value === 'matched'
+        ? Math.abs(row.difference) < 0.0001
+        : Math.abs(row.difference) >= 0.0001)
     const matchedText = !keyword || normalizeText([
       row.product_code,
       row.product_name,
       row.warehouse_name,
       row.logo,
-      row.unit
+      row.unit,
     ].join(' ')).includes(keyword)
     return matchedWarehouse && matchedLogo && matchedReconcile && matchedText
   })
@@ -162,24 +326,56 @@ const summary = computed(() => ({
   lines: filtered.value.length,
   quantity: filtered.value.reduce((sum, row) => sum + toNumber(row.quantity), 0),
   movementQuantity: filtered.value.reduce((sum, row) => sum + toNumber(row.movement_quantity), 0),
-  mismatches: filtered.value.filter(row => Math.abs(row.difference) >= 0.0001).length
+  mismatches: filtered.value.filter(row => Math.abs(row.difference) >= 0.0001).length,
+  lots: canViewCost.value ? filtered.value.reduce((sum, row) => sum + lotCount(row), 0) : 0,
+  inventoryValue: canViewCost.value
+    ? filtered.value.reduce((sum, row) => sum + lotValueForRow(row), 0)
+    : 0,
 }))
 
 const selectedMovements = computed(() => {
   if (!selected.value) return []
   const row = selected.value
   const rowLogo = normalizeText(row.logo || '')
-  return movements.value.filter(movement =>
-    movement.deleted !== true
-    && movement.active !== false
-    && movement.warehouse_id === row.warehouse_id
-    && movement.product_id === row.product_id
-    && normalizeText(movement.logo || '') === rowLogo
-  )
+  return movements.value
+    .filter(movement =>
+      movement.deleted !== true
+      && movement.active !== false
+      && movement.warehouse_id === row.warehouse_id
+      && movement.product_id === row.product_id
+      && normalizeText(movement.logo || '') === rowLogo,
+    )
+    .sort((a, b) => String(b.movement_date || b.created_at || '').localeCompare(String(a.movement_date || a.created_at || '')))
+})
+
+const selectedLots = computed(() => selected.value && canViewCost.value
+  ? lotDetailsForRow(selected.value)
+  : [])
+
+const selectedLotSummary = computed(() => {
+  const lots = selectedLots.value
+  const knownLots = lots.filter(lot => lot.unit_cost !== null)
+  const knownQuantity = knownLots.reduce((sum, lot) => sum + lot.available_quantity, 0)
+  const knownValue = knownLots.reduce((sum, lot) => sum + toNumber(lot.remaining_value), 0)
+  return {
+    lots: lots.length,
+    quantity: lots.reduce((sum, lot) => sum + lot.available_quantity, 0),
+    knownValue,
+    averageCost: knownQuantity > 0 ? knownValue / knownQuantity : 0,
+    unknownLots: lots.filter(lot => lot.unit_cost === null).length,
+  }
 })
 
 function quantityText(value: any) {
   return toNumber(value).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
+}
+
+function currencyText(value: any) {
+  return toNumber(value).toLocaleString('vi-VN', {
+    style: 'currency',
+    currency: 'VND',
+    maximumFractionDigits: 0,
+  })
 }
 
 function movementClass(row: StockMovementDoc) {
@@ -193,7 +389,7 @@ function differenceClass(row: InventoryAuditRow) {
 }
 
 function findImportOrder(id: any) {
-  return importOrders.value.find(row => row.id === id)
+  return importOrderById.value.get(String(id || ''))
 }
 
 function findExportOrder(id: any) {
@@ -201,7 +397,7 @@ function findExportOrder(id: any) {
 }
 
 function findImportItem(id: any) {
-  return importItems.value.find(row => row.id === id)
+  return importItemById.value.get(String(id || ''))
 }
 
 function findExportItem(id: any) {
@@ -221,7 +417,9 @@ function movementDetail(movement: StockMovementDoc) {
   if (sourceCollection === 'export_orders') {
     const order = findExportOrder(movement.source_doc_id)
     const item = findExportItem(movement.source_item_id)
-    if (type.includes('reverse') || type.includes('cancel')) return movement.reason || 'Biến động đảo/hoàn tồn của phiếu xuất.'
+    if (type.includes('reverse') || type.includes('cancel')) {
+      return movement.reason || 'Biến động đảo/hoàn tồn của phiếu xuất.'
+    }
     if (type === 'transfer_in' || type === 'export_transfer_in' || movement.direction === 'in') {
       return `Nhập chuyển kho từ ${item?.from_warehouse_name || 'kho nguồn'} theo phiếu ${order?.code || order?.export_code || movement.source_code || ''}.`
     }
@@ -234,28 +432,52 @@ function movementDetail(movement: StockMovementDoc) {
   return movement.reason || '-'
 }
 
-function openMovements(row: InventoryAuditRow) {
+function openDetail(row: InventoryAuditRow, tab?: 'lots' | 'movements') {
   selected.value = row
-  showMovementModal.value = true
+  detailTab.value = tab || (canViewCost.value ? 'lots' : 'movements')
+  showDetailModal.value = true
+}
+
+async function loadOptional<T>(loader: (force?: boolean) => Promise<T[]>, force: boolean) {
+  try {
+    return await loader(force)
+  } catch {
+    return [] as T[]
+  }
 }
 
 async function loadRows(force = false) {
   loading.value = true
   try {
-    const [balanceRows, movementRows, warehouseRows, productRows, importOrderRows, importItemRows, exportOrderRows, exportItemRows] = await Promise.all([
+    const [balanceRows, movementRows, warehouseRows, productRows] = await Promise.all([
       loadInventoryBalances(force),
       loadStockMovements(force),
       loadWarehouses(force),
       loadProducts(force),
-      loadImportOrders(force),
-      loadImportOrderItems(force),
-      loadExportOrders(force),
-      loadExportOrderItems(force)
     ])
+
+    const [exportOrderRows, exportItemRows] = await Promise.all([
+      loadOptional<ExportOrderDoc>(loadExportOrders, force),
+      loadOptional<ExportOrderItemDoc>(loadExportOrderItems, force),
+    ])
+
+    let importOrderRows: ImportOrderDoc[] = []
+    let importItemRows: ImportOrderItemDoc[] = []
+    if (canViewCost.value) {
+      ;[importOrderRows, importItemRows] = await Promise.all([
+        loadImportOrders(force),
+        loadImportOrderItems(force),
+      ])
+    }
+
     rows.value = balanceRows
     movements.value = movementRows
     warehouses.value = warehouseRows
-    products.value = productRows.filter(row => row.deleted !== true && row.active !== false && String(row.status || '').trim().toLowerCase() !== 'deleted')
+    products.value = productRows.filter(row =>
+      row.deleted !== true
+      && row.active !== false
+      && String(row.status || '').trim().toLowerCase() !== 'deleted',
+    )
     importOrders.value = importOrderRows
     importItems.value = importItemRows
     exportOrders.value = exportOrderRows
@@ -272,7 +494,7 @@ onMounted(() => loadRows())
 
 <template>
   <AppShell>
-    <PageHeader title="Tồn kho" subtitle="Đối soát inventory_balances với tổng stock_movements theo kho, sản phẩm và logo">
+    <PageHeader title="Tồn kho" subtitle="Xem tồn tổng hợp, chi tiết lô giá và lịch sử theo kho, sản phẩm, logo">
       <button class="btn" @click="loadRows(true)">Làm mới</button>
     </PageHeader>
 
@@ -281,6 +503,8 @@ onMounted(() => loadRows())
       <div class="summary-card"><label>Tồn từ balances</label><strong>{{ quantityText(summary.quantity) }}</strong></div>
       <div class="summary-card"><label>Tồn từ movements</label><strong>{{ quantityText(summary.movementQuantity) }}</strong></div>
       <div class="summary-card"><label>Dòng bị lệch</label><strong>{{ summary.mismatches.toLocaleString('vi-VN') }}</strong></div>
+      <div v-if="canViewCost" class="summary-card"><label>Số lô còn hàng</label><strong>{{ summary.lots.toLocaleString('vi-VN') }}</strong></div>
+      <div v-if="canViewCost" class="summary-card"><label>Giá trị tồn đã xác định</label><strong>{{ currencyText(summary.inventoryValue) }}</strong></div>
     </div>
 
     <div class="card" style="margin: 24px;">
@@ -288,7 +512,9 @@ onMounted(() => loadRows())
         <input v-model="search" class="input" style="max-width: 420px" placeholder="Tìm mã/tên sản phẩm, kho, logo..." />
         <select v-model="warehouseFilter" class="select" style="max-width: 220px">
           <option value="">Tất cả kho</option>
-          <option v-for="warehouse in warehouses" :key="warehouse.id" :value="warehouse.id">{{ warehouse.name || warehouse.warehouse_code || warehouse.id }}</option>
+          <option v-for="warehouse in warehouses" :key="warehouse.id" :value="warehouse.id">
+            {{ warehouse.name || warehouse.warehouse_code || warehouse.id }}
+          </option>
         </select>
         <select v-model="logoFilter" class="select" style="max-width: 170px">
           <option value="">Tất cả logo</option>
@@ -302,9 +528,13 @@ onMounted(() => loadRows())
         </select>
       </div>
 
+      <div v-if="!canViewCost" class="small subtle" style="margin: 0 0 12px;">
+        Giá nhập và chi tiết lô giá chỉ hiển thị cho người có quyền Xem phiếu nhập kho (`import.view`).
+      </div>
+
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
-        <table style="min-width: 1540px">
+        <table :style="{ minWidth: canViewCost ? '1640px' : '1540px' }">
           <thead>
             <tr>
               <th>Kho</th>
@@ -316,6 +546,8 @@ onMounted(() => loadRows())
               <th>Điều chỉnh</th>
               <th>Tồn theo lịch sử</th>
               <th>Tồn hiện tại</th>
+              <th v-if="canViewCost">Số lô</th>
+              <th v-if="canViewCost">Giá trị tồn</th>
               <th>Chênh lệch</th>
               <th>Cập nhật cuối</th>
               <th>Thao tác</th>
@@ -331,47 +563,135 @@ onMounted(() => loadRows())
               <td>{{ quantityText(row.movement_out) }}</td>
               <td>{{ quantityText(row.movement_adjustment) }}</td>
               <td><b>{{ quantityText(row.movement_quantity) }}</b></td>
-              <td><b>{{ quantityText(row.quantity) }}</b><div v-if="!row.has_balance" class="small" style="color:#dc2626">Thiếu balance</div></td>
+              <td>
+                <b>{{ quantityText(row.quantity) }}</b>
+                <span v-if="Math.abs(toNumber(row.quantity)) < 0.0001" class="badge red" style="margin-left: 6px;">Hết hàng</span>
+                <div v-if="!row.has_balance" class="small" style="color:#dc2626">Thiếu balance</div>
+              </td>
+              <td v-if="canViewCost"><b>{{ lotCount(row) }}</b></td>
+              <td v-if="canViewCost"><b>{{ currencyText(lotValueForRow(row)) }}</b></td>
               <td><span class="badge" :class="differenceClass(row)">{{ quantityText(row.difference) }}</span></td>
               <td>{{ formatDateTime(row.last_movement_at || row.updated_at) }}</td>
-              <td><button class="btn-sm btn-view" @click="openMovements(row)">Lịch sử</button></td>
+              <td>
+                <button class="btn-sm btn-view" @click="openDetail(row)">
+                  {{ canViewCost ? 'Chi tiết' : 'Lịch sử' }}
+                </button>
+              </td>
             </tr>
-            <tr v-if="!filtered.length"><td colspan="12" class="empty">Không có dữ liệu tồn kho.</td></tr>
+            <tr v-if="!filtered.length">
+              <td :colspan="canViewCost ? 14 : 12" class="empty">Không có dữ liệu tồn kho.</td>
+            </tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <BaseModal v-if="showMovementModal && selected" :title="`Lịch sử tồn: ${selected.product_code || selected.product_name}`" size="xl" :show-footer="false" @close="showMovementModal = false">
+    <BaseModal
+      v-if="showDetailModal && selected"
+      :title="`Chi tiết tồn: ${selected.product_code || selected.product_name}`"
+      size="xl"
+      :show-footer="false"
+      @close="showDetailModal = false"
+    >
       <div class="detail-grid">
-        <div class="detail-item"><label>Kho</label><strong>{{ selected.warehouse_name || selected.warehouse_id }}</strong></div>
+        <div class="detail-item"><label>Kho hiện tại</label><strong>{{ selected.warehouse_name || selected.warehouse_id }}</strong></div>
         <div class="detail-item"><label>Sản phẩm</label><strong>{{ selected.product_code }} - {{ selected.product_name }}</strong></div>
         <div class="detail-item"><label>Logo</label><strong>{{ selected.logo || 'Không logo' }}</strong></div>
-        <div class="detail-item"><label>Tổng nhập</label><strong>{{ quantityText(selected.movement_in) }}</strong></div>
-        <div class="detail-item"><label>Tổng xuất</label><strong>{{ quantityText(selected.movement_out) }}</strong></div>
-        <div class="detail-item"><label>Tổng điều chỉnh</label><strong>{{ quantityText(selected.movement_adjustment) }}</strong></div>
+        <div class="detail-item"><label>Tồn hiện tại</label><strong>{{ quantityText(selected.quantity) }} {{ selected.unit || '' }}</strong></div>
         <div class="detail-item"><label>Tồn theo lịch sử</label><strong>{{ quantityText(selected.movement_quantity) }}</strong></div>
-        <div class="detail-item"><label>Tồn hiện tại</label><strong>{{ quantityText(selected.quantity) }}</strong></div>
         <div class="detail-item"><label>Chênh lệch</label><strong>{{ quantityText(selected.difference) }}</strong></div>
       </div>
 
-      <div class="table-wrap">
-        <table style="min-width: 1040px">
-          <thead><tr><th>Thời gian</th><th>Loại</th><th>Mã nguồn</th><th>Số lượng</th><th>Chi tiết biến động</th><th>Lý do gốc</th><th>Người tạo</th></tr></thead>
-          <tbody>
-            <tr v-for="movement in selectedMovements" :key="movement.id">
-              <td>{{ formatDateTime(movement.movement_date || movement.created_at) }}</td>
-              <td><span class="badge" :class="movementClass(movement)">{{ movement.movement_type || movement.direction }}</span></td>
-              <td><b>{{ movement.source_code || movement.source_doc_id }}</b><div class="small subtle">{{ movement.source_collection }}</div></td>
-              <td><b>{{ quantityText(movement.quantity) }}</b></td>
-              <td>{{ movementDetail(movement) }}</td>
-              <td>{{ movement.reason || '-' }}</td>
-              <td>{{ movement.created_by || '-' }}</td>
-            </tr>
-            <tr v-if="!selectedMovements.length"><td colspan="7" class="empty">Chưa có lịch sử biến động cho dòng tồn này.</td></tr>
-          </tbody>
-        </table>
+      <div class="toolbar" style="margin: 16px 0;">
+        <button
+          v-if="canViewCost"
+          class="btn"
+          :class="{ primary: detailTab === 'lots' }"
+          @click="detailTab = 'lots'"
+        >
+          Các lô giá
+        </button>
+        <button
+          class="btn"
+          :class="{ primary: detailTab === 'movements' }"
+          @click="detailTab = 'movements'"
+        >
+          Lịch sử biến động
+        </button>
       </div>
+
+      <template v-if="detailTab === 'lots' && canViewCost">
+        <div class="summary-grid" style="margin: 0 0 16px;">
+          <div class="summary-card"><label>Số lô còn hàng</label><strong>{{ selectedLotSummary.lots }}</strong></div>
+          <div class="summary-card"><label>Tổng số lượng theo lô</label><strong>{{ quantityText(selectedLotSummary.quantity) }}</strong></div>
+          <div class="summary-card"><label>Giá trị đã xác định</label><strong>{{ currencyText(selectedLotSummary.knownValue) }}</strong></div>
+          <div class="summary-card"><label>Giá nhập bình quân</label><strong>{{ currencyText(selectedLotSummary.averageCost) }}</strong></div>
+        </div>
+
+        <div v-if="selectedLotSummary.unknownLots" class="small" style="margin-bottom: 10px; color:#b45309;">
+          Có {{ selectedLotSummary.unknownLots }} lô chưa xác định giá, thường là tồn mở đầu hoặc điều chỉnh tăng không có phiếu nhập gốc.
+        </div>
+
+        <div class="table-wrap">
+          <table style="min-width: 1380px;">
+            <thead>
+              <tr>
+                <th>Mã lô</th>
+                <th>Nguồn</th>
+                <th>Phiếu nhập gốc</th>
+                <th>Ngày nhập</th>
+                <th>Nhà cung cấp</th>
+                <th>Hạn dùng</th>
+                <th>SL ban đầu</th>
+                <th>SL còn lại</th>
+                <th>Giá nhập</th>
+                <th>Giá trị còn lại</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="lot in selectedLots" :key="lot.id">
+                <td><b>{{ lot.id }}</b><div v-if="lot.source_lot_id" class="small subtle">Lô nguồn: {{ lot.source_lot_id }}</div></td>
+                <td><span class="badge blue">{{ lot.source_label }}</span></td>
+                <td>{{ lot.import_code || '-' }}</td>
+                <td>{{ lot.import_date ? formatDateTime(lot.import_date) : '-' }}</td>
+                <td>{{ lot.supplier_name || '-' }}</td>
+                <td>{{ lot.expiry_date ? formatDateTime(lot.expiry_date) : '-' }}</td>
+                <td>{{ quantityText(lot.received_quantity) }}</td>
+                <td><b>{{ quantityText(lot.available_quantity) }}</b></td>
+                <td>{{ lot.unit_cost === null ? 'Chưa xác định' : currencyText(lot.unit_cost) }}</td>
+                <td><b>{{ lot.remaining_value === null ? 'Chưa xác định' : currencyText(lot.remaining_value) }}</b></td>
+              </tr>
+              <tr v-if="!selectedLots.length"><td colspan="10" class="empty">Dòng tồn này hiện không còn lô hàng khả dụng.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <template v-else>
+        <div class="detail-grid" style="margin-bottom: 14px;">
+          <div class="detail-item"><label>Tổng nhập</label><strong>{{ quantityText(selected.movement_in) }}</strong></div>
+          <div class="detail-item"><label>Tổng xuất</label><strong>{{ quantityText(selected.movement_out) }}</strong></div>
+          <div class="detail-item"><label>Tổng điều chỉnh</label><strong>{{ quantityText(selected.movement_adjustment) }}</strong></div>
+        </div>
+
+        <div class="table-wrap">
+          <table style="min-width: 1040px;">
+            <thead><tr><th>Thời gian</th><th>Loại</th><th>Mã nguồn</th><th>Số lượng</th><th>Chi tiết biến động</th><th>Lý do gốc</th><th>Người tạo</th></tr></thead>
+            <tbody>
+              <tr v-for="movement in selectedMovements" :key="movement.id">
+                <td>{{ formatDateTime(movement.movement_date || movement.created_at) }}</td>
+                <td><span class="badge" :class="movementClass(movement)">{{ movement.movement_type || movement.direction }}</span></td>
+                <td><b>{{ movement.source_code || movement.source_doc_id }}</b><div class="small subtle">{{ movement.source_collection }}</div></td>
+                <td><b>{{ quantityText(movement.quantity) }}</b></td>
+                <td>{{ movementDetail(movement) }}</td>
+                <td>{{ movement.reason || '-' }}</td>
+                <td>{{ movement.created_by || '-' }}</td>
+              </tr>
+              <tr v-if="!selectedMovements.length"><td colspan="7" class="empty">Chưa có lịch sử biến động cho dòng tồn này.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
     </BaseModal>
   </AppShell>
 </template>

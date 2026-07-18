@@ -709,10 +709,16 @@ export function useScopedQueries() {
   }
 
   async function loadPrintOrders(force = false) {
-    if (!hasPermission('printing.view') && !hasPermission('*')) return []
-    return sortNewest((await listCollection<PrintOrderDoc>('print_orders', [], {
-      cacheKey: 'all', ttlMs: 20_000, force
-    })).filter(isActive), 'created_at')
+    if (canAll('printing.view_all')) {
+      return sortNewest((await listCollection<PrintOrderDoc>('print_orders', [], {
+        cacheKey: 'all', ttlMs: 20_000, force
+      })).filter(isActive), 'created_at')
+    }
+    if (!hasPermission('printing.view')) return []
+    return sortNewest(
+      await listByEmailFields<PrintOrderDoc>('print_orders', ['created_by'], force, 20_000),
+      'created_at'
+    )
   }
 
   async function loadPrintingSourceOrders(force = false) {
@@ -730,10 +736,18 @@ export function useScopedQueries() {
   }
 
   async function loadPrintOrderItems(force = false) {
-    if (!hasPermission('printing.view') && !hasPermission('*')) return []
-    return (await listCollection<PrintOrderItemDoc>('print_order_items', [], {
-      cacheKey: 'all', ttlMs: 20_000, force
-    })).filter(isActive)
+    if (canAll('printing.view_all')) {
+      return (await listCollection<PrintOrderItemDoc>('print_order_items', [], {
+        cacheKey: 'all', ttlMs: 20_000, force
+      })).filter(isActive)
+    }
+    if (!hasPermission('printing.view')) return []
+    return (await listByEmailFields<PrintOrderItemDoc>(
+      'print_order_items',
+      ['created_by'],
+      force,
+      20_000
+    )).filter(isActive)
   }
 
   async function loadScopedInvoices(force = false) {
