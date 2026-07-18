@@ -7,9 +7,9 @@ export default defineNuxtModule({
   setup() {
     const resolver = createResolver(import.meta.url)
     addImports({
-      name: 'useWarehouseCostTransactions',
+      name: 'useWarehouseTransactionsClient',
       as: 'useWarehouseTransactions',
-      from: resolver.resolve('../composables/useWarehouseCostTransactions'),
+      from: resolver.resolve('../composables/useWarehouseTransactionsClient'),
       priority: 100,
     })
   },

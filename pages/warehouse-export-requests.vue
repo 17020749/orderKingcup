@@ -39,7 +39,9 @@ const actionRequest = ref<any>(null)
 const actionType = ref<'accept' | 'reject' | 'release' | ''>('')
 const showDetailModal = ref(false)
 const showActionModal = ref(false)
-const actionForm = reactive({ warehouse_id: '', note: '', export_date: todayKey() })
+const actionForm = reactive({ note: '', export_date: todayKey() })
+const releaseLines = ref<any[]>([])
+const releaseWarehouseIds = ref<Record<number, string>>({})
 let stopRequestsListener: (() => void) | null = null
 let lastRealtimeError = ''
 
@@ -214,10 +216,16 @@ function openAction(row: any, type: 'accept' | 'reject' | 'release') {
   actionRequest.value = row
   actionType.value = type
   Object.assign(actionForm, {
-    warehouse_id: warehouses.value[0]?.id || '',
     note: '',
     export_date: row.export_date || todayKey()
   })
+  releaseLines.value = type === 'release'
+    ? requestLineProgress(row).map((line: any) => ({
+        ...line,
+        from_warehouse_id: '',
+      }))
+    : []
+  releaseWarehouseIds.value = {}
   showActionModal.value = true
 }
 
@@ -234,6 +242,20 @@ const actionSaveLabel = computed(() => {
   if (actionType.value === 'release') return 'Cho xuất kho'
   return 'Xác nhận'
 })
+
+const actionLines = computed(() => {
+  if (actionType.value === 'release') return releaseLines.value
+  return actionRequest.value ? requestLineProgress(actionRequest.value) : []
+})
+
+function releaseWarehouseId(line: any, index: number) {
+  return String(releaseWarehouseIds.value[index] || line?.from_warehouse_id || '').trim()
+}
+
+function onReleaseWarehouseChanged(index: number, value: string) {
+  releaseWarehouseIds.value[index] = value
+  if (releaseLines.value[index]) releaseLines.value[index].from_warehouse_id = value
+}
 
 function saleNotificationRecipients(row: any) {
   const order = orders.value.find(item => item.id === row?.order_id)
@@ -360,33 +382,53 @@ async function submitReject(row: any) {
 }
 
 async function submitRelease(row: any) {
-  const warehouse = findWarehouse(actionForm.warehouse_id)
-  if (!warehouse) return showToast('Vui lòng chọn kho xuất.', 'error')
-
-  const lines = requestLineProgress(row).filter((line: any) => toNumber(line.requested_qty) > 0)
+  const lines = releaseLines.value
+    .map((line: any, index: number) => ({ ...line, __release_index: index }))
+    .filter((line: any) => toNumber(line.requested_qty) > 0)
   if (!lines.length) return showToast('Yêu cầu xuất kho chưa có dòng hàng hợp lệ.', 'error')
 
   const missing = lines.filter((line: any) => !findProductByCode(line.product_code))
   if (missing.length) {
     return showToast(`Chưa tìm thấy sản phẩm cho mã: ${missing.map((line: any) => line.product_code).join(', ')}. Kiểm tra quyền truy cập và mã sản phẩm.`, 'error')
   }
+  const missingWarehouse = lines.filter((line: any) => !releaseWarehouseId(line, line.__release_index))
+  if (missingWarehouse.length) {
+    return showToast(
+      `Vui lòng chọn kho xuất cho dòng ${missingWarehouse.map((line: any) => line.__release_index + 1).join(', ')}.`,
+      'error',
+    )
+  }
+  const missingWarehouseDocs = lines.filter((line: any) => !findWarehouse(releaseWarehouseId(line, line.__release_index)))
+  if (missingWarehouseDocs.length) {
+    return showToast(
+      `Kho xuất dòng ${missingWarehouseDocs.map((line: any) => line.__release_index + 1).join(', ')} không còn trong danh mục kho. Vui lòng tải lại trang và chọn lại.`,
+      'error',
+    )
+  }
 
   const result = await processExportRequestToExportOrder({
     request: row,
     notification_recipients: saleNotificationRecipients(row),
-    warehouse,
     customer_name: row.customer_name,
     export_date: actionForm.export_date,
     note: actionForm.note,
     timeline: timeline(row),
     orderSummaryPatch: orderPatchAfter(row, 'da_xuat', { warehouse_export_code: 'pending_firestore' }),
-    lines: lines.map((line: any) => ({
-      product: findProductByCode(line.product_code),
-      logo: line.logo,
-      quantity: toNumber(line.requested_qty),
-      unit: line.unit,
-      note: line.note || ''
-    }))
+    lines: lines.map((line: any) => {
+      const warehouseId = releaseWarehouseId(line, line.__release_index)
+      const fromWarehouse = findWarehouse(warehouseId)
+      return {
+        product: findProductByCode(line.product_code),
+        fromWarehouse,
+        warehouse: fromWarehouse,
+        from_warehouse_id: warehouseId,
+        warehouse_id: warehouseId,
+        logo: line.logo,
+        quantity: toNumber(line.requested_qty),
+        unit: line.unit,
+        note: line.note || ''
+      }
+    })
   })
   if (result.alreadyProcessed) {
     showToast('Yêu cầu đã được xử lý trước đó.', 'info')
@@ -608,17 +650,23 @@ onBeforeUnmount(() => {
 
       <div v-if="actionType === 'release'" class="form-grid">
         <div class="form-group"><label>Ngày xuất thực tế</label><input v-model="actionForm.export_date" class="input" type="date" /></div>
-        <div class="form-group">
-          <label>Kho xuất</label>
-          <SearchableSelect v-model="actionForm.warehouse_id" :options="warehouseOptions" placeholder="Chọn kho xuất" />
-        </div>
       </div>
 
       <div class="table-wrap" style="margin-top: 14px">
-        <table style="min-width: 720px">
-          <thead><tr><th>Sản phẩm</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th></tr></thead>
+        <table :style="{ minWidth: actionType === 'release' ? '980px' : '720px' }">
+          <thead><tr><th v-if="actionType === 'release'">Kho xuất</th><th>Sản phẩm</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th></tr></thead>
           <tbody>
-            <tr v-for="(line,index) in requestLineProgress(actionRequest)" :key="index">
+            <tr v-for="(line,index) in actionLines" :key="index">
+              <td v-if="actionType === 'release'">
+                <SearchableSelect
+                  :model-value="releaseWarehouseId(line, index)"
+                  :options="warehouseOptions"
+                  placeholder="Chọn kho xuất"
+                  @update:model-value="onReleaseWarehouseChanged(index, $event)"
+                  @change="onReleaseWarehouseChanged(index, $event)"
+                />
+                <div class="small subtle">ID kho: {{ releaseWarehouseId(line, index) || 'chưa chọn' }}</div>
+              </td>
               <td><b>{{ line.product_code }}</b><div class="small subtle">{{ line.product_name }}</div></td>
               <td>{{ line.logo || '-' }}</td>
               <td>{{ line.unit || '-' }}</td>
