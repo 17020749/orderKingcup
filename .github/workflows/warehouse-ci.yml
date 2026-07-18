@@ -28,28 +28,27 @@ jobs:
 
       - name: Enforce printing ownership in Firestore Rules
         shell: bash
-        env:
-          RULES_BLOCK_B64: IC...REPLACE
         run: |
           python <<'PY'
           import base64
-          import os
           from pathlib import Path
           path = Path('firestore.rules')
           text = path.read_text(encoding='utf-8')
           start = text.index('    match /print_orders/{docId} {')
           end = text.index('    match /shipments/{docId} {', start)
-          replacement = base64.b64decode(os.environ['RULES_BLOCK_B64']).decode('utf-8')
+          encoded = Path('scripts/printing-rules-block.b64').read_text(encoding='utf-8').strip()
+          replacement = base64.b64decode(encoded).decode('utf-8')
           path.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
           PY
 
-      - name: Restore CI, remove temporary workflows and push
+      - name: Restore CI, remove temporary files and push
         shell: bash
         run: |
           git fetch origin dev
           git checkout origin/dev -- .github/workflows/warehouse-ci.yml
           rm -f .github/workflows/fix-printing-rules-once.yml
           rm -f .github/workflows/kick-printing-scope.yml
+          rm -f scripts/printing-rules-block.b64
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
