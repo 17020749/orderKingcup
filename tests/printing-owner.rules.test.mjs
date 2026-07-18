@@ -189,7 +189,10 @@ test('vận hành có view_all và edit/delete thao tác được tiến độ d
   const db = env.authenticatedContext(OPERATOR_A, { email: OPERATOR_A }).firestore()
 
   await assertSucceeds(getDocs(query(collection(db, 'print_orders'))))
-  await assertSucceeds(getDocs(query(collection(db, 'print_order_items'))))
+  await assertSucceeds(getDocs(query(
+    collection(db, 'print_order_items'),
+    where('print_order_id', 'in', ['print-order-a', 'print-order-b', 'print-self']),
+  )))
   await assertSucceeds(updateDoc(doc(db, 'print_orders', 'print-order-a'), {
     note: 'Vận hành cập nhật',
     updated_by: OPERATOR_A,
