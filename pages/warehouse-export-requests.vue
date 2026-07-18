@@ -41,6 +41,7 @@ const showDetailModal = ref(false)
 const showActionModal = ref(false)
 const actionForm = reactive({ note: '', export_date: todayKey() })
 const releaseLines = ref<any[]>([])
+const releaseWarehouseIds = ref<Record<number, string>>({})
 let stopRequestsListener: (() => void) | null = null
 let lastRealtimeError = ''
 
@@ -224,6 +225,7 @@ function openAction(row: any, type: 'accept' | 'reject' | 'release') {
         from_warehouse_id: '',
       }))
     : []
+  releaseWarehouseIds.value = {}
   showActionModal.value = true
 }
 
@@ -245,6 +247,15 @@ const actionLines = computed(() => {
   if (actionType.value === 'release') return releaseLines.value
   return actionRequest.value ? requestLineProgress(actionRequest.value) : []
 })
+
+function releaseWarehouseId(line: any, index: number) {
+  return String(releaseWarehouseIds.value[index] || line?.from_warehouse_id || '').trim()
+}
+
+function onReleaseWarehouseChanged(index: number, value: string) {
+  releaseWarehouseIds.value[index] = value
+  if (releaseLines.value[index]) releaseLines.value[index].from_warehouse_id = value
+}
 
 function saleNotificationRecipients(row: any) {
   const order = orders.value.find(item => item.id === row?.order_id)
@@ -371,14 +382,16 @@ async function submitReject(row: any) {
 }
 
 async function submitRelease(row: any) {
-  const lines = releaseLines.value.filter((line: any) => toNumber(line.requested_qty) > 0)
+  const lines = releaseLines.value
+    .map((line: any, index: number) => ({ ...line, __release_index: index }))
+    .filter((line: any) => toNumber(line.requested_qty) > 0)
   if (!lines.length) return showToast('Yêu cầu xuất kho chưa có dòng hàng hợp lệ.', 'error')
 
   const missing = lines.filter((line: any) => !findProductByCode(line.product_code))
   if (missing.length) {
     return showToast(`Chưa tìm thấy sản phẩm cho mã: ${missing.map((line: any) => line.product_code).join(', ')}. Kiểm tra quyền truy cập và mã sản phẩm.`, 'error')
   }
-  const missingWarehouse = lines.filter((line: any) => !findWarehouse(line.from_warehouse_id))
+  const missingWarehouse = lines.filter((line: any) => !releaseWarehouseId(line, line.__release_index))
   if (missingWarehouse.length) {
     return showToast('Vui lòng chọn kho xuất cho từng dòng sản phẩm.', 'error')
   }
@@ -391,14 +404,18 @@ async function submitRelease(row: any) {
     note: actionForm.note,
     timeline: timeline(row),
     orderSummaryPatch: orderPatchAfter(row, 'da_xuat', { warehouse_export_code: 'pending_firestore' }),
-    lines: lines.map((line: any) => ({
-      product: findProductByCode(line.product_code),
-      from_warehouse_id: line.from_warehouse_id,
-      logo: line.logo,
-      quantity: toNumber(line.requested_qty),
-      unit: line.unit,
-      note: line.note || ''
-    }))
+    lines: lines.map((line: any) => {
+      const warehouseId = releaseWarehouseId(line, line.__release_index)
+      return {
+        product: findProductByCode(line.product_code),
+        from_warehouse_id: warehouseId,
+        warehouse_id: warehouseId,
+        logo: line.logo,
+        quantity: toNumber(line.requested_qty),
+        unit: line.unit,
+        note: line.note || ''
+      }
+    })
   })
   if (result.alreadyProcessed) {
     showToast('Yêu cầu đã được xử lý trước đó.', 'info')
@@ -628,7 +645,13 @@ onBeforeUnmount(() => {
           <tbody>
             <tr v-for="(line,index) in actionLines" :key="index">
               <td v-if="actionType === 'release'">
-                <SearchableSelect v-model="line.from_warehouse_id" :options="warehouseOptions" placeholder="Chọn kho xuất" />
+                <SearchableSelect
+                  :model-value="releaseWarehouseId(line, index)"
+                  :options="warehouseOptions"
+                  placeholder="Chọn kho xuất"
+                  @update:model-value="onReleaseWarehouseChanged(index, $event)"
+                  @change="onReleaseWarehouseChanged(index, $event)"
+                />
               </td>
               <td><b>{{ line.product_code }}</b><div class="small subtle">{{ line.product_name }}</div></td>
               <td>{{ line.logo || '-' }}</td>
