@@ -19,6 +19,7 @@ type InventoryAuditRow = InventoryBalanceDoc & {
   movement_quantity: number
   difference: number
   has_balance: boolean
+  has_inbound_history: boolean
 }
 
 type InventoryLotDetailRow = {
@@ -67,8 +68,6 @@ const selected = ref<InventoryAuditRow | null>(null)
 const showDetailModal = ref(false)
 const detailTab = ref<'lots' | 'movements'>('movements')
 
-// Giá nhập đang nằm trong import_order_items. Firestore Rules chỉ cho người
-// có import.view đọc collection này, vì vậy UI dùng đúng quyền đó để bật giá.
 const canViewCost = computed(() => hasPermission('*') || hasPermission('import.view'))
 
 const activeProductIds = computed(() => new Set(
@@ -99,6 +98,21 @@ function roundQuantity(value: any) {
   return Math.round(toNumber(value) * 1000) / 1000
 }
 
+function balanceHasInboundOrigin(row: any) {
+  if (Array.isArray(row?.lots)) {
+    return row.lots.some((lot: any) => [
+      'import_order',
+      'warehouse_transfer',
+      'legacy_opening',
+    ].includes(String(lot?.source || '')))
+  }
+
+  // Dữ liệu tồn cũ chưa có cấu trúc lots nhưng đang có số lượng được coi là
+  // tồn mở đầu. Balance mới luôn có mảng lots nên điều kiện này không làm cho
+  // một điều chỉnh tăng mới trở thành lịch sử nhập kho.
+  return Math.abs(toNumber(row?.quantity)) >= 0.0001
+}
+
 function rawLotsForRow(row: any) {
   const lots = Array.isArray(row?.lots)
     ? row.lots
@@ -118,8 +132,6 @@ function rawLotsForRow(row: any) {
   ))
   const missing = roundQuantity(toNumber(row?.quantity) - tracked)
 
-  // Tồn cũ chưa có metadata lô vẫn phải xuất hiện trong chi tiết, nhưng giá
-  // được đánh dấu chưa xác định vì không có phiếu nhập gốc để đối chiếu.
   if (missing > 0.0001) {
     lots.push({
       id: `opening__${row.id}`,
@@ -211,6 +223,7 @@ const auditRows = computed<InventoryAuditRow[]>(() => {
         movement_quantity: 0,
         difference: 0,
         has_balance: true,
+        has_inbound_history: balanceHasInboundOrigin(row),
       })
     })
 
@@ -238,6 +251,7 @@ const auditRows = computed<InventoryAuditRow[]>(() => {
           movement_quantity: 0,
           difference: 0,
           has_balance: false,
+          has_inbound_history: false,
         })
       }
 
@@ -253,6 +267,13 @@ const auditRows = computed<InventoryAuditRow[]>(() => {
         || type.includes('transfer_in')
         || type.includes('reverse_destination')
       const isExportMovement = sourceCollection === 'export_orders' && !isImportMovement
+      const qualifiesAsInboundHistory = quantity > 0 && (
+        sourceCollection === 'import_orders'
+        || type === 'import'
+        || type.includes('transfer_in')
+      )
+
+      if (qualifiesAsInboundHistory) row.has_inbound_history = true
 
       if (isAdjustment) row.movement_adjustment += quantity
       else if (isImportMovement) row.movement_in += quantity
@@ -272,11 +293,7 @@ const auditRows = computed<InventoryAuditRow[]>(() => {
   })
 
   return Array.from(audit.values())
-    .filter(row =>
-      Math.abs(toNumber(row.quantity)) >= 0.0001
-      || Math.abs(row.movement_quantity) >= 0.0001
-      || Math.abs(row.difference) >= 0.0001,
-    )
+    .filter(row => row.has_inbound_history)
     .sort((a, b) => {
       const left = `${a.warehouse_name || ''} ${a.product_code || ''} ${a.logo || ''}`
       const right = `${b.warehouse_name || ''} ${b.product_code || ''} ${b.logo || ''}`
@@ -546,7 +563,11 @@ onMounted(() => loadRows())
               <td>{{ quantityText(row.movement_out) }}</td>
               <td>{{ quantityText(row.movement_adjustment) }}</td>
               <td><b>{{ quantityText(row.movement_quantity) }}</b></td>
-              <td><b>{{ quantityText(row.quantity) }}</b><div v-if="!row.has_balance" class="small" style="color:#dc2626">Thiếu balance</div></td>
+              <td>
+                <b>{{ quantityText(row.quantity) }}</b>
+                <span v-if="Math.abs(toNumber(row.quantity)) < 0.0001" class="badge red" style="margin-left: 6px;">Hết hàng</span>
+                <div v-if="!row.has_balance" class="small" style="color:#dc2626">Thiếu balance</div>
+              </td>
               <td v-if="canViewCost"><b>{{ lotCount(row) }}</b></td>
               <td v-if="canViewCost"><b>{{ currencyText(lotValueForRow(row)) }}</b></td>
               <td><span class="badge" :class="differenceClass(row)">{{ quantityText(row.difference) }}</span></td>
@@ -640,7 +661,7 @@ onMounted(() => loadRows())
                 <td>{{ lot.unit_cost === null ? 'Chưa xác định' : currencyText(lot.unit_cost) }}</td>
                 <td><b>{{ lot.remaining_value === null ? 'Chưa xác định' : currencyText(lot.remaining_value) }}</b></td>
               </tr>
-              <tr v-if="!selectedLots.length"><td colspan="10" class="empty">Dòng tồn này chưa có metadata lô.</td></tr>
+              <tr v-if="!selectedLots.length"><td colspan="10" class="empty">Dòng tồn này hiện không còn lô hàng khả dụng.</td></tr>
             </tbody>
           </table>
         </div>
