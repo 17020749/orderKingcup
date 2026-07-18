@@ -352,6 +352,14 @@ async function saveExportOrder() {
   const missingWarehouse = validLines.find((line) => !line.from_warehouse_id);
   if (missingWarehouse)
     return showToast("Vui lòng chọn kho xuất cho từng dòng sản phẩm.", "error");
+  const missingWarehouseDoc = validLines.find(
+    (line) => !findWarehouse(line.from_warehouse_id),
+  );
+  if (missingWarehouseDoc)
+    return showToast(
+      "Kho xuất đã chọn không còn trong danh mục kho. Vui lòng tải lại trang và chọn lại.",
+      "error",
+    );
   if (
     form.destination_type === "warehouse" &&
     validLines.some((line) => line.from_warehouse_id === form.to_warehouse_id)
@@ -376,19 +384,25 @@ async function saveExportOrder() {
       toWarehouse,
       note: form.note,
       operation_id: form.operation_id,
-      lines: validLines.map((line) => ({
-        product: findProduct(line.product_id),
-        from_warehouse_id: line.from_warehouse_id,
-        source_logo:
-          form.destination_type === "warehouse"
-            ? line.source_logo || ""
-            : line.logo || "",
-        target_logo: line.logo || "",
-        logo: line.logo,
-        quantity: toNumber(line.quantity),
-        unit: line.unit || findProduct(line.product_id)?.unit || "",
-        note: line.note,
-      })),
+      lines: validLines.map((line) => {
+        const fromWarehouse = findWarehouse(line.from_warehouse_id);
+        return {
+          product: findProduct(line.product_id),
+          fromWarehouse,
+          warehouse: fromWarehouse,
+          from_warehouse_id: line.from_warehouse_id,
+          warehouse_id: line.from_warehouse_id,
+          source_logo:
+            form.destination_type === "warehouse"
+              ? line.source_logo || ""
+              : line.logo || "",
+          target_logo: line.logo || "",
+          logo: line.logo,
+          quantity: toNumber(line.quantity),
+          unit: line.unit || findProduct(line.product_id)?.unit || "",
+          note: line.note,
+        };
+      }),
     };
     const result = editing.value
       ? await updateExportOrder({
