@@ -31,6 +31,8 @@ test('manual transfer export client sends selected source warehouse id and objec
   assert.match(saveSection, /const fromWarehouse = findWarehouse\(line\.from_warehouse_id\)/)
   assert.match(saveSection, /fromWarehouse,\s*\n\s*warehouse: fromWarehouse,/)
   assert.match(saveSection, /from_warehouse_id: line\.from_warehouse_id,\s*\n\s*warehouse_id: line\.from_warehouse_id,/)
+  assert.match(saveSection, /source_logo:\s*\n\s*form\.destination_type === "warehouse"\s*\n\s*\? line\.source_logo \|\| ""/)
+  assert.match(saveSection, /target_logo: line\.logo \|\| ""/)
 })
 
 test('warehouse transaction resolver accepts ids from line payload shapes', () => {
@@ -86,6 +88,21 @@ test('warehouse cost transaction override accepts per-line source warehouses', (
   )
   assert.match(prepareSection, /line\.from_warehouse_id \|\| line\.warehouse_id \|\| line\.fromWarehouse \|\| line\.warehouse \|\| line/)
   assert.match(prepareSection, /`kho xuất dòng \$\{index \+ 1\}`/)
+  assert.match(prepareSection, /sourceLogo: toWarehouse \? lineSourceLogo\(line\) : lineTargetLogo\(line\)/)
+  assert.match(prepareSection, /targetLogo: lineTargetLogo\(line\)/)
+
+  const createSection = costTransactions.slice(
+    costTransactions.indexOf('async function createExportOrder'),
+    costTransactions.indexOf('async function restoreExistingExportToStates'),
+  )
+  assert.match(createSection, /warehouse: line\.fromWarehouse, logo: line\.sourceLogo/)
+  assert.match(createSection, /warehouse: line\.toWarehouse, logo: line\.targetLogo/)
+  assert.match(createSection, /entry\.logo === normalizeLogo\(line\.sourceLogo\)/)
+  assert.match(createSection, /entry\.logo === normalizeLogo\(line\.targetLogo\)/)
+  assert.match(createSection, /source_logo: normalizeLogo\(line\.sourceLogo\)/)
+  assert.match(createSection, /target_logo: normalizeLogo\(line\.targetLogo\)/)
+  assert.match(createSection, /logo: line\.sourceLogo/)
+  assert.match(createSection, /logo: line\.targetLogo/)
 
   const requestReleaseSection = costTransactions.slice(
     costTransactions.indexOf('async function processExportRequestToExportOrder'),
@@ -94,4 +111,16 @@ test('warehouse cost transaction override accepts per-line source warehouses', (
   assert.match(requestReleaseSection, /const fallbackWarehouse = input\.warehouse \? ensureWarehouse\(input\.warehouse, 'kho xuất mặc định'\) : null/)
   assert.match(requestReleaseSection, /fromWarehouse: line\.fromWarehouse \|\| line\.warehouse \|\| line\.from_warehouse_id \|\| line\.warehouse_id \|\| fallbackWarehouse/)
   assert.match(requestReleaseSection, /warehouse: line\.fromWarehouse/)
+})
+
+test('warehouse cost transaction shortage message includes product warehouse logo and quantities', () => {
+  const allocateSection = costTransactions.slice(
+    costTransactions.indexOf('function allocateFromState'),
+    costTransactions.indexOf('function restoreSourceAllocation'),
+  )
+  assert.match(allocateSection, /const beforeQuantity = roundQuantity\(state\.quantity\)/)
+  assert.match(allocateSection, /productCode\(state\.product\)} - \$\{productName\(state\.product\)\}/)
+  assert.match(allocateSection, /warehouseName\(state\.warehouse\)/)
+  assert.ok(allocateSection.includes("logoText ? ` / logo ${logoText}` : ' / hàng trơn'"))
+  assert.match(allocateSection, /Tồn hiện tại \$\{beforeQuantity\}, cần \$\{roundQuantity\(quantity\)\}/)
 })
