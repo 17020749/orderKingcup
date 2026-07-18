@@ -117,9 +117,13 @@ function ensureProduct(product: any) {
 }
 
 function ensureWarehouse(warehouse: any, label = 'kho') {
+  function missingWarehouseError(fields: string) {
+    return new Error(`Thiếu ${label} hoặc ${label} chưa có ID hệ thống. Payload ${label}: ${fields || 'rỗng'}.`)
+  }
+
   if (typeof warehouse === 'string') {
     const id = normalizeId(warehouse)
-    if (!id) throw new Error(`Thiếu ${label} hoặc ${label} chưa có ID hệ thống.`)
+    if (!id) throw missingWarehouseError(warehouse)
     return { id, firestore_id: id, name: id, warehouse_code: id }
   }
   const id = normalizeId(
@@ -134,7 +138,7 @@ function ensureWarehouse(warehouse: any, label = 'kho') {
     const fields = warehouse && typeof warehouse === 'object'
       ? Object.keys(warehouse).slice(0, 8).join(', ')
       : String(warehouse || '')
-    throw new Error(`Thiếu ${label} hoặc ${label} chưa có ID hệ thống. Payload ${label}: ${fields || 'rỗng'}.`)
+    throw missingWarehouseError(fields)
   }
   return { ...warehouse, id, firestore_id: warehouse?.firestore_id || id }
 }
@@ -2124,7 +2128,7 @@ export function useWarehouseTransactions() {
     const requestDocId = String(request.id || request.request_id || '').trim()
     if (!requestDocId) throw new Error('Thiếu ID yêu cầu xuất kho.')
 
-    const fallbackWarehouse = input.warehouse ? ensureWarehouse(input.warehouse, 'kho xuất') : null
+    const fallbackWarehouse = input.warehouse ? ensureWarehouse(input.warehouse, 'kho xuất mặc định') : null
     const exportDate = input.export_date || request.export_date || todayKey()
     const orderId = safeDocId(`request_export__${requestDocId}`, 'export')
     const code = safeDocId(`PXK-${request.request_id || requestDocId}`, 'PXK')
