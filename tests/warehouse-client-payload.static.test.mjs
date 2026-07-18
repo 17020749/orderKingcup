@@ -5,6 +5,8 @@ import { test } from 'node:test'
 const releasePage = readFileSync('pages/warehouse-export-requests.vue', 'utf8')
 const exportsPage = readFileSync('pages/exports.vue', 'utf8')
 const transactions = readFileSync('composables/useWarehouseTransactions.ts', 'utf8')
+const costTransactions = readFileSync('composables/useWarehouseCostTransactions.ts', 'utf8')
+const warehouseCostModule = readFileSync('modules/warehouse-cost.ts', 'utf8')
 
 test('warehouse release client sends selected warehouse id and object per line', () => {
   const submitSection = releasePage.slice(
@@ -65,4 +67,31 @@ test('warehouse transaction resolver accepts ids from line payload shapes', () =
   assert.match(requestReleaseSection, /ensureWarehouse\(input\.warehouse, 'kho xuất mặc định'\)/)
   assert.match(requestReleaseSection, /line\.from_warehouse_id \|\| line\.warehouse_id \|\| line\.fromWarehouse \|\| line\.warehouse \|\| fallbackWarehouse \|\| line/)
   assert.match(requestReleaseSection, /`kho xuất dòng \$\{index \+ 1\}`/)
+})
+
+test('warehouse cost transaction override accepts per-line source warehouses', () => {
+  assert.match(warehouseCostModule, /as: 'useWarehouseTransactions'/)
+
+  const ensureSection = costTransactions.slice(
+    costTransactions.indexOf('function ensureWarehouse'),
+    costTransactions.indexOf('function positiveQuantity'),
+  )
+  assert.match(ensureSection, /warehouse\?\.from_warehouse_id/)
+  assert.match(ensureSection, /warehouse\?\.warehouse_id/)
+  assert.match(ensureSection, /if \(!id\) throw missingWarehouseError\(warehouse\)/)
+
+  const prepareSection = costTransactions.slice(
+    costTransactions.indexOf('async function prepareExportLines'),
+    costTransactions.indexOf('async function createExportOrder'),
+  )
+  assert.match(prepareSection, /line\.from_warehouse_id \|\| line\.warehouse_id \|\| line\.fromWarehouse \|\| line\.warehouse \|\| line/)
+  assert.match(prepareSection, /`kho xuất dòng \$\{index \+ 1\}`/)
+
+  const requestReleaseSection = costTransactions.slice(
+    costTransactions.indexOf('async function processExportRequestToExportOrder'),
+    costTransactions.indexOf('const saleRecipients', costTransactions.indexOf('async function processExportRequestToExportOrder')),
+  )
+  assert.match(requestReleaseSection, /const fallbackWarehouse = input\.warehouse \? ensureWarehouse\(input\.warehouse, 'kho xuất mặc định'\) : null/)
+  assert.match(requestReleaseSection, /fromWarehouse: line\.fromWarehouse \|\| line\.warehouse \|\| line\.from_warehouse_id \|\| line\.warehouse_id \|\| fallbackWarehouse/)
+  assert.match(requestReleaseSection, /warehouse: line\.fromWarehouse/)
 })
