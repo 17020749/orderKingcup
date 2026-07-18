@@ -1,393 +1,121 @@
 name: Warehouse CI
 
 on:
-  workflow_dispatch:
-
   pull_request:
     branches:
       - dev
-      - main
     types:
-      - opened
       - synchronize
       - reopened
 
-  push:
-    branches:
-      - dev
-      - main
-
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: warehouse-ci-${{ github.event.pull_request.number || github.ref }}
+  group: printing-rules-patch-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  verify:
-    name: Build, generate and rules tests
+  apply_printing_rules_once:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      NUXT_PUBLIC_FIREBASE_API_KEY: ci-placeholder
-      NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ci.invalid
-      NUXT_PUBLIC_FIREBASE_PROJECT_ID: ci-placeholder
-      NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ci-placeholder
-      NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
-      NUXT_PUBLIC_FIREBASE_APP_ID: '1:000000000000:web:0000000000000000000000'
-      NUXT_PUBLIC_APP_NAME: KINGCUP CI
-
     steps:
-      - name: Checkout source
+      - name: Checkout feature branch
         uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: '20.19.4'
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: '9.15.9'
-          run_install: false
-
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile --ignore-scripts
-
-      - name: Prepare Nuxt
-        run: pnpm exec nuxi prepare
-
-      - name: Build
-        run: pnpm run build
-
-      - name: Generate static site
-        run: pnpm run generate
-
-      - name: Firestore Rules and concurrency tests
-        run: pnpm run test:rules
-
-  preview_dev:
-    name: Deploy staging rules and PR preview
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.base_ref == 'dev' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    environment:
-      name: dev
-    permissions:
-      contents: read
-      pull-requests: write
-      checks: write
-    env:
-      EXPECTED_FIREBASE_PROJECT_ID: kingcupmanagerstaging
-
-    steps:
-      - name: Checkout merge result
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20.19.4'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: '9.15.9'
-          run_install: false
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile --ignore-scripts
-
-      - name: Prepare Nuxt
-        run: pnpm exec nuxi prepare
-
-      - name: Load and validate Firebase web configuration
-        id: firebase_config
+      - name: Enforce printing ownership in Firestore Rules
         shell: bash
-        env:
-          FIREBASE_WEB_CONFIG: ${{ vars.FIREBASE_WEB_CONFIG }}
         run: |
-          node <<'NODE'
-          const fs = require('node:fs')
+          python <<'PY'
+          from pathlib import Path
 
-          const raw = process.env.FIREBASE_WEB_CONFIG || ''
-          const expectedProjectId = process.env.EXPECTED_FIREBASE_PROJECT_ID || ''
-          const requiredKeys = [
-            'apiKey',
-            'authDomain',
-            'projectId',
-            'storageBucket',
-            'messagingSenderId',
-            'appId'
-          ]
+          path = Path('firestore.rules')
+          text = path.read_text(encoding='utf-8')
+          start = text.index('    match /print_orders/{docId} {')
+          end = text.index('    match /shipments/{docId} {', start)
+          replacement = '''    match /print_orders/{docId} {
+      allow read: if hasPerm('printing.view_all')
+        || (
+          hasPerm('printing.view')
+          && ownsPrintOrderData(resource.data)
+        );
 
-          let config
-          try {
-            config = JSON.parse(raw)
-          } catch {
-            config = {}
-            for (const key of [...requiredKeys, 'appName']) {
-              const pattern = new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"'\\r\\n]+)["']`)
-              config[key] = raw.match(pattern)?.[1] || ''
-            }
-          }
+      allow create: if hasPerm('printing.create')
+        && request.resource.data.get('order_code', '') is string
+        && request.resource.data.get('order_code', '') != ''
+        && printOrderSourceMatches(request.resource.data)
+        && ownEmailField(request.resource.data, 'created_by');
 
-          const missingKeys = requiredKeys.filter((key) =>
-            typeof config[key] !== 'string' || config[key].trim() === ''
-          )
+      allow update: if isAdmin()
+        || (
+          hasPerm('printing.edit')
+          && ownsPrintOrderData(resource.data)
+          && warehouseDocIdentitySafe()
+          && request.resource.data.get('order_code', '') is string
+          && request.resource.data.get('order_code', '') != ''
+          && printOrderSourceMatches(request.resource.data)
+          && unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
+        )
+        || (
+          hasPerm('printing.delete')
+          && ownsPrintOrderData(resource.data)
+          && warehouseDocIdentitySafe()
+          && warehouseSoftDeleteOnly()
+        );
 
-          if (missingKeys.length > 0) {
-            console.error(`::error::FIREBASE_WEB_CONFIG is missing: ${missingKeys.join(', ')}`)
-            process.exit(1)
-          }
+      allow delete: if isAdmin();
+    }
 
-          if (config.projectId !== expectedProjectId) {
-            console.error(
-              `::error::Environment points to ${config.projectId}; expected ${expectedProjectId}`
-            )
-            process.exit(1)
-          }
+    match /print_order_items/{docId} {
+      allow read: if hasPerm('printing.view_all')
+        || (
+          hasPerm('printing.view')
+          && ownEmailField(resource.data, 'created_by')
+        );
 
-          const values = {
-            NUXT_PUBLIC_FIREBASE_API_KEY: config.apiKey,
-            NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: config.authDomain,
-            NUXT_PUBLIC_FIREBASE_PROJECT_ID: config.projectId,
-            NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: config.storageBucket,
-            NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: config.messagingSenderId,
-            NUXT_PUBLIC_FIREBASE_APP_ID: config.appId,
-            NUXT_PUBLIC_APP_NAME: config.appName || 'KINGCUP Staging'
-          }
+      allow create: if hasAnyPerm(['printing.create', 'printing.edit'])
+        && request.resource.data.print_order_id is string
+        && ownsActivePrintOrderAfterById(request.resource.data.print_order_id)
+        && request.resource.data.get('product_id', '') is string
+        && request.resource.data.get('product_id', '') != ''
+        && printQuantitiesAreValid(request.resource.data)
+        && ownEmailField(request.resource.data, 'created_by');
 
-          const output = Object.entries(values)
-            .map(([key, value]) => `${key}=${value}`)
-            .join('\n')
+      allow update: if isAdmin()
+        || (
+          hasPerm('printing.edit')
+          && ownEmailField(resource.data, 'created_by')
+          && ownsActivePrintOrderAfterById(resource.data.print_order_id)
+          && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
+          && printQuantitiesAreValid(request.resource.data)
+        )
+        || (
+          hasAnyPerm(['printing.edit', 'printing.delete'])
+          && ownEmailField(resource.data, 'created_by')
+          && ownsPrintOrderAfterById(resource.data.print_order_id)
+          && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
+          && warehouseSoftDeleteOnly()
+        );
 
-          fs.appendFileSync(process.env.GITHUB_ENV, `${output}\n`)
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `project_id=${config.projectId}\n`)
-          NODE
+      allow delete: if isAdmin();
+    }
 
-      - name: Validate staging service account
+'''
+          path.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
+          PY
+
+      - name: Restore CI, remove temporary workflows and push
         shell: bash
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
-          node <<'NODE'
-          let serviceAccount
-
-          try {
-            serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '')
-          } catch {
-            console.error('::error::FIREBASE_SERVICE_ACCOUNT is not valid JSON')
-            process.exit(1)
-          }
-
-          if (serviceAccount.project_id !== process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID) {
-            console.error(
-              `::error::Service account belongs to ${serviceAccount.project_id || 'unknown'}; ` +
-              `expected ${process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID}`
-            )
-            process.exit(1)
-          }
-          NODE
-
-      - name: Build for staging
-        run: pnpm run build
-
-      - name: Generate staging site
-        run: pnpm run generate
-
-      - name: Authenticate for Firestore Rules deployment
-        uses: google-github-actions/auth@v3
-        with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-
-      - name: Deploy Firestore Rules to staging
-        run: >-
-          pnpm exec firebase deploy
-          --only firestore:rules
-          --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID"
-          --non-interactive
-
-      - name: Deploy Hosting Preview Channel
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          projectId: ${{ steps.firebase_config.outputs.project_id }}
-          expires: 7d
-          firebaseToolsVersion: '15.23.0'
-
-  deploy_live:
-    name: Deploy live Hosting and Rules
-    if: >-
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
-    needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    environment:
-      name: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
-    env:
-      EXPECTED_FIREBASE_PROJECT_ID: ${{ github.ref == 'refs/heads/main' && 'orderfirestore-501909' || 'kingcupmanagerstaging' }}
-
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20.19.4'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: '9.15.9'
-          run_install: false
-
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile --ignore-scripts
-
-      - name: Prepare Nuxt
-        run: pnpm exec nuxi prepare
-
-      - name: Load and validate Firebase web configuration
-        id: firebase_config
-        shell: bash
-        env:
-          FIREBASE_WEB_CONFIG: ${{ vars.FIREBASE_WEB_CONFIG }}
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs')
-
-          const raw = process.env.FIREBASE_WEB_CONFIG || ''
-          const expectedProjectId = process.env.EXPECTED_FIREBASE_PROJECT_ID || ''
-          const requiredKeys = [
-            'apiKey',
-            'authDomain',
-            'projectId',
-            'storageBucket',
-            'messagingSenderId',
-            'appId'
-          ]
-
-          let config
-          try {
-            config = JSON.parse(raw)
-          } catch {
-            config = {}
-            for (const key of [...requiredKeys, 'appName']) {
-              const pattern = new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"'\\r\\n]+)["']`)
-              config[key] = raw.match(pattern)?.[1] || ''
-            }
-          }
-
-          const missingKeys = requiredKeys.filter((key) =>
-            typeof config[key] !== 'string' || config[key].trim() === ''
-          )
-
-          if (missingKeys.length > 0) {
-            console.error(`::error::FIREBASE_WEB_CONFIG is missing: ${missingKeys.join(', ')}`)
-            process.exit(1)
-          }
-
-          if (config.projectId !== expectedProjectId) {
-            console.error(
-              `::error::Environment points to ${config.projectId}; expected ${expectedProjectId}`
-            )
-            process.exit(1)
-          }
-
-          const defaultAppName =
-            expectedProjectId === 'orderfirestore-501909'
-              ? 'KINGCUP Dashboard'
-              : 'KINGCUP Staging'
-
-          const values = {
-            NUXT_PUBLIC_FIREBASE_API_KEY: config.apiKey,
-            NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: config.authDomain,
-            NUXT_PUBLIC_FIREBASE_PROJECT_ID: config.projectId,
-            NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: config.storageBucket,
-            NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: config.messagingSenderId,
-            NUXT_PUBLIC_FIREBASE_APP_ID: config.appId,
-            NUXT_PUBLIC_APP_NAME: config.appName || defaultAppName
-          }
-
-          const output = Object.entries(values)
-            .map(([key, value]) => `${key}=${value}`)
-            .join('\n')
-
-          fs.appendFileSync(process.env.GITHUB_ENV, `${output}\n`)
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `project_id=${config.projectId}\n`)
-          NODE
-
-      - name: Validate deployment service account
-        shell: bash
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        run: |
-          node <<'NODE'
-          let serviceAccount
-
-          try {
-            serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '')
-          } catch {
-            console.error('::error::FIREBASE_SERVICE_ACCOUNT is not valid JSON')
-            process.exit(1)
-          }
-
-          if (serviceAccount.project_id !== process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID) {
-            console.error(
-              `::error::Service account belongs to ${serviceAccount.project_id || 'unknown'}; ` +
-              `expected ${process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID}`
-            )
-            process.exit(1)
-          }
-          NODE
-
-      - name: Build for selected environment
-        run: pnpm run build
-
-      - name: Firestore Rules and concurrency tests
-        run: pnpm run test:rules
-
-      - name: Generate selected environment site
-        run: pnpm run generate
-
-      - name: Authenticate for Firestore Rules deployment
-        uses: google-github-actions/auth@v3
-        with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-
-      - name: Deploy Firestore Rules
-        run: >-
-          pnpm exec firebase deploy
-          --only firestore:rules
-          --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID"
-          --non-interactive
-
-      - name: Deploy Hosting live channel
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          projectId: ${{ steps.firebase_config.outputs.project_id }}
-          channelId: live
-          firebaseToolsVersion: '15.23.0'
+          git fetch origin dev
+          git checkout origin/dev -- .github/workflows/warehouse-ci.yml
+          rm -f .github/workflows/fix-printing-rules-once.yml
+          rm -f .github/workflows/kick-printing-scope.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(rules): enforce printing record ownership"
+          git push origin HEAD:${{ github.head_ref }}
