@@ -1,5 +1,6 @@
 name: Apply printing ownership rules once
 
+# This temporary workflow removes itself after applying the rules patch.
 on:
   pull_request:
     branches:
