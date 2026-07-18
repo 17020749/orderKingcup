@@ -28,9 +28,14 @@ import {
 type PricedWarehouseLineInput = {
   product: ProductDoc | any
   warehouse?: WarehouseDoc | any
+  warehouse_id?: string
   fromWarehouse?: WarehouseDoc | any
+  from_warehouse_id?: string
   toWarehouse?: WarehouseDoc | any | null
+  to_warehouse_id?: string
   logo?: string
+  source_logo?: string
+  target_logo?: string
   quantity: number
   unit?: string
   unit_cost?: number
@@ -54,6 +59,32 @@ type BalanceState = {
 
 function normalizeLogo(value: any) {
   return String(value || '').trim()
+}
+
+function hasOwnField(data: any, field: string) {
+  return data != null && Object.prototype.hasOwnProperty.call(data, field)
+}
+
+function lineSourceLogo(line: any) {
+  if (hasOwnField(line, 'source_logo')) return normalizeLogo(line.source_logo)
+  return normalizeLogo(line.logo)
+}
+
+function lineTargetLogo(line: any) {
+  if (hasOwnField(line, 'target_logo')) return normalizeLogo(line.target_logo)
+  return normalizeLogo(line.logo)
+}
+
+function exportItemSourceLogo(item: any) {
+  return hasOwnField(item, 'source_logo')
+    ? normalizeLogo(item.source_logo)
+    : normalizeLogo(item.logo)
+}
+
+function exportItemTargetLogo(item: any) {
+  return hasOwnField(item, 'target_logo')
+    ? normalizeLogo(item.target_logo)
+    : normalizeLogo(item.logo)
 }
 
 function normalizeId(value: any) {
@@ -104,9 +135,31 @@ function ensureProduct(product: any) {
 }
 
 function ensureWarehouse(warehouse: any, label = 'kho') {
-  const id = normalizeId(warehouse?.id || warehouse?.firestore_id)
-  if (!id) throw new Error(`Thiếu ${label} hoặc ${label} chưa có ID hệ thống.`)
-  return { ...warehouse, id }
+  function missingWarehouseError(fields: string) {
+    return new Error(`Thiếu ${label} hoặc ${label} chưa có ID hệ thống. Payload ${label}: ${fields || 'rỗng'}.`)
+  }
+
+  if (typeof warehouse === 'string') {
+    const id = normalizeId(warehouse)
+    if (!id) throw missingWarehouseError(warehouse)
+    return { id, firestore_id: id, name: id, warehouse_code: id }
+  }
+
+  const id = normalizeId(
+    warehouse?.id
+    || warehouse?.firestore_id
+    || warehouse?.value
+    || warehouse?.from_warehouse_id
+    || warehouse?.warehouse_id
+    || warehouse?.to_warehouse_id
+  )
+  if (!id) {
+    const fields = warehouse && typeof warehouse === 'object'
+      ? Object.keys(warehouse).slice(0, 8).join(', ')
+      : String(warehouse || '')
+    throw missingWarehouseError(fields)
+  }
+  return { ...warehouse, id, firestore_id: warehouse?.firestore_id || id }
 }
 
 function positiveQuantity(value: any, label = 'Số lượng') {
@@ -437,6 +490,7 @@ export function useWarehouseCostTransactions() {
 
   function allocateFromState(state: BalanceState, quantity: number, setting: any) {
     reconcileState(state)
+    const beforeQuantity = roundQuantity(state.quantity)
     const allocated = allocateInventoryLots({
       lots: state.lots,
       quantity,
@@ -445,7 +499,12 @@ export function useWarehouseCostTransactions() {
     })
     state.lots = allocated.lots
     state.quantity = roundQuantity(state.quantity - quantity)
-    if (state.quantity < -0.0001) throw new Error(`Không đủ tồn: ${productCode(state.product)} / ${warehouseName(state.warehouse)}.`)
+    if (state.quantity < -0.0001) {
+      const logoText = normalizeLogo(state.logo)
+      throw new Error(
+        `Không đủ tồn: ${productCode(state.product)} - ${productName(state.product)} / ${warehouseName(state.warehouse)}${logoText ? ` / logo ${logoText}` : ' / hàng trơn'}. Tồn hiện tại ${beforeQuantity}, cần ${roundQuantity(quantity)}.`,
+      )
+    }
     return allocated.allocations
   }
 
@@ -992,9 +1051,12 @@ export function useWarehouseCostTransactions() {
       : null
     return (input.lines || []).filter((line: any) => roundQuantity(line.quantity) > 0).map((line: any, index: number) => {
       const product = ensureProduct(line.product)
-      const fromWarehouse = ensureWarehouse(line.fromWarehouse || line.warehouse, 'kho xuất')
+      const fromWarehouse = ensureWarehouse(
+        line.from_warehouse_id || line.warehouse_id || line.fromWarehouse || line.warehouse || line,
+        `kho xuất dòng ${index + 1}`,
+      )
       const toWarehouse = destinationType === 'warehouse'
-        ? ensureWarehouse(line.toWarehouse || defaultToWarehouse, 'kho nhận')
+        ? ensureWarehouse(line.to_warehouse_id || line.toWarehouse || defaultToWarehouse, `kho nhận dòng ${index + 1}`)
         : null
       if (toWarehouse && toWarehouse.id === fromWarehouse.id) throw new Error('Kho nhận phải khác kho xuất.')
       return {
@@ -1002,6 +1064,8 @@ export function useWarehouseCostTransactions() {
         product,
         fromWarehouse,
         toWarehouse,
+        sourceLogo: toWarehouse ? lineSourceLogo(line) : lineTargetLogo(line),
+        targetLogo: lineTargetLogo(line),
         quantity: positiveQuantity(line.quantity),
         itemId: String(line.itemId || safeDocId(`${orderId}__${index + 1}`, 'export_item')),
         outMovementId: safeDocId(`export_out:${orderId}:${index + 1}:${makeId('mv')}`, 'movement'),
@@ -1025,8 +1089,8 @@ export function useWarehouseCostTransactions() {
     if (replay) return { ...replay, operationId, alreadyProcessed: true, stockMovementIds: [] }
 
     const balanceLines = lines.flatMap((line: any) => [
-      { product: line.product, warehouse: line.fromWarehouse, logo: line.logo },
-      ...(line.toWarehouse ? [{ product: line.product, warehouse: line.toWarehouse, logo: line.logo }] : []),
+      { product: line.product, warehouse: line.fromWarehouse, logo: line.sourceLogo },
+      ...(line.toWarehouse ? [{ product: line.product, warehouse: line.toWarehouse, logo: line.targetLogo }] : []),
     ])
     const balanceRefs = await buildBalanceRefs(balanceLines)
 
@@ -1068,12 +1132,12 @@ export function useWarehouseCostTransactions() {
         tx.set(doc(db, 'export_orders', orderId), orderPayload)
 
         lines.forEach((line: any) => {
-          const sourceKey = Array.from(balanceRefs.values()).find(entry => entry.product.id === line.product.id && entry.warehouse.id === line.fromWarehouse.id && entry.logo === normalizeLogo(line.logo))!.id
+          const sourceKey = Array.from(balanceRefs.values()).find(entry => entry.product.id === line.product.id && entry.warehouse.id === line.fromWarehouse.id && entry.logo === normalizeLogo(line.sourceLogo))!.id
           const sourceState = states.get(sourceKey)!
           const allocations = allocateFromState(sourceState, line.quantity, setting)
 
           if (line.toWarehouse) {
-            const destinationKey = Array.from(balanceRefs.values()).find(entry => entry.product.id === line.product.id && entry.warehouse.id === line.toWarehouse.id && entry.logo === normalizeLogo(line.logo))!.id
+            const destinationKey = Array.from(balanceRefs.values()).find(entry => entry.product.id === line.product.id && entry.warehouse.id === line.toWarehouse.id && entry.logo === normalizeLogo(line.targetLogo))!.id
             const destinationState = states.get(destinationKey)!
             reconcileState(destinationState)
             allocations.forEach(allocation => addLot(destinationState, transferLotFromAllocation({
@@ -1082,7 +1146,7 @@ export function useWarehouseCostTransactions() {
               itemId: line.itemId,
               product: line.product,
               warehouse: line.toWarehouse,
-              logo: line.logo,
+              logo: line.targetLogo,
               unit: line.unit,
               exportDate,
             })))
@@ -1099,7 +1163,9 @@ export function useWarehouseCostTransactions() {
             to_warehouse_id: line.toWarehouse?.id || '',
             to_warehouse_name: line.toWarehouse ? warehouseName(line.toWarehouse) : '',
             destination_name: orderPayload.destination_name,
-            logo: normalizeLogo(line.logo),
+            logo: normalizeLogo(line.targetLogo),
+            source_logo: normalizeLogo(line.sourceLogo),
+            target_logo: normalizeLogo(line.targetLogo),
             quantity: line.quantity,
             unit: line.unit || line.product.unit || '',
             lot_allocations_json: JSON.stringify(allocations),
@@ -1125,7 +1191,7 @@ export function useWarehouseCostTransactions() {
             quantity: -line.quantity,
             product: line.product,
             warehouse: line.fromWarehouse,
-            logo: line.logo,
+            logo: line.sourceLogo,
             unit: line.unit,
             movementDate: exportDate,
             sourceCollection: 'export_orders',
@@ -1146,7 +1212,7 @@ export function useWarehouseCostTransactions() {
               quantity: line.quantity,
               product: line.product,
               warehouse: line.toWarehouse,
-              logo: line.logo,
+              logo: line.targetLogo,
               unit: line.unit,
               movementDate: exportDate,
               sourceCollection: 'export_orders',
@@ -1182,7 +1248,9 @@ export function useWarehouseCostTransactions() {
     input.items.forEach(item => {
       const product = ensureProduct({ id: item.product_id, product_code: item.product_code, product_name: item.product_name, unit: item.unit })
       const fromWarehouse = ensureWarehouse({ id: item.from_warehouse_id, name: item.from_warehouse_name })
-      const sourceKey = Array.from(input.refs.values()).find(entry => entry.product.id === product.id && entry.warehouse.id === fromWarehouse.id && entry.logo === normalizeLogo(item.logo))!.id
+      const sourceLogo = exportItemSourceLogo(item)
+      const targetLogo = exportItemTargetLogo(item)
+      const sourceKey = Array.from(input.refs.values()).find(entry => entry.product.id === product.id && entry.warehouse.id === fromWarehouse.id && entry.logo === sourceLogo)!.id
       const allocations = parseLotAllocations(item.lot_allocations_json)
       if (!allocations.length && item.to_warehouse_id) throw new Error('Phiếu chuyển kho cũ chưa có lịch sử lô, không thể sửa/hủy an toàn.')
       const safeAllocations = allocations.length ? allocations : [{
@@ -1195,7 +1263,7 @@ export function useWarehouseCostTransactions() {
       restoreSourceAllocation(input.states.get(sourceKey)!, safeAllocations, positiveQuantity(item.quantity))
       if (item.to_warehouse_id) {
         const toWarehouse = ensureWarehouse({ id: item.to_warehouse_id, name: item.to_warehouse_name })
-        const destinationKey = Array.from(input.refs.values()).find(entry => entry.product.id === product.id && entry.warehouse.id === toWarehouse.id && entry.logo === normalizeLogo(item.logo))!.id
+        const destinationKey = Array.from(input.refs.values()).find(entry => entry.product.id === product.id && entry.warehouse.id === toWarehouse.id && entry.logo === targetLogo)!.id
         removeDestinationTransferLots(input.states.get(destinationKey)!, safeAllocations, positiveQuantity(item.quantity))
       }
     })
@@ -1223,13 +1291,13 @@ export function useWarehouseCostTransactions() {
 
     const oldBalanceLines = oldItems.flatMap((item: any) => {
       const product = ensureProduct({ id: item.product_id, product_code: item.product_code, product_name: item.product_name, unit: item.unit })
-      const rows: any[] = [{ product, warehouse: ensureWarehouse({ id: item.from_warehouse_id, name: item.from_warehouse_name }), logo: item.logo }]
-      if (item.to_warehouse_id) rows.push({ product, warehouse: ensureWarehouse({ id: item.to_warehouse_id, name: item.to_warehouse_name }), logo: item.logo })
+      const rows: any[] = [{ product, warehouse: ensureWarehouse({ id: item.from_warehouse_id, name: item.from_warehouse_name }), logo: exportItemSourceLogo(item) }]
+      if (item.to_warehouse_id) rows.push({ product, warehouse: ensureWarehouse({ id: item.to_warehouse_id, name: item.to_warehouse_name }), logo: exportItemTargetLogo(item) })
       return rows
     })
     const newBalanceLines = lines.flatMap((line: any) => [
-      { product: line.product, warehouse: line.fromWarehouse, logo: line.logo },
-      ...(line.toWarehouse ? [{ product: line.product, warehouse: line.toWarehouse, logo: line.logo }] : []),
+      { product: line.product, warehouse: line.fromWarehouse, logo: line.sourceLogo },
+      ...(line.toWarehouse ? [{ product: line.product, warehouse: line.toWarehouse, logo: line.targetLogo }] : []),
     ])
     const refs = await buildBalanceRefs([...oldBalanceLines, ...newBalanceLines])
 
@@ -1278,7 +1346,7 @@ export function useWarehouseCostTransactions() {
             quantity: positiveQuantity(item.quantity),
             product,
             warehouse: fromWarehouse,
-            logo: item.logo,
+            logo: exportItemSourceLogo(item),
             unit: item.unit,
             movementDate: exportDate,
             sourceCollection: 'export_orders',
@@ -1293,13 +1361,13 @@ export function useWarehouseCostTransactions() {
         })
 
         lines.forEach((line: any, index: number) => {
-          const sourceKey = Array.from(refs.values()).find(entry => entry.product.id === line.product.id && entry.warehouse.id === line.fromWarehouse.id && entry.logo === normalizeLogo(line.logo))!.id
+          const sourceKey = Array.from(refs.values()).find(entry => entry.product.id === line.product.id && entry.warehouse.id === line.fromWarehouse.id && entry.logo === normalizeLogo(line.sourceLogo))!.id
           const allocations = allocateFromState(states.get(sourceKey)!, line.quantity, setting)
           if (line.toWarehouse) {
-            const destinationKey = Array.from(refs.values()).find(entry => entry.product.id === line.product.id && entry.warehouse.id === line.toWarehouse.id && entry.logo === normalizeLogo(line.logo))!.id
+            const destinationKey = Array.from(refs.values()).find(entry => entry.product.id === line.product.id && entry.warehouse.id === line.toWarehouse.id && entry.logo === normalizeLogo(line.targetLogo))!.id
             const destinationState = states.get(destinationKey)!
             reconcileState(destinationState)
-            allocations.forEach(allocation => addLot(destinationState, transferLotFromAllocation({ allocation, orderId, itemId: line.itemId, product: line.product, warehouse: line.toWarehouse, logo: line.logo, unit: line.unit, exportDate })))
+            allocations.forEach(allocation => addLot(destinationState, transferLotFromAllocation({ allocation, orderId, itemId: line.itemId, product: line.product, warehouse: line.toWarehouse, logo: line.targetLogo, unit: line.unit, exportDate })))
           }
           const payload = {
             product_id: line.product.id,
@@ -1310,7 +1378,9 @@ export function useWarehouseCostTransactions() {
             to_warehouse_id: line.toWarehouse?.id || '',
             to_warehouse_name: line.toWarehouse ? warehouseName(line.toWarehouse) : '',
             destination_name: destinationType === 'warehouse' ? warehouseName(firstToWarehouse) : (input.destination_name || input.customer_name || ''),
-            logo: normalizeLogo(line.logo),
+            logo: normalizeLogo(line.targetLogo),
+            source_logo: normalizeLogo(line.sourceLogo),
+            target_logo: normalizeLogo(line.targetLogo),
             quantity: line.quantity,
             unit: line.unit || line.product.unit || '',
             lot_allocations_json: JSON.stringify(allocations),
@@ -1334,7 +1404,7 @@ export function useWarehouseCostTransactions() {
             quantity: -line.quantity,
             product: line.product,
             warehouse: line.fromWarehouse,
-            logo: line.logo,
+            logo: line.sourceLogo,
             unit: line.unit,
             movementDate: exportDate,
             sourceCollection: 'export_orders',
@@ -1353,7 +1423,7 @@ export function useWarehouseCostTransactions() {
             quantity: line.quantity,
             product: line.product,
             warehouse: line.toWarehouse,
-            logo: line.logo,
+            logo: line.targetLogo,
             unit: line.unit,
             movementDate: exportDate,
             sourceCollection: 'export_orders',
@@ -1404,8 +1474,8 @@ export function useWarehouseCostTransactions() {
     const oldItems = (input.existingItems || []).filter((item: any) => item && item.deleted !== true && item.active !== false)
     const balanceLines = oldItems.flatMap((item: any) => {
       const product = ensureProduct({ id: item.product_id, product_code: item.product_code, product_name: item.product_name, unit: item.unit })
-      const rows: any[] = [{ product, warehouse: ensureWarehouse({ id: item.from_warehouse_id, name: item.from_warehouse_name }), logo: item.logo }]
-      if (item.to_warehouse_id) rows.push({ product, warehouse: ensureWarehouse({ id: item.to_warehouse_id, name: item.to_warehouse_name }), logo: item.logo })
+      const rows: any[] = [{ product, warehouse: ensureWarehouse({ id: item.from_warehouse_id, name: item.from_warehouse_name }), logo: exportItemSourceLogo(item) }]
+      if (item.to_warehouse_id) rows.push({ product, warehouse: ensureWarehouse({ id: item.to_warehouse_id, name: item.to_warehouse_name }), logo: exportItemTargetLogo(item) })
       return rows
     })
     const refs = await buildBalanceRefs(balanceLines)
@@ -1469,7 +1539,7 @@ export function useWarehouseCostTransactions() {
             quantity: positiveQuantity(item.quantity),
             product,
             warehouse: fromWarehouse,
-            logo: item.logo,
+            logo: exportItemSourceLogo(item),
             unit: item.unit,
             movementDate: exportDate,
             sourceCollection: 'export_orders',
@@ -1490,7 +1560,7 @@ export function useWarehouseCostTransactions() {
               quantity: -positiveQuantity(item.quantity),
               product,
               warehouse: ensureWarehouse({ id: item.to_warehouse_id, name: item.to_warehouse_name }),
-              logo: item.logo,
+              logo: exportItemTargetLogo(item),
               unit: item.unit,
               movementDate: exportDate,
               sourceCollection: 'export_orders',
@@ -1522,20 +1592,23 @@ export function useWarehouseCostTransactions() {
     const request = input.request || {}
     const requestDocId = String(request.id || request.request_id || '').trim()
     if (!requestDocId) throw new Error('Thiếu ID yêu cầu xuất kho.')
-    const warehouse = ensureWarehouse(input.warehouse, 'kho xuất')
+    const fallbackWarehouse = input.warehouse ? ensureWarehouse(input.warehouse, 'kho xuất mặc định') : null
     const exportDate = input.export_date || request.export_date || todayKey()
     const orderId = safeDocId(`request_export__${requestDocId}`, 'export')
     const code = safeDocId(`PXK-${request.request_id || requestDocId}`, 'PXK')
     const operationId = operationIdOf(input.operation_id, `export_request_release:${requestDocId}`)
     const setting = await loadIssueSetting()
     const lines = await prepareExportLines({
-      lines: (input.lines || []).map((line: any) => ({ ...line, fromWarehouse: warehouse })),
+      lines: (input.lines || []).map((line: any) => ({
+        ...line,
+        fromWarehouse: line.fromWarehouse || line.warehouse || line.from_warehouse_id || line.warehouse_id || fallbackWarehouse,
+      })),
       destination_type: 'customer',
     }, orderId, 'customer')
     if (!lines.length) throw new Error('Yêu cầu xuất kho chưa có dòng hàng hợp lệ.')
     const replay = await claimOperation({ operationId, action: 'export_request_release', targetCollection: 'export_orders', targetId: orderId, resultCode: code, actor })
     if (replay) return { ...replay, operationId, alreadyProcessed: true, stockMovementIds: [], notificationCount: 0 }
-    const refs = await buildBalanceRefs(lines.map((line: any) => ({ product: line.product, warehouse, logo: line.logo })))
+    const refs = await buildBalanceRefs(lines.map((line: any) => ({ product: line.product, warehouse: line.fromWarehouse, logo: line.sourceLogo })))
     const saleRecipients = Array.isArray(input.notification_recipients)
       ? Array.from(new Set(input.notification_recipients.map(normalizeEmail).filter(Boolean))).filter(recipient => recipient !== actor)
       : resolveSaleNotificationRecipients({ request, actorEmail: actor })
@@ -1600,7 +1673,7 @@ export function useWarehouseCostTransactions() {
         const exportedSummary: any[] = []
 
         lines.forEach((line: any) => {
-          const key = Array.from(refs.values()).find(entry => entry.product.id === line.product.id && entry.warehouse.id === warehouse.id && entry.logo === normalizeLogo(line.logo))!.id
+          const key = Array.from(refs.values()).find(entry => entry.product.id === line.product.id && entry.warehouse.id === line.fromWarehouse.id && entry.logo === normalizeLogo(line.sourceLogo))!.id
           const allocations = allocateFromState(states.get(key)!, line.quantity, setting)
           tx.set(doc(db, 'export_order_items', line.itemId), {
             id: line.itemId,
@@ -1608,12 +1681,14 @@ export function useWarehouseCostTransactions() {
             product_id: line.product.id,
             product_code: productCode(line.product),
             product_name: productName(line.product),
-            from_warehouse_id: warehouse.id,
-            from_warehouse_name: warehouseName(warehouse),
+            from_warehouse_id: line.fromWarehouse.id,
+            from_warehouse_name: warehouseName(line.fromWarehouse),
             to_warehouse_id: '',
             to_warehouse_name: '',
             destination_name: orderPayload.destination_name,
-            logo: normalizeLogo(line.logo),
+            logo: normalizeLogo(line.targetLogo),
+            source_logo: normalizeLogo(line.sourceLogo),
+            target_logo: normalizeLogo(line.targetLogo),
             quantity: line.quantity,
             unit: line.unit || line.product.unit || '',
             lot_allocations_json: JSON.stringify(allocations),
@@ -1637,8 +1712,8 @@ export function useWarehouseCostTransactions() {
             direction: 'out',
             quantity: -line.quantity,
             product: line.product,
-            warehouse,
-            logo: line.logo,
+            warehouse: line.fromWarehouse,
+            logo: line.sourceLogo,
             unit: line.unit,
             movementDate: exportDate,
             sourceCollection: 'export_orders',
@@ -1655,7 +1730,7 @@ export function useWarehouseCostTransactions() {
             product_id: line.product.id,
             product_code: productCode(line.product),
             product_name: productName(line.product),
-            logo: normalizeLogo(line.logo),
+            logo: normalizeLogo(line.targetLogo),
             quantity: line.quantity,
             unit: line.unit || line.product.unit || '',
             lot_allocations: allocations,
