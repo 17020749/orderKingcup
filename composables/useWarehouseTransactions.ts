@@ -19,6 +19,8 @@ type WarehouseLineInput = {
   fromWarehouse?: WarehouseDoc | any
   toWarehouse?: WarehouseDoc | any | null
   logo?: string
+  source_logo?: string
+  target_logo?: string
   quantity: number
   unit?: string
   note?: string
@@ -36,6 +38,32 @@ type BalanceDelta = {
 
 function normalizeLogo(value: any) {
   return String(value || '').trim()
+}
+
+function hasOwnField(data: any, field: string) {
+  return data != null && Object.prototype.hasOwnProperty.call(data, field)
+}
+
+function lineSourceLogo(line: any) {
+  if (hasOwnField(line, 'source_logo')) return normalizeLogo(line.source_logo)
+  return normalizeLogo(line.logo)
+}
+
+function lineTargetLogo(line: any) {
+  if (hasOwnField(line, 'target_logo')) return normalizeLogo(line.target_logo)
+  return normalizeLogo(line.logo)
+}
+
+function exportItemSourceLogo(item: any) {
+  return hasOwnField(item, 'source_logo')
+    ? normalizeLogo(item.source_logo)
+    : normalizeLogo(item.logo)
+}
+
+function exportItemTargetLogo(item: any) {
+  return hasOwnField(item, 'target_logo')
+    ? normalizeLogo(item.target_logo)
+    : normalizeLogo(item.logo)
 }
 
 function normalizeId(value: any) {
@@ -1088,7 +1116,7 @@ export function useWarehouseTransactions() {
     if (!rawLines.length) throw new Error('Phiếu xuất phải có ít nhất một dòng hàng.')
 
     const defaultToWarehouse = input.toWarehouse ? ensureWarehouse(input.toWarehouse, 'kho nhận') : null
-    const preparedLines = [] as Array<WarehouseLineInput & { product: any; fromWarehouse: any; toWarehouse: any | null; quantity: number; itemId: string; outMovementId: string; inMovementId: string }>
+    const preparedLines = [] as Array<WarehouseLineInput & { product: any; fromWarehouse: any; toWarehouse: any | null; sourceLogo: string; targetLogo: string; quantity: number; itemId: string; outMovementId: string; inMovementId: string }>
     rawLines.forEach((line, index) => {
       const product = ensureProduct(line.product)
       const fromWarehouse = ensureWarehouse(line.fromWarehouse || line.warehouse, 'kho xuất')
@@ -1097,12 +1125,16 @@ export function useWarehouseTransactions() {
         : null
       if (toWarehouse && toWarehouse.id === fromWarehouse.id) throw new Error('Kho nhận phải khác kho xuất.')
       const quantity = ensurePositiveQuantity(line.quantity)
+      const sourceLogo = toWarehouse ? lineSourceLogo(line) : lineTargetLogo(line)
+      const targetLogo = lineTargetLogo(line)
       preparedLines.push({
         ...line,
         product,
         fromWarehouse,
         warehouse: fromWarehouse,
         toWarehouse,
+        sourceLogo,
+        targetLogo,
         quantity,
         itemId: safeDocId(`${orderId}__${index + 1}`, 'export_item'),
         outMovementId: safeDocId(`export_out:${orderId}:${index + 1}`, 'movement'),
@@ -1112,24 +1144,24 @@ export function useWarehouseTransactions() {
 
     const balanceDeltas = new Map<string, BalanceDelta>()
     for (const line of preparedLines) {
-      const outId = await inventoryBalanceId(line.product.id, line.fromWarehouse.id, line.logo)
+      const outId = await inventoryBalanceId(line.product.id, line.fromWarehouse.id, line.sourceLogo)
       applyDelta(balanceDeltas, {
         id: outId,
         delta: -line.quantity,
         product: line.product,
         warehouse: line.fromWarehouse,
-        logo: normalizeLogo(line.logo),
+        logo: line.sourceLogo,
         unit: line.unit || line.product.unit || '',
         movementDate: exportDate
       })
       if (line.toWarehouse) {
-        const inId = await inventoryBalanceId(line.product.id, line.toWarehouse.id, line.logo)
+        const inId = await inventoryBalanceId(line.product.id, line.toWarehouse.id, line.targetLogo)
         applyDelta(balanceDeltas, {
           id: inId,
           delta: line.quantity,
           product: line.product,
           warehouse: line.toWarehouse,
-          logo: normalizeLogo(line.logo),
+          logo: line.targetLogo,
           unit: line.unit || line.product.unit || '',
           movementDate: exportDate
         })
@@ -1218,7 +1250,9 @@ export function useWarehouseTransactions() {
           to_warehouse_id: line.toWarehouse?.id || '',
           to_warehouse_name: line.toWarehouse ? warehouseName(line.toWarehouse) : '',
           destination_name: orderPayload.destination_name,
-          logo: normalizeLogo(line.logo),
+          logo: line.targetLogo,
+          source_logo: line.sourceLogo,
+          target_logo: line.targetLogo,
           quantity: line.quantity,
           unit: line.unit || line.product.unit || '',
           note: line.note || '',
@@ -1242,7 +1276,7 @@ export function useWarehouseTransactions() {
           quantity: -line.quantity,
           product: line.product,
           warehouse: line.fromWarehouse,
-          logo: line.logo,
+          logo: line.sourceLogo,
           unit: line.unit,
           movementDate: exportDate,
           sourceCollection: 'export_orders',
@@ -1261,7 +1295,7 @@ export function useWarehouseTransactions() {
             quantity: line.quantity,
             product: line.product,
             warehouse: line.toWarehouse,
-            logo: line.logo,
+            logo: line.targetLogo,
             unit: line.unit,
             movementDate: exportDate,
             sourceCollection: 'export_orders',
@@ -1357,12 +1391,16 @@ export function useWarehouseTransactions() {
       if (toWarehouse && toWarehouse.id === fromWarehouse.id) throw new Error('Kho nhận phải khác kho xuất.')
       const quantity = ensurePositiveQuantity(line.quantity)
       const existing = oldItems[index]
+      const sourceLogo = toWarehouse ? lineSourceLogo(line) : lineTargetLogo(line)
+      const targetLogo = lineTargetLogo(line)
       return {
         ...line,
         product,
         fromWarehouse,
         warehouse: fromWarehouse,
         toWarehouse,
+        sourceLogo,
+        targetLogo,
         quantity,
         itemId: existing?.id || safeDocId(`${orderId}__${index + 1}`, 'export_item'),
         outMovementId: safeDocId(`export_update_apply_out:${orderId}:${index + 1}:${makeId('mv')}`, 'movement'),
@@ -1377,24 +1415,26 @@ export function useWarehouseTransactions() {
       const fromWarehouse = exportItemFromWarehouse(item)
       const toWarehouse = exportItemToWarehouse(item)
       const quantity = ensurePositiveQuantity(item.quantity, 'Số lượng cũ')
-      const sourceId = await inventoryBalanceId(product.id, fromWarehouse.id, item.logo)
+      const sourceLogo = exportItemSourceLogo(item)
+      const targetLogo = exportItemTargetLogo(item)
+      const sourceId = await inventoryBalanceId(product.id, fromWarehouse.id, sourceLogo)
       applyDelta(balanceDeltas, {
         id: sourceId,
         delta: quantity,
         product,
         warehouse: fromWarehouse,
-        logo: normalizeLogo(item.logo),
+        logo: sourceLogo,
         unit: item.unit || product.unit || '',
         movementDate: exportDate
       })
       if (toWarehouse) {
-        const destinationId = await inventoryBalanceId(product.id, toWarehouse.id, item.logo)
+        const destinationId = await inventoryBalanceId(product.id, toWarehouse.id, targetLogo)
         applyDelta(balanceDeltas, {
           id: destinationId,
           delta: -quantity,
           product,
           warehouse: toWarehouse,
-          logo: normalizeLogo(item.logo),
+          logo: targetLogo,
           unit: item.unit || product.unit || '',
           movementDate: exportDate
         })
@@ -1402,24 +1442,24 @@ export function useWarehouseTransactions() {
     }
 
     for (const line of preparedNew) {
-      const sourceId = await inventoryBalanceId(line.product.id, line.fromWarehouse.id, line.logo)
+      const sourceId = await inventoryBalanceId(line.product.id, line.fromWarehouse.id, line.sourceLogo)
       applyDelta(balanceDeltas, {
         id: sourceId,
         delta: -line.quantity,
         product: line.product,
         warehouse: line.fromWarehouse,
-        logo: normalizeLogo(line.logo),
+        logo: line.sourceLogo,
         unit: line.unit || line.product.unit || '',
         movementDate: exportDate
       })
       if (line.toWarehouse) {
-        const destinationId = await inventoryBalanceId(line.product.id, line.toWarehouse.id, line.logo)
+        const destinationId = await inventoryBalanceId(line.product.id, line.toWarehouse.id, line.targetLogo)
         applyDelta(balanceDeltas, {
           id: destinationId,
           delta: line.quantity,
           product: line.product,
           warehouse: line.toWarehouse,
-          logo: normalizeLogo(line.logo),
+          logo: line.targetLogo,
           unit: line.unit || line.product.unit || '',
           movementDate: exportDate
         })
@@ -1504,6 +1544,8 @@ export function useWarehouseTransactions() {
         const fromWarehouse = exportItemFromWarehouse(item)
         const toWarehouse = exportItemToWarehouse(item)
         const quantity = toNumber(item.quantity)
+        const sourceLogo = exportItemSourceLogo(item)
+        const targetLogo = exportItemTargetLogo(item)
 
         const sourceReverseId = safeDocId(`export_update_reverse_source:${orderId}:${item.id}:${makeId('mv')}`, 'movement')
         tx.set(doc(db, 'stock_movements', sourceReverseId), movementPayload({
@@ -1513,7 +1555,7 @@ export function useWarehouseTransactions() {
           quantity,
           product,
           warehouse: fromWarehouse,
-          logo: item.logo,
+          logo: sourceLogo,
           unit: item.unit,
           movementDate: exportDate,
           sourceCollection: 'export_orders',
@@ -1534,7 +1576,7 @@ export function useWarehouseTransactions() {
             quantity: -quantity,
             product,
             warehouse: toWarehouse,
-            logo: item.logo,
+            logo: targetLogo,
             unit: item.unit,
             movementDate: exportDate,
             sourceCollection: 'export_orders',
@@ -1561,7 +1603,9 @@ export function useWarehouseTransactions() {
           to_warehouse_id: line.toWarehouse?.id || '',
           to_warehouse_name: line.toWarehouse ? warehouseName(line.toWarehouse) : '',
           destination_name: nextDestinationName,
-          logo: normalizeLogo(line.logo),
+          logo: line.targetLogo,
+          source_logo: line.sourceLogo,
+          target_logo: line.targetLogo,
           quantity: line.quantity,
           unit: line.unit || line.product.unit || '',
           note: line.note || '',
@@ -1595,7 +1639,7 @@ export function useWarehouseTransactions() {
           quantity: -line.quantity,
           product: line.product,
           warehouse: line.fromWarehouse,
-          logo: line.logo,
+          logo: line.sourceLogo,
           unit: line.unit,
           movementDate: exportDate,
           sourceCollection: 'export_orders',
@@ -1615,7 +1659,7 @@ export function useWarehouseTransactions() {
             quantity: line.quantity,
             product: line.product,
             warehouse: line.toWarehouse,
-            logo: line.logo,
+            logo: line.targetLogo,
             unit: line.unit,
             movementDate: exportDate,
             sourceCollection: 'export_orders',
@@ -1713,26 +1757,28 @@ export function useWarehouseTransactions() {
       const fromWarehouse = exportItemFromWarehouse(item)
       const toWarehouse = exportItemToWarehouse(item)
       const quantity = ensurePositiveQuantity(item.quantity)
+      const sourceLogo = exportItemSourceLogo(item)
+      const targetLogo = exportItemTargetLogo(item)
 
-      const sourceId = await inventoryBalanceId(product.id, fromWarehouse.id, item.logo)
+      const sourceId = await inventoryBalanceId(product.id, fromWarehouse.id, sourceLogo)
       applyDelta(balanceDeltas, {
         id: sourceId,
         delta: quantity,
         product,
         warehouse: fromWarehouse,
-        logo: normalizeLogo(item.logo),
+        logo: sourceLogo,
         unit: item.unit || product.unit || '',
         movementDate: exportDate
       })
 
       if (toWarehouse) {
-        const destinationId = await inventoryBalanceId(product.id, toWarehouse.id, item.logo)
+        const destinationId = await inventoryBalanceId(product.id, toWarehouse.id, targetLogo)
         applyDelta(balanceDeltas, {
           id: destinationId,
           delta: -quantity,
           product,
           warehouse: toWarehouse,
-          logo: normalizeLogo(item.logo),
+          logo: targetLogo,
           unit: item.unit || product.unit || '',
           movementDate: exportDate
         })
@@ -1813,6 +1859,8 @@ export function useWarehouseTransactions() {
         const fromWarehouse = exportItemFromWarehouse(item)
         const toWarehouse = exportItemToWarehouse(item)
         const quantity = toNumber(item.quantity)
+        const sourceLogo = exportItemSourceLogo(item)
+        const targetLogo = exportItemTargetLogo(item)
 
         tx.update(doc(db, 'export_order_items', item.id), {
           deleted: true,
@@ -1836,7 +1884,7 @@ export function useWarehouseTransactions() {
           quantity,
           product,
           warehouse: fromWarehouse,
-          logo: item.logo,
+          logo: sourceLogo,
           unit: item.unit,
           movementDate: exportDate,
           sourceCollection: 'export_orders',
@@ -1857,7 +1905,7 @@ export function useWarehouseTransactions() {
             quantity: -quantity,
             product,
             warehouse: toWarehouse,
-            logo: item.logo,
+            logo: targetLogo,
             unit: item.unit,
             movementDate: exportDate,
             sourceCollection: 'export_orders',
@@ -2034,14 +2082,14 @@ export function useWarehouseTransactions() {
   async function processExportRequestToExportOrder(input: {
     request: any
     orderSummaryPatch?: Record<string, any>
-    warehouse: WarehouseDoc | any
     customer_name?: string
     note?: string
     export_date?: string
     timeline?: any[]
     notification_recipients?: string[]
     operation_id?: string
-    lines: Array<{ product: ProductDoc | any; logo?: string; quantity: number; unit?: string; note?: string }>
+    warehouse?: WarehouseDoc | any
+    lines: Array<{ product: ProductDoc | any; warehouse?: WarehouseDoc | any; fromWarehouse?: WarehouseDoc | any; logo?: string; quantity: number; unit?: string; note?: string }>
   }) {
     const createdBy = email()
     if (!createdBy) throw new Error('Bạn chưa đăng nhập.')
@@ -2050,7 +2098,7 @@ export function useWarehouseTransactions() {
     const requestDocId = String(request.id || request.request_id || '').trim()
     if (!requestDocId) throw new Error('Thiếu ID yêu cầu xuất kho.')
 
-    const warehouse = ensureWarehouse(input.warehouse, 'kho xuất')
+    const fallbackWarehouse = input.warehouse ? ensureWarehouse(input.warehouse, 'kho xuất') : null
     const exportDate = input.export_date || request.export_date || todayKey()
     const orderId = safeDocId(`request_export__${requestDocId}`, 'export')
     const code = safeDocId(`PXK-${request.request_id || requestDocId}`, 'PXK')
@@ -2060,14 +2108,15 @@ export function useWarehouseTransactions() {
     const rawLines = input.lines.filter(line => toNumber(line.quantity) > 0)
     if (!rawLines.length) throw new Error('Yêu cầu xuất kho chưa có dòng hàng hợp lệ.')
 
-    const preparedLines = [] as Array<{ product: any; fromWarehouse: any; logo?: string; unit?: string; note?: string; quantity: number; itemId: string; outMovementId: string }>
+    const preparedLines = [] as Array<{ product: any; fromWarehouse: any; logo: string; unit?: string; note?: string; quantity: number; itemId: string; outMovementId: string }>
     rawLines.forEach((line, index) => {
       const product = ensureProduct(line.product)
+      const fromWarehouse = ensureWarehouse(line.fromWarehouse || line.warehouse || fallbackWarehouse, 'kho xuất')
       const quantity = ensurePositiveQuantity(line.quantity)
       preparedLines.push({
         product,
-        fromWarehouse: warehouse,
-        logo: line.logo,
+        fromWarehouse,
+        logo: lineTargetLogo(line),
         unit: line.unit || product.unit || '',
         note: line.note || '',
         quantity,
@@ -2078,12 +2127,12 @@ export function useWarehouseTransactions() {
 
     const balanceDeltas = new Map<string, BalanceDelta>()
     for (const line of preparedLines) {
-      const outId = await inventoryBalanceId(line.product.id, warehouse.id, line.logo)
+      const outId = await inventoryBalanceId(line.product.id, line.fromWarehouse.id, line.logo)
       applyDelta(balanceDeltas, {
         id: outId,
         delta: -line.quantity,
         product: line.product,
-        warehouse,
+        warehouse: line.fromWarehouse,
         logo: normalizeLogo(line.logo),
         unit: line.unit || line.product.unit || '',
         movementDate: exportDate
@@ -2190,12 +2239,14 @@ export function useWarehouseTransactions() {
             product_id: line.product.id,
             product_code: productCode(line.product),
             product_name: productName(line.product),
-            from_warehouse_id: warehouse.id,
-            from_warehouse_name: warehouseName(warehouse),
+            from_warehouse_id: line.fromWarehouse.id,
+            from_warehouse_name: warehouseName(line.fromWarehouse),
             to_warehouse_id: '',
             to_warehouse_name: '',
             destination_name: orderPayload.destination_name,
             logo: normalizeLogo(line.logo),
+            source_logo: normalizeLogo(line.logo),
+            target_logo: normalizeLogo(line.logo),
             quantity: line.quantity,
             unit: line.unit || line.product.unit || '',
             note: line.note || '',
@@ -2218,7 +2269,7 @@ export function useWarehouseTransactions() {
             direction: 'out',
             quantity: -line.quantity,
             product: line.product,
-            warehouse,
+            warehouse: line.fromWarehouse,
             logo: line.logo,
             unit: line.unit,
             movementDate: exportDate,
@@ -2258,6 +2309,8 @@ export function useWarehouseTransactions() {
             product_code: productCode(line.product),
             product_name: productName(line.product),
             logo: normalizeLogo(line.logo),
+            warehouse_id: line.fromWarehouse?.id || '',
+            warehouse_name: warehouseName(line.fromWarehouse),
             quantity: toNumber(line.quantity),
             unit: line.unit || line.product?.unit || ''
           }))),
