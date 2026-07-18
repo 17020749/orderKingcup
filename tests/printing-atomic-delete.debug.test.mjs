@@ -29,6 +29,16 @@ function deletedPatch() {
   }
 }
 
+function minimalDeletedPatch() {
+  return {
+    deleted: true,
+    active: false,
+    status: 'deleted',
+    deleted_at: 'now',
+    updated_at: 'now',
+  }
+}
+
 before(async () => {
   env = await initializeTestEnvironment({
     projectId,
@@ -86,7 +96,7 @@ after(async () => env.cleanup())
 
 test('xóa mềm riêng đơn cha', async () => {
   const db = env.authenticatedContext(PRINTING, { email: PRINTING }).firestore()
-  await assertSucceeds(updateDoc(doc(db, 'print_orders', 'print-a'), deletedPatch()))
+  await assertSucceeds(updateDoc(doc(db, 'print_orders', 'print-a'), minimalDeletedPatch()))
 })
 
 test('xóa mềm riêng dòng con khi cha còn active', async () => {
