@@ -1,5 +1,6 @@
 name: Trigger printing scope patch
 
+# Temporary self-removing rules patch.
 on:
   pull_request:
     branches:
