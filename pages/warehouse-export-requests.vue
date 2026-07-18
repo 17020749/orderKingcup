@@ -398,6 +398,13 @@ async function submitRelease(row: any) {
       'error',
     )
   }
+  const missingWarehouseDocs = lines.filter((line: any) => !findWarehouse(releaseWarehouseId(line, line.__release_index)))
+  if (missingWarehouseDocs.length) {
+    return showToast(
+      `Kho xuất dòng ${missingWarehouseDocs.map((line: any) => line.__release_index + 1).join(', ')} không còn trong danh mục kho. Vui lòng tải lại trang và chọn lại.`,
+      'error',
+    )
+  }
 
   const result = await processExportRequestToExportOrder({
     request: row,
@@ -409,8 +416,11 @@ async function submitRelease(row: any) {
     orderSummaryPatch: orderPatchAfter(row, 'da_xuat', { warehouse_export_code: 'pending_firestore' }),
     lines: lines.map((line: any) => {
       const warehouseId = releaseWarehouseId(line, line.__release_index)
+      const fromWarehouse = findWarehouse(warehouseId)
       return {
         product: findProductByCode(line.product_code),
+        fromWarehouse,
+        warehouse: fromWarehouse,
         from_warehouse_id: warehouseId,
         warehouse_id: warehouseId,
         logo: line.logo,
