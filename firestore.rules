@@ -104,7 +104,6 @@ service cloud.firestore {
         );
     }
 
-
     function userHasPermData(user, permission) {
       return activeUserData(user)
         && (
@@ -361,7 +360,11 @@ service cloud.firestore {
         && orderDataIsActive(order)
         && (
           hasPerm('orders.view_all')
-          || hasPerm('printing.view')
+          || hasPerm('printing.view_all')
+          || (
+            hasPerm('printing.orders_view')
+            && ownsOrderData(order)
+          )
           || (
             hasPerm('customers.orders_view')
             && order.get('customer_id', '') is string
@@ -418,7 +421,6 @@ service cloud.firestore {
           order.get('sale_email', '')
         );
     }
-
 
     function requestMatchesOrderData(order) {
       return emailFieldEquals(
@@ -532,7 +534,6 @@ service cloud.firestore {
       ]);
     }
 
-
     // ---------------------------------------------------------------------
     // Warehouse Core helpers
     // ---------------------------------------------------------------------
@@ -604,7 +605,6 @@ service cloud.firestore {
         );
     }
 
-
     function quantityIsNumber(data) {
       return data.get('quantity', 0) is int
         || data.get('quantity', 0) is float;
@@ -639,6 +639,52 @@ service cloud.firestore {
 
     function ownsPrintOrderData(data) {
       return ownEmailField(data, 'created_by');
+    }
+
+    function printingCanReadProgressData(data) {
+      return hasPerm('printing.view_all')
+        || (
+          hasPerm('printing.orders_view')
+          && data.get('order_id', '') is string
+          && ownsOrderById(data.get('order_id', ''))
+        )
+        || (
+          hasPerm('printing.view')
+          && ownsPrintOrderData(data)
+        );
+    }
+
+    function printingCanReadProgressById(printOrderId) {
+      let path = printOrderPath(printOrderId);
+      return printOrderId is string
+        && printOrderId != ''
+        && exists(path)
+        && get(path).data.get('deleted', false) != true
+        && printingCanReadProgressData(get(path).data);
+    }
+
+    function printingCanOperateProgressAfterById(printOrderId) {
+      let path = printOrderPath(printOrderId);
+      return printOrderId is string
+        && printOrderId != ''
+        && existsAfter(path)
+        && getAfter(path).data.get('deleted', false) != true
+        && getAfter(path).data.get('active', true) != false
+        && (
+          hasPerm('printing.view_all')
+          || ownsPrintOrderData(getAfter(path).data)
+        );
+    }
+
+    function printingCanDeleteProgressAfterById(printOrderId) {
+      let path = printOrderPath(printOrderId);
+      return printOrderId is string
+        && printOrderId != ''
+        && existsAfter(path)
+        && (
+          hasPerm('printing.view_all')
+          || ownsPrintOrderData(getAfter(path).data)
+        );
     }
 
     function ownsPrintOrderAfterById(printOrderId) {
@@ -702,7 +748,6 @@ service cloud.firestore {
         );
     }
 
-
     function orderWarehouseSummaryUpdateAllowed() {
       return onlyWarehouseSummaryChanged()
         && (
@@ -760,7 +805,6 @@ service cloud.firestore {
         && ownsOrderChildData(resource.data)
         && ownEmailField(request.resource.data, 'updated_by');
     }
-
 
     function exportWarehouseProcessAllowed() {
       let path = userPath();
@@ -930,9 +974,8 @@ service cloud.firestore {
           )
         );
 
-            // Customers are always removed through soft-delete updates.
+      // Customers are always removed through soft-delete updates.
       allow delete: if false;
-
     }
 
     match /customer_codes/{customerCode} {
@@ -989,7 +1032,11 @@ service cloud.firestore {
 
     match /orders/{docId} {
       allow read: if hasPerm('orders.view_all')
-        || hasPerm('printing.view')
+        || hasPerm('printing.view_all')
+        || (
+          hasPerm('printing.orders_view')
+          && ownsOrderData(resource.data)
+        )
         || (
           hasPerm('customers.orders_view')
           && resource.data.get('customer_id', '') is string
@@ -1055,7 +1102,12 @@ service cloud.firestore {
 
     match /order_items/{docId} {
       allow read: if hasPerm('orders.view_all')
-        || hasPerm('printing.view')
+        || hasPerm('printing.view_all')
+        || (
+          hasPerm('printing.orders_view')
+          && resource.data.order_id is string
+          && ownsOrderById(resource.data.order_id)
+        )
         || (
           hasPerm('customers.orders_view')
           && resource.data.order_id is string
@@ -1203,15 +1255,11 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Shipments and invoices
+    // Printing, shipments and invoices
     // ---------------------------------------------------------------------
 
     match /print_orders/{docId} {
-      allow read: if hasPerm('printing.view_all')
-        || (
-          hasPerm('printing.view')
-          && ownsPrintOrderData(resource.data)
-        );
+      allow read: if printingCanReadProgressData(resource.data);
 
       allow create: if hasPerm('printing.create')
         && request.resource.data.get('order_code', '') is string
@@ -1219,55 +1267,62 @@ service cloud.firestore {
         && printOrderSourceMatches(request.resource.data)
         && ownEmailField(request.resource.data, 'created_by');
 
+      // Check the soft-delete shape first so users with both edit and delete
+      // permissions do not exhaust the Rules expression budget on the edit path.
       allow update: if isAdmin()
         || (
-          hasPerm('printing.edit')
-          && ownsPrintOrderData(resource.data)
+          warehouseSoftDeleteOnly()
+          && hasPerm('printing.delete')
+          && (
+            hasPerm('printing.view_all')
+            || ownsPrintOrderData(resource.data)
+          )
+          && warehouseDocIdentitySafe()
+        )
+        || (
+          unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
+          && hasPerm('printing.edit')
+          && (
+            hasPerm('printing.view_all')
+            || ownsPrintOrderData(resource.data)
+          )
           && warehouseDocIdentitySafe()
           && request.resource.data.get('order_code', '') is string
           && request.resource.data.get('order_code', '') != ''
           && printOrderSourceMatches(request.resource.data)
-          && unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
-        )
-        || (
-          hasPerm('printing.delete')
-          && ownsPrintOrderData(resource.data)
-          && warehouseDocIdentitySafe()
-          && warehouseSoftDeleteOnly()
         );
 
       allow delete: if isAdmin();
     }
 
     match /print_order_items/{docId} {
-      allow read: if hasPerm('printing.view_all')
-        || (
-          hasPerm('printing.view')
-          && ownEmailField(resource.data, 'created_by')
-        );
+      allow read: if resource.data.print_order_id is string
+        && printingCanReadProgressById(resource.data.print_order_id);
 
       allow create: if hasAnyPerm(['printing.create', 'printing.edit'])
         && request.resource.data.print_order_id is string
-        && ownsActivePrintOrderAfterById(request.resource.data.print_order_id)
+        && printingCanOperateProgressAfterById(request.resource.data.print_order_id)
         && request.resource.data.get('product_id', '') is string
         && request.resource.data.get('product_id', '') != ''
         && printQuantitiesAreValid(request.resource.data)
         && ownEmailField(request.resource.data, 'created_by');
 
+      // As with print_orders, evaluate the delete shape before the edit path.
       allow update: if isAdmin()
         || (
-          hasPerm('printing.edit')
-          && ownEmailField(resource.data, 'created_by')
-          && ownsActivePrintOrderAfterById(resource.data.print_order_id)
+          warehouseSoftDeleteOnly()
+          && hasPerm('printing.delete')
+          && resource.data.print_order_id is string
+          && printingCanDeleteProgressAfterById(resource.data.print_order_id)
           && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
-          && printQuantitiesAreValid(request.resource.data)
         )
         || (
-          hasAnyPerm(['printing.edit', 'printing.delete'])
-          && ownEmailField(resource.data, 'created_by')
-          && ownsPrintOrderAfterById(resource.data.print_order_id)
+          unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
+          && hasPerm('printing.edit')
+          && resource.data.print_order_id is string
+          && printingCanOperateProgressAfterById(resource.data.print_order_id)
           && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
-          && warehouseSoftDeleteOnly()
+          && printQuantitiesAreValid(request.resource.data)
         );
 
       allow delete: if isAdmin();
@@ -1514,7 +1569,6 @@ service cloud.firestore {
       // điều chỉnh ngược mới thay vì sửa/xóa lịch sử cũ.
       allow update, delete: if isAdmin();
     }
-
 
     match /warehouse_operations/{docId} {
       allow read: if canReadInventoryCore();

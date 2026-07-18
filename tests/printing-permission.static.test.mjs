@@ -4,8 +4,11 @@ import { test } from 'node:test'
 
 const printDocuments = readFileSync('utils/orderPrintDocuments.ts', 'utf8')
 const permissions = readFileSync('constants/permissions.ts', 'utf8')
-const scopedQueries = readFileSync('composables/useScopedQueries.ts', 'utf8')
+const printingQueries = readFileSync('composables/usePrintingScopedQueries.ts', 'utf8')
 const printingPage = readFileSync('pages/printing.vue', 'utf8')
+const routes = readFileSync('constants/appRoutes.ts', 'utf8')
+const login = readFileSync('pages/login.vue', 'utf8')
+const forbidden = readFileSync('pages/forbidden.vue', 'utf8')
 const rules = readFileSync('firestore.rules', 'utf8')
 
 test('all print slips use compact date fields without dotted underlines', () => {
@@ -19,27 +22,45 @@ test('warehouse export packing explanation header uses the common blue header co
   assert.match(printDocuments, /class="packing-head">DIỄN GIẢI ĐÓNG GÓI/)
 })
 
-test('printing permissions separate own records from view all', () => {
+test('printing separates operator actions from source-order owner visibility', () => {
+  assert.match(permissions, /printing\.orders_view/)
+  assert.match(permissions, /Người tạo đơn xem tiến độ đơn của mình/)
   assert.match(permissions, /printing\.view_all/)
-  assert.match(permissions, /Xem tiến độ in ấn của mình/)
-  assert.match(scopedQueries, /canAll\('printing\.view_all'\)/)
-  assert.match(scopedQueries, /listByEmailFields<PrintOrderDoc>\('print_orders', \['created_by'\]/)
-  assert.match(scopedQueries, /listByEmailFields<PrintOrderItemDoc>[\s\S]*\['created_by'\]/)
+  assert.match(printingQueries, /loadOwnSourceOrders/)
+  assert.match(printingQueries, /where\(field, 'in', group\)/)
+  assert.match(printingQueries, /fetchByIds<PrintOrderDoc>\('print_orders', 'order_id'/)
+  assert.match(printingQueries, /fetchByIds<PrintOrderItemDoc>\('print_order_items', 'print_order_id'/)
+  assert.match(printingPage, /canViewOwnOrders/)
+  assert.match(printingPage, /ownsSourceOrder/)
 })
 
-test('printing buttons are ownership aware and reload after auth permissions settle', () => {
+test('read-only source-order owners do not receive printing action buttons', () => {
+  assert.match(printingPage, /const canCreate = computed\(\(\) => hasPermission\('printing\.create'\)/)
   assert.match(printingPage, /function canEditOrder/)
   assert.match(printingPage, /function canDeleteOrder/)
+  assert.match(printingPage, /v-if="canCreate"/)
   assert.match(printingPage, /v-if="canEditOrder\(row\)"/)
   assert.match(printingPage, /v-if="canDeleteOrder\(row\)"/)
-  assert.match(printingPage, /authReady\.value/)
-  assert.match(printingPage, /permissions\.value\.slice\(\)\.sort\(\)/)
-  assert.match(printingPage, /void loadRows\(true\)/)
 })
 
-test('Firestore Rules enforce creator ownership for print orders and items', () => {
-  assert.match(rules, /match \/print_orders\/\{docId\}[\s\S]*hasPerm\('printing\.view_all'\)/)
-  assert.match(rules, /match \/print_orders\/\{docId\}[\s\S]*ownsPrintOrderData\(resource\.data\)/)
-  assert.match(rules, /match \/print_order_items\/\{docId\}[\s\S]*ownEmailField\(resource\.data, 'created_by'\)/)
-  assert.match(rules, /ownsActivePrintOrderAfterById/)
+test('login and forbidden page use the complete shared route catalog', () => {
+  for (const permission of [
+    'page.printing',
+    'page.inventory',
+    'page.imports',
+    'page.exports',
+    'page.warehouse_export_requests',
+    'page.warehouse_settings',
+  ]) {
+    assert.match(routes, new RegExp(permission.replace('.', '\\.')))
+  }
+  assert.match(login, /firstAllowedAppRoute/)
+  assert.doesNotMatch(login, /navigateTo\('\/dashboard'\)/)
+  assert.match(forbidden, /firstAllowedAppRoute/)
+})
+
+test('Firestore Rules link printing.orders_view to source order ownership', () => {
+  assert.match(rules, /printing\.orders_view/)
+  assert.match(rules, /ownsOrderById/)
+  assert.match(rules, /printingCanReadProgress/)
 })

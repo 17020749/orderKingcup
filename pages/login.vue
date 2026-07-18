@@ -1,16 +1,31 @@
 <script setup lang="ts">
-const { loginWithGoogle, isLoggedIn, hasAccess, authLoading, authError, initAuth } = useAuth()
+import { firstAllowedAppRoute } from '~/constants/appRoutes'
+
+const {
+  loginWithGoogle,
+  isLoggedIn,
+  hasAccess,
+  authLoading,
+  authError,
+  initAuth,
+  permissions,
+} = useAuth()
 const route = useRoute()
+
+async function goToFirstAllowedPage() {
+  const target = firstAllowedAppRoute(permissions.value)
+  await navigateTo(target?.path || '/forbidden')
+}
 
 onMounted(async () => {
   await initAuth()
-  if (isLoggedIn.value && hasAccess.value) await navigateTo('/dashboard')
+  if (isLoggedIn.value && hasAccess.value) await goToFirstAllowedPage()
 })
 
 async function handleLogin() {
   try {
     await loginWithGoogle()
-    if (hasAccess.value) await navigateTo('/dashboard')
+    if (hasAccess.value) await goToFirstAllowedPage()
   } catch (error: any) {
     console.error(error)
   }
