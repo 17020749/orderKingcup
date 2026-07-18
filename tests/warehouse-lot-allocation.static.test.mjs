@@ -7,6 +7,11 @@ const transactions = readFileSync('composables/useWarehouseCostTransactions.ts',
 const productsPage = readFileSync('pages/products.vue', 'utf8')
 const settingsPage = readFileSync('pages/settings/general.vue', 'utf8')
 const inventoryPage = readFileSync('pages/inventory.vue', 'utf8')
+const ordersPage = readFileSync('pages/orders.vue', 'utf8')
+const printingPage = readFileSync('pages/printing.vue', 'utf8')
+const orderLogic = readFileSync('composables/useOrderLogic.ts', 'utf8')
+const warehouseLogic = readFileSync('composables/useWarehouseLogic.ts', 'utf8')
+const models = readFileSync('types/models.ts', 'utf8')
 
 test('lot engine supports configured issue policies', () => {
   assert.match(source, /'fifo'/)
@@ -53,4 +58,41 @@ test('warehouse users can load inventory without reading priced import documents
   assert.ok(guardedLoadIndex >= 0)
   assert.ok(importLoadIndex > guardedLoadIndex)
   assert.ok(importItemLoadIndex > guardedLoadIndex)
+})
+
+test('order logo color is saved as metadata and shown beside logo', () => {
+  assert.match(models, /interface LogoLineDoc[\s\S]*logo_color\?: string/)
+  assert.match(orderLogic, /logo_color: String\(line\?\.logo_color \?\? line\?\.color \?\? ''\)/)
+  assert.match(ordersPage, /v-model="line\.logo_color"/)
+  assert.match(ordersPage, /logo: '', logo_color: ''/)
+  assert.match(ordersPage, /<th>Màu<\/th>/)
+})
+
+test('warehouse quantity identity remains product plus logo only', () => {
+  assert.match(warehouseLogic, /function key\(code: any, logo: any\)/)
+  assert.doesNotMatch(warehouseLogic, /logo_color/)
+  assert.match(ordersPage, /const key = `\$\{String\(item\.product_code[\s\S]*\|\$\{String\(line\.logo/)
+})
+
+test('printing source order includes only products with valid logo lines', () => {
+  assert.match(printingPage, /item\.order_id === orderId[\s\S]*sourceLogoLines\(item\)\.length > 0/)
+  const sourceSection = printingPage.slice(
+    printingPage.indexOf('function groupsFromSourceOrder'),
+    printingPage.indexOf('function chooseSourceOrder'),
+  )
+  assert.doesNotMatch(sourceSection, /blankProductGroup\(\{[\s\S]*print_quantity: toNumber\(item\.quantity\)/)
+  assert.match(sourceSection, /logo_color: String\(line\.logo_color \|\| line\.color \|\| ''\)/)
+})
+
+test('inventory keeps zero stock after import or transfer-in history', () => {
+  assert.match(inventoryPage, /has_inbound_history: boolean/)
+  assert.match(inventoryPage, /qualifiesAsInboundHistory = quantity > 0/)
+  assert.match(inventoryPage, /type\.includes\('transfer_in'\)/)
+  assert.match(inventoryPage, /\.filter\(row => row\.has_inbound_history\)/)
+  assert.match(inventoryPage, />Hết hàng<\/span>/)
+})
+
+test('inventory does not show a movement-only outbound row', () => {
+  assert.match(inventoryPage, /has_balance: false,[\s\S]*has_inbound_history: false/)
+  assert.doesNotMatch(inventoryPage, /Math\.abs\(row\.movement_quantity\)[\s\S]*\.filter/)
 })
