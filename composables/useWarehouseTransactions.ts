@@ -122,9 +122,21 @@ function ensureWarehouse(warehouse: any, label = 'kho') {
     if (!id) throw new Error(`Thiếu ${label} hoặc ${label} chưa có ID hệ thống.`)
     return { id, firestore_id: id, name: id, warehouse_code: id }
   }
-  const id = normalizeId(warehouse?.id || warehouse?.firestore_id || warehouse?.value)
-  if (!id) throw new Error(`Thiếu ${label} hoặc ${label} chưa có ID hệ thống.`)
-  return { ...warehouse, id }
+  const id = normalizeId(
+    warehouse?.id
+    || warehouse?.firestore_id
+    || warehouse?.value
+    || warehouse?.from_warehouse_id
+    || warehouse?.warehouse_id
+    || warehouse?.to_warehouse_id
+  )
+  if (!id) {
+    const fields = warehouse && typeof warehouse === 'object'
+      ? Object.keys(warehouse).slice(0, 8).join(', ')
+      : String(warehouse || '')
+    throw new Error(`Thiếu ${label} hoặc ${label} chưa có ID hệ thống. Payload ${label}: ${fields || 'rỗng'}.`)
+  }
+  return { ...warehouse, id, firestore_id: warehouse?.firestore_id || id }
 }
 
 function ensurePositiveQuantity(value: any, label = 'Số lượng') {
@@ -1127,9 +1139,12 @@ export function useWarehouseTransactions() {
     const preparedLines = [] as Array<WarehouseLineInput & { product: any; fromWarehouse: any; toWarehouse: any | null; sourceLogo: string; targetLogo: string; quantity: number; itemId: string; outMovementId: string; inMovementId: string }>
     rawLines.forEach((line, index) => {
       const product = ensureProduct(line.product)
-      const fromWarehouse = ensureWarehouse(line.from_warehouse_id || line.warehouse_id || line.fromWarehouse || line.warehouse, 'kho xuất')
+      const fromWarehouse = ensureWarehouse(
+        line.from_warehouse_id || line.warehouse_id || line.fromWarehouse || line.warehouse || line,
+        `kho xuất dòng ${index + 1}`,
+      )
       const toWarehouse = destinationType === 'warehouse'
-        ? ensureWarehouse(line.to_warehouse_id || line.toWarehouse || defaultToWarehouse, 'kho nhận')
+        ? ensureWarehouse(line.to_warehouse_id || line.toWarehouse || defaultToWarehouse, `kho nhận dòng ${index + 1}`)
         : null
       if (toWarehouse && toWarehouse.id === fromWarehouse.id) throw new Error('Kho nhận phải khác kho xuất.')
       const quantity = ensurePositiveQuantity(line.quantity)
@@ -1392,9 +1407,12 @@ export function useWarehouseTransactions() {
       : null
     const preparedNew = rawLines.map((line, index) => {
       const product = ensureProduct(line.product)
-      const fromWarehouse = ensureWarehouse(line.from_warehouse_id || line.warehouse_id || line.fromWarehouse || line.warehouse, 'kho xuất')
+      const fromWarehouse = ensureWarehouse(
+        line.from_warehouse_id || line.warehouse_id || line.fromWarehouse || line.warehouse || line,
+        `kho xuất dòng ${index + 1}`,
+      )
       const toWarehouse = destinationType === 'warehouse'
-        ? ensureWarehouse(line.to_warehouse_id || line.toWarehouse || defaultToWarehouse, 'kho nhận')
+        ? ensureWarehouse(line.to_warehouse_id || line.toWarehouse || defaultToWarehouse, `kho nhận dòng ${index + 1}`)
         : null
       if (toWarehouse && toWarehouse.id === fromWarehouse.id) throw new Error('Kho nhận phải khác kho xuất.')
       const quantity = ensurePositiveQuantity(line.quantity)
@@ -2119,7 +2137,10 @@ export function useWarehouseTransactions() {
     const preparedLines = [] as Array<{ product: any; fromWarehouse: any; logo: string; unit?: string; note?: string; quantity: number; itemId: string; outMovementId: string }>
     rawLines.forEach((line, index) => {
       const product = ensureProduct(line.product)
-      const fromWarehouse = ensureWarehouse(line.from_warehouse_id || line.warehouse_id || line.fromWarehouse || line.warehouse || fallbackWarehouse, 'kho xuất')
+      const fromWarehouse = ensureWarehouse(
+        line.from_warehouse_id || line.warehouse_id || line.fromWarehouse || line.warehouse || fallbackWarehouse || line,
+        `kho xuất dòng ${index + 1}`,
+      )
       const quantity = ensurePositiveQuantity(line.quantity)
       preparedLines.push({
         product,
