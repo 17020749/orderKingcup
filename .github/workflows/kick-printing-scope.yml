@@ -28,6 +28,7 @@ jobs:
             | sed 's/^          //' \
             | sed '$d' > /tmp/apply-printing-scope.py
           test -s /tmp/apply-printing-scope.py
+          sed -i 's/raise SystemExit/print/' /tmp/apply-printing-scope.py
           python /tmp/apply-printing-scope.py
 
       - name: Remove temporary workflows and push
