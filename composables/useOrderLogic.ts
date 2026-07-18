@@ -17,6 +17,7 @@ export function useOrderLogic() {
           : round2(quantity * unit_price)
         return {
           logo: String(line?.logo || ''),
+          logo_color: String(line?.logo_color ?? line?.color ?? ''),
           quantity,
           unit_price,
           line_total

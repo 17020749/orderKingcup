@@ -59,8 +59,8 @@ const selectedPrintRequests = computed(() => selectedPrintOrder.value
   : [])
 const selectedDetailProgress = computed(() => buildFulfillmentRows(selectedDetailItems.value, selectedDetailRequests.value))
 const selectedDetailOrderLines = computed(() => selectedDetailItems.value.flatMap((item: any) => {
-  const logos = safeJsonParse(item.logo_json, [])
-  if (Array.isArray(logos) && logos.length) {
+  const logos = parseLogoLines(item.logo_json)
+  if (logos.length) {
     return logos.map((line: any) => {
       const quantity = toNumber(line.quantity ?? line.qty)
       const unitPrice = toNumber(line.unit_price ?? item.unit_price)
@@ -68,6 +68,7 @@ const selectedDetailOrderLines = computed(() => selectedDetailItems.value.flatMa
         product_code: item.product_code || '',
         product_name: item.product_name || '',
         logo: line.logo || '',
+        logo_color: line.logo_color || '',
         unit: item.unit || '',
         quantity,
         unit_price: unitPrice,
@@ -81,6 +82,7 @@ const selectedDetailOrderLines = computed(() => selectedDetailItems.value.flatMa
     product_code: item.product_code || '',
     product_name: item.product_name || '',
     logo: '',
+    logo_color: '',
     unit: item.unit || '',
     quantity,
     unit_price: unitPrice,
@@ -301,7 +303,7 @@ function removeItem(index: number) {
 
 function addLogoLine(item: any) {
   item.has_logo = true
-  item.logo_lines.push({ logo: '', quantity: '', unit_price: item.unit_price || 0, line_total: 0 })
+  item.logo_lines.push({ logo: '', logo_color: '', quantity: '', unit_price: item.unit_price || 0, line_total: 0 })
 }
 
 function removeLogoLine(item: any, index: number) {
@@ -533,8 +535,6 @@ async function saveOrder() {
 
     const baseOrder: any = { ...form, ...totals }
     if (editing.value) {
-      // Payment, warehouse and deletion state remain protected. Invoice status
-      // may be included only when the current user has the dedicated permission.
       const protectedFields = [
         'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
         'payment_count', 'deposit_count', 'collect_count',
@@ -736,8 +736,6 @@ async function softDeleteOrder(row: OrderDoc) {
       throw new Error('Đơn hàng đã có số lượng xuất kho hoặc mã phiếu Warehouse nên không thể xóa.')
     }
 
-    // Xóa mềm order, order_items và các yêu cầu xuất chưa thực hiện trong cùng
-    // một batch để không để lại phiếu mồ côi. Chừa một write cho activity log.
     if (orderItems.length + orderRequests.length + 2 > 500) {
       throw new Error('Đơn hàng có quá nhiều dữ liệu liên quan để xóa an toàn trong một lần.')
     }
@@ -895,12 +893,12 @@ onMounted(loadRows)
         <div class="form-group"><label>Phân loại đơn</label><select v-model="form.order_classification" class="select"><option v-for="s in ORDER_CLASSIFICATION_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div class="form-group">
-        <label>Hóa đơn</label>
-        <select v-model="form.invoice_status" class="select" :disabled="!canManageInvoiceStatus">
-          <option v-for="s in INVOICE_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option>
-        </select>
-        <div v-if="!canManageInvoiceStatus" class="small subtle">Bạn không có quyền thay đổi trạng thái hóa đơn.</div>
-      </div>
+          <label>Hóa đơn</label>
+          <select v-model="form.invoice_status" class="select" :disabled="!canManageInvoiceStatus">
+            <option v-for="s in INVOICE_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option>
+          </select>
+          <div v-if="!canManageInvoiceStatus" class="small subtle">Bạn không có quyền thay đổi trạng thái hóa đơn.</div>
+        </div>
         <div class="form-group"><label>VAT %</label><select v-model.number="form.vat_rate" class="select"><option v-for="s in VAT_RATE_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
       </div>
       <div class="form-group" style="margin-top:12px"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
@@ -936,9 +934,10 @@ onMounted(loadRows)
         </div>
         <div class="form-group logo-toggle"><label><input v-model="item.has_logo" type="checkbox" @change="toggleLogoMode(item)" /> Có logo / tách sản phẩm chi tiết theo logo</label></div>
         <div v-if="item.has_logo" class="logo-items-box">
-          <div class="logo-mode-note">Khi tick mục này, số lượng, đơn giá và thành tiền sẽ lấy theo từng dòng logo bên dưới.</div>
+          <div class="logo-mode-note">Màu chỉ là thông tin mô tả; xuất nhập kho vẫn đối chiếu theo sản phẩm và logo.</div>
           <div v-for="(line, logoIndex) in item.logo_lines" :key="logoIndex" class="logo-row">
             <div class="form-group"><label>Logo</label><input v-model="line.logo" class="input" placeholder="VD: Logo A" /></div>
+            <div class="form-group"><label>Màu</label><input v-model="line.logo_color" class="input" placeholder="VD: Đỏ, xanh navy..." /></div>
             <div class="form-group"><label>Số lượng</label><input v-model.number="line.quantity" class="input" type="number" min="0" /></div>
             <div class="form-group"><label>Đơn giá</label><input v-model.number="line.unit_price" class="input" type="number" min="0" /></div>
             <div class="form-group"><label>Thành tiền</label><input class="input" :value="money(logoLineTotal(line))" readonly /></div>
@@ -1062,18 +1061,19 @@ onMounted(loadRows)
 
       <h3 style="margin-top:20px">Sản phẩm trong đơn hàng</h3>
       <div class="table-wrap">
-        <table style="min-width:860px">
-          <thead><tr><th>Sản phẩm</th><th>Logo</th><th>Đơn vị</th><th>Số lượng đặt</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+        <table style="min-width:940px">
+          <thead><tr><th>Sản phẩm</th><th>Logo</th><th>Màu</th><th>Đơn vị</th><th>Số lượng đặt</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
           <tbody>
             <tr v-for="(line, index) in selectedDetailOrderLines" :key="`${line.product_code}|${line.logo}|${index}`">
               <td><b>{{ line.product_name }}</b><div class="small subtle">{{ line.product_code }}</div></td>
               <td>{{ line.logo || '-' }}</td>
+              <td>{{ line.logo_color || '-' }}</td>
               <td>{{ line.unit || '-' }}</td>
               <td>{{ line.quantity }}</td>
               <td>{{ money(line.unit_price) }}</td>
               <td>{{ money(line.line_total) }}</td>
             </tr>
-            <tr v-if="!selectedDetailOrderLines.length"><td colspan="6" class="empty">Chưa có sản phẩm trong đơn.</td></tr>
+            <tr v-if="!selectedDetailOrderLines.length"><td colspan="7" class="empty">Chưa có sản phẩm trong đơn.</td></tr>
           </tbody>
         </table>
       </div>

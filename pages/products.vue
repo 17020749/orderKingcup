@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { deleteField } from 'firebase/firestore'
 import type { ProductDoc } from '~/types/models'
 import { formatDateTime, makeId, normalizeText, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
@@ -28,11 +29,17 @@ const productDetailLabels: Record<string, string> = {
   product_code: 'Mã sản phẩm', product_name: 'Tên sản phẩm', name: 'Tên cũ', unit: 'Đơn vị',
   category: 'Nhóm sản phẩm', product_group: 'Nhóm sản phẩm đồng bộ', packing_standard: 'Quy cách đóng gói',
   material: 'Chất liệu', color: 'Màu sắc', size: 'Kích thước', description: 'Mô tả',
-  cost_price: 'Giá vốn', selling_price: 'Giá bán', warehouse_source: 'Nguồn đồng bộ',
+  selling_price: 'Giá bán', warehouse_source: 'Nguồn đồng bộ',
   out_of_stock_max: 'Hết hàng khi tồn cuối ≤', out_of_stock_threshold: 'Ngưỡng hết hàng cũ',
   sold_out_max: 'Ngưỡng hết hàng đồng bộ', warning_stock_min: 'Cảnh báo từ',
   warning_stock_max: 'Cảnh báo đến', normal_stock_min: 'Bình thường khi tồn cuối ≥',
   normal_stock_threshold: 'Ngưỡng bình thường cũ', status: 'Trạng thái', note: 'Ghi chú'
+}
+
+function withoutLegacyCost<T extends Record<string, any>>(row: T): T {
+  const cleaned = { ...row }
+  delete cleaned.cost_price
+  return cleaned
 }
 
 function productStatus(row: ProductDoc) {
@@ -58,7 +65,7 @@ const filtered = computed(() => {
 async function loadRows(force = false) {
   loading.value = true
   try {
-    rows.value = await loadProducts(force, true)
+    rows.value = (await loadProducts(force, true)).map(row => withoutLegacyCost(row as any))
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được sản phẩm.'), 'error')
   } finally {
@@ -89,7 +96,7 @@ function openModal(row?: ProductDoc) {
   if (!row && !canCreate.value) return showToast('Bạn không có quyền thêm sản phẩm.', 'error')
 
   editing.value = row || null
-  const source = row || emptyProduct()
+  const source = withoutLegacyCost((row || emptyProduct()) as any)
   Object.assign(form, {
     ...source,
     out_of_stock_max: stockValue(source, 'out_of_stock_max', ['out_of_stock_threshold', 'sold_out_max']),
@@ -97,11 +104,12 @@ function openModal(row?: ProductDoc) {
     warning_stock_max: stockValue(source, 'warning_stock_max'),
     normal_stock_min: stockValue(source, 'normal_stock_min', ['normal_stock_threshold'])
   })
+  delete form.cost_price
   showModal.value = true
 }
 
 function openDetail(row: ProductDoc) {
-  selected.value = row
+  selected.value = withoutLegacyCost(row as any)
   showDetailModal.value = true
 }
 
@@ -132,8 +140,9 @@ async function saveProduct() {
 
   saving.value = true
   await withLoading(async () => {
-    const record = await saveDoc('products', {
-      ...form,
+    const payload = {
+      ...withoutLegacyCost(form),
+      cost_price: deleteField(),
       product_code: String(form.product_code || '').trim(),
       product_name: String(form.product_name || '').trim(),
       unit: String(form.unit || '').trim(),
@@ -146,7 +155,9 @@ async function saveProduct() {
       normal_stock_min: toNumber(form.normal_stock_min),
       created_by: editing.value?.created_by || appUser.value?.email || '',
       search_text: normalizeText(`${form.product_code} ${form.product_name} ${form.unit}`)
-    }, form.id, { isCreate: !editing.value }) as ProductDoc
+    }
+    const saved = await saveDoc('products', payload, form.id, { isCreate: !editing.value }) as ProductDoc
+    const record = withoutLegacyCost(saved as any) as ProductDoc
 
     const index = rows.value.findIndex(row => row.id === record.id)
     if (index >= 0) rows.value[index] = { ...rows.value[index], ...record }
@@ -182,7 +193,7 @@ onMounted(() => loadRows())
 
 <template>
   <AppShell>
-    <PageHeader title="Quản lý sản phẩm" subtitle="Danh mục sản phẩm dùng chung">
+    <PageHeader title="Quản lý sản phẩm" subtitle="Danh mục sản phẩm dùng chung; giá nhập được quản lý theo từng lô nhập kho">
       <button class="btn" @click="loadRows(true)">Làm mới</button>
       <button v-if="canCreate" class="btn primary" @click="openModal()">+ Thêm sản phẩm</button>
     </PageHeader>
@@ -200,20 +211,7 @@ onMounted(() => loadRows())
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
         <table style="min-width: 1220px">
-          <thead>
-            <tr>
-              <th>Mã SP</th>
-              <th>Tên sản phẩm</th>
-              <th>Đơn vị</th>
-              <th>Hết hàng ≤</th>
-              <th>Cảnh báo</th>
-              <th>Bình thường ≥</th>
-              <th>Ngày tạo</th>
-              <th>Cập nhật cuối</th>
-              <th>Trạng thái</th>
-              <th>Thao tác</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Mã SP</th><th>Tên sản phẩm</th><th>Đơn vị</th><th>Hết hàng ≤</th><th>Cảnh báo</th><th>Bình thường ≥</th><th>Ngày tạo</th><th>Cập nhật cuối</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
               <td>{{ row.product_code }}</td>
@@ -224,87 +222,34 @@ onMounted(() => loadRows())
               <td>{{ stockValue(row, 'normal_stock_min', ['normal_stock_threshold']) }}</td>
               <td>{{ formatDateTime(row.created_at) }}</td>
               <td>{{ formatDateTime(row.updated_at) }}</td>
-              <td>
-                <span class="badge" :class="productStatus(row) === 'active' ? 'green' : 'red'">
-                  {{ productStatus(row) === 'active' ? 'Đang bán' : 'Ngừng bán' }}
-                </span>
-              </td>
-              <td>
-                <div class="action-buttons">
-                  <button class="btn-sm btn-view" @click="openDetail(row)">Xem</button>
-                  <button v-if="canEdit" class="btn-sm" @click="openModal(row)">Sửa</button>
-                  <button v-if="canDelete" class="btn-sm btn-delete" @click="removeProduct(row)">Xóa</button>
-                </div>
-              </td>
+              <td><span class="badge" :class="productStatus(row) === 'active' ? 'green' : 'red'">{{ productStatus(row) === 'active' ? 'Đang bán' : 'Ngừng bán' }}</span></td>
+              <td><div class="action-buttons">
+                <button class="btn-sm btn-view" @click="openDetail(row)">Xem</button>
+                <button v-if="canEdit" class="btn-sm" @click="openModal(row)">Sửa</button>
+                <button v-if="canDelete" class="btn-sm btn-delete" @click="removeProduct(row)">Xóa</button>
+              </div></td>
             </tr>
-            <tr v-if="!filtered.length">
-              <td colspan="10" class="empty">Không có sản phẩm phù hợp.</td>
-            </tr>
+            <tr v-if="!filtered.length"><td colspan="10" class="empty">Không có sản phẩm phù hợp.</td></tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <BaseModal
-      v-if="showModal"
-      :title="editing ? 'Sửa sản phẩm' : 'Thêm sản phẩm'"
-      size="lg"
-      :loading="saving"
-      @close="showModal = false"
-      @save="saveProduct"
-    >
+    <BaseModal v-if="showModal" :title="editing ? 'Sửa sản phẩm' : 'Thêm sản phẩm'" size="lg" :loading="saving" @close="showModal = false" @save="saveProduct">
       <div class="form-grid">
-        <div class="form-group">
-          <label>Mã sản phẩm *</label>
-          <input v-model="form.product_code" class="input" placeholder="VD: SP001" />
-        </div>
-        <div class="form-group">
-          <label>Tên sản phẩm *</label>
-          <input v-model="form.product_name" class="input" />
-        </div>
-        <div class="form-group">
-          <label>Đơn vị *</label>
-          <input v-model="form.unit" class="input" placeholder="VD: Chiếc, Cái, Tờ..." />
-        </div>
-        <div class="form-group">
-          <label>Nhóm sản phẩm</label>
-          <input v-model="form.category" class="input" placeholder="Nhóm / loại sản phẩm" />
-        </div>
-        <div class="form-group">
-          <label>Quy cách đóng gói</label>
-          <input v-model="form.packing_standard" class="input" placeholder="VD: 1 thùng / 1.000 chiếc" />
-        </div>
-        <div class="form-group">
-          <label>Trạng thái</label>
-          <select v-model="form.status" class="select">
-            <option value="active">Đang bán</option>
-            <option value="inactive">Ngừng bán</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Hết hàng khi tồn cuối ≤</label>
-          <input v-model.number="form.out_of_stock_max" class="input" type="number" />
-        </div>
+        <div class="form-group"><label>Mã sản phẩm *</label><input v-model="form.product_code" class="input" placeholder="VD: SP001" /></div>
+        <div class="form-group"><label>Tên sản phẩm *</label><input v-model="form.product_name" class="input" /></div>
+        <div class="form-group"><label>Đơn vị *</label><input v-model="form.unit" class="input" placeholder="VD: Chiếc, Cái, Tờ..." /></div>
+        <div class="form-group"><label>Nhóm sản phẩm</label><input v-model="form.category" class="input" placeholder="Nhóm / loại sản phẩm" /></div>
+        <div class="form-group"><label>Quy cách đóng gói</label><input v-model="form.packing_standard" class="input" placeholder="VD: 1 thùng / 1.000 chiếc" /></div>
+        <div class="form-group"><label>Trạng thái</label><select v-model="form.status" class="select"><option value="active">Đang bán</option><option value="inactive">Ngừng bán</option></select></div>
+        <div class="form-group"><label>Hết hàng khi tồn cuối ≤</label><input v-model.number="form.out_of_stock_max" class="input" type="number" /></div>
         <div></div>
-        <div class="form-group">
-          <label>Cảnh báo từ</label>
-          <input v-model.number="form.warning_stock_min" class="input" type="number" />
-        </div>
-        <div class="form-group">
-          <label>Cảnh báo đến</label>
-          <input v-model.number="form.warning_stock_max" class="input" type="number" />
-        </div>
-        <div class="form-group">
-          <label>Bình thường khi tồn cuối ≥</label>
-          <input v-model.number="form.normal_stock_min" class="input" type="number" />
-        </div>
-        <div class="product-threshold-note">
-          Ví dụ: hết hàng ≤ 0, cảnh báo 1–10, bình thường ≥ 11.
-        </div>
-        <div class="form-group" style="grid-column:1/-1">
-          <label>Ghi chú</label>
-          <textarea v-model="form.note" class="textarea" rows="3" />
-        </div>
+        <div class="form-group"><label>Cảnh báo từ</label><input v-model.number="form.warning_stock_min" class="input" type="number" /></div>
+        <div class="form-group"><label>Cảnh báo đến</label><input v-model.number="form.warning_stock_max" class="input" type="number" /></div>
+        <div class="form-group"><label>Bình thường khi tồn cuối ≥</label><input v-model.number="form.normal_stock_min" class="input" type="number" /></div>
+        <div class="product-threshold-note">Ví dụ: hết hàng ≤ 0, cảnh báo 1–10, bình thường ≥ 11.</div>
+        <div class="form-group" style="grid-column:1/-1"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
       </div>
     </BaseModal>
 
@@ -315,17 +260,13 @@ onMounted(() => loadRows())
       :labels="productDetailLabels"
       :field-order="[
         'id','firestore_id','product_code','product_name','name','unit','category','product_group','packing_standard',
-        'material','color','size','description','cost_price','selling_price',
+        'material','color','size','description','selling_price',
         'out_of_stock_max','out_of_stock_threshold','sold_out_max','warning_stock_min','warning_stock_max','normal_stock_min','normal_stock_threshold',
         'created_by','owner_email','created_at','updated_at','status','active','deleted','deleted_at','warehouse_source','note'
       ]"
       @close="showDetailModal = false"
     />
 
-    <ConfirmModal
-      v-bind="confirmState"
-      @cancel="resolveConfirm(false)"
-      @confirm="resolveConfirm(true)"
-    />
+    <ConfirmModal v-bind="confirmState" @cancel="resolveConfirm(false)" @confirm="resolveConfirm(true)" />
   </AppShell>
 </template>
