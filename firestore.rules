@@ -1207,7 +1207,11 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
 
     match /print_orders/{docId} {
-      allow read: if hasPerm('printing.view');
+      allow read: if hasPerm('printing.view_all')
+        || (
+          hasPerm('printing.view')
+          && ownsPrintOrderData(resource.data)
+        );
 
       allow create: if hasPerm('printing.create')
         && request.resource.data.get('order_code', '') is string
@@ -1218,6 +1222,7 @@ service cloud.firestore {
       allow update: if isAdmin()
         || (
           hasPerm('printing.edit')
+          && ownsPrintOrderData(resource.data)
           && warehouseDocIdentitySafe()
           && request.resource.data.get('order_code', '') is string
           && request.resource.data.get('order_code', '') != ''
@@ -1226,6 +1231,7 @@ service cloud.firestore {
         )
         || (
           hasPerm('printing.delete')
+          && ownsPrintOrderData(resource.data)
           && warehouseDocIdentitySafe()
           && warehouseSoftDeleteOnly()
         );
@@ -1234,10 +1240,15 @@ service cloud.firestore {
     }
 
     match /print_order_items/{docId} {
-      allow read: if hasPerm('printing.view');
+      allow read: if hasPerm('printing.view_all')
+        || (
+          hasPerm('printing.view')
+          && ownEmailField(resource.data, 'created_by')
+        );
 
       allow create: if hasAnyPerm(['printing.create', 'printing.edit'])
         && request.resource.data.print_order_id is string
+        && ownsActivePrintOrderAfterById(request.resource.data.print_order_id)
         && request.resource.data.get('product_id', '') is string
         && request.resource.data.get('product_id', '') != ''
         && printQuantitiesAreValid(request.resource.data)
@@ -1246,11 +1257,15 @@ service cloud.firestore {
       allow update: if isAdmin()
         || (
           hasPerm('printing.edit')
+          && ownEmailField(resource.data, 'created_by')
+          && ownsActivePrintOrderAfterById(resource.data.print_order_id)
           && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
           && printQuantitiesAreValid(request.resource.data)
         )
         || (
           hasAnyPerm(['printing.edit', 'printing.delete'])
+          && ownEmailField(resource.data, 'created_by')
+          && ownsPrintOrderAfterById(resource.data.print_order_id)
           && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
           && warehouseSoftDeleteOnly()
         );
