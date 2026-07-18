@@ -283,37 +283,31 @@ function groupsFromItems(orderItems: PrintOrderItemDoc[]) {
 }
 
 function groupsFromSourceOrder(orderId: string) {
-  const orderItems = sourceOrderItems.value.filter(item => item.order_id === orderId && item.deleted !== true)
+  const orderItems = sourceOrderItems.value.filter(item =>
+    item.order_id === orderId
+    && item.deleted !== true
+    && sourceLogoLines(item).length > 0,
+  )
   return orderItems.map(item => {
     const logos = sourceLogoLines(item)
-    if (logos.length) {
-      const group = blankProductGroup({
-        product_id: item.product_id,
-        product_code: item.product_code,
-        product_name: item.product_name,
-      })
-      group.use_logo = true
-      group.print_quantity = 0
-      group.logo_lines = logos.map((line: any) => blankLine({
-        logo: String(line.logo || ''),
-        logo_color: String(line.logo_color || line.color || ''),
-        print_quantity: toNumber(line.quantity ?? line.qty),
-        actual_print_quantity: 0,
-      }))
-      return group
-    }
-    return blankProductGroup({
+    const group = blankProductGroup({
       product_id: item.product_id,
       product_code: item.product_code,
       product_name: item.product_name,
-      print_quantity: toNumber(item.quantity),
-      actual_print_quantity: 0,
     })
-  }).filter(group => group.product_id && (
-    group.use_logo
-      ? group.logo_lines.some(line => toNumber(line.print_quantity) > 0)
-      : toNumber(group.print_quantity) > 0
-  ))
+    group.use_logo = true
+    group.print_quantity = 0
+    group.logo_lines = logos.map((line: any) => blankLine({
+      logo: String(line.logo || ''),
+      logo_color: String(line.logo_color || line.color || ''),
+      print_quantity: toNumber(line.quantity ?? line.qty),
+      actual_print_quantity: 0,
+    }))
+    return group
+  }).filter(group =>
+    group.product_id
+    && group.logo_lines.some(line => toNumber(line.print_quantity) > 0),
+  )
 }
 
 function chooseSourceOrder() {
@@ -321,7 +315,7 @@ function chooseSourceOrder() {
   form.order_code = order?.order_code || ''
   form.products = order ? groupsFromSourceOrder(order.id) : []
   if (order && !form.products.length) {
-    showToast('Đơn hàng đã chọn chưa có sản phẩm hợp lệ.', 'error')
+    showToast('Đơn hàng đã chọn chưa có sản phẩm logo hợp lệ.', 'error')
   }
 }
 
@@ -604,7 +598,7 @@ onBeforeUnmount(() => {
             placeholder="Tìm đơn có sản phẩm logo theo mã, khách hàng hoặc SĐT..."
             @change="chooseSourceOrder"
           />
-          <div class="small subtle">Chỉ hiển thị đơn có ít nhất một sản phẩm logo.</div>
+          <div class="small subtle">Chỉ hiển thị đơn và sản phẩm đã tick Có logo.</div>
         </div>
         <div class="form-group">
           <label>Mã AM</label>
@@ -644,7 +638,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-else class="logo-items-box print-logo-box">
-          <div class="logo-mode-note">Sản phẩm và số lượng theo logo được lấy tự động từ đơn hàng.</div>
+          <div class="logo-mode-note">Sản phẩm, logo, màu và số lượng được lấy tự động từ đơn hàng.</div>
           <div class="table-wrap">
             <table class="print-logo-table">
               <thead><tr><th>Logo</th><th>Màu logo</th><th>SL cần in</th><th>SL in thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Ghi chú dòng</th><th>Hoàn thành</th></tr></thead>
@@ -665,7 +659,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
-      <div v-if="!form.products.length" class="empty print-source-empty">Hãy chọn mã đơn hàng để tự động hiển thị sản phẩm.</div>
+      <div v-if="!form.products.length" class="empty print-source-empty">Hãy chọn mã đơn hàng để tự động hiển thị sản phẩm logo.</div>
     </BaseModal>
 
     <BaseModal
