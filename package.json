@@ -8,7 +8,7 @@
     "build": "nuxt build",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "test:rules": "firebase emulators:exec --only firestore \"node --test --test-concurrency=1 --test-name-pattern='vận hành có view_all' tests/printing-owner.rules.test.mjs\"",
+    "test:rules": "firebase emulators:exec --only firestore \"node --test --test-concurrency=1 --test-name-pattern='printing.view vẫn' tests/printing-owner.rules.test.mjs\"",
     "deploy": "npm run generate && firebase deploy --only hosting"
   },
   "dependencies": {
