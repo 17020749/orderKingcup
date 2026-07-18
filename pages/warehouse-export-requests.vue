@@ -393,7 +393,10 @@ async function submitRelease(row: any) {
   }
   const missingWarehouse = lines.filter((line: any) => !releaseWarehouseId(line, line.__release_index))
   if (missingWarehouse.length) {
-    return showToast('Vui lòng chọn kho xuất cho từng dòng sản phẩm.', 'error')
+    return showToast(
+      `Vui lòng chọn kho xuất cho dòng ${missingWarehouse.map((line: any) => line.__release_index + 1).join(', ')}.`,
+      'error',
+    )
   }
 
   const result = await processExportRequestToExportOrder({
@@ -652,6 +655,7 @@ onBeforeUnmount(() => {
                   @update:model-value="onReleaseWarehouseChanged(index, $event)"
                   @change="onReleaseWarehouseChanged(index, $event)"
                 />
+                <div class="small subtle">ID kho: {{ releaseWarehouseId(line, index) || 'chưa chọn' }}</div>
               </td>
               <td><b>{{ line.product_code }}</b><div class="small subtle">{{ line.product_name }}</div></td>
               <td>{{ line.logo || '-' }}</td>
