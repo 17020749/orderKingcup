@@ -1,24 +1,5 @@
+import { APP_ROUTE_PERMISSIONS } from '~/constants/appRoutes'
 import { permissionDebug } from '~/utils/permissionDebug'
-
-const ROUTE_PERMISSIONS: Array<[string, string]> = [
-  ['/dashboard', 'page.dashboard'],
-  ['/orders', 'page.orders'],
-  ['/export-requests', 'page.export_requests'],
-  ['/warehouse-export-requests', 'page.warehouse_export_requests'],
-  ['/imports', 'page.imports'],
-  ['/exports', 'page.exports'],
-  ['/inventory', 'page.inventory'],
-  ['/inventory-adjustments', 'page.inventory_adjustments'],
-  ['/printing', 'page.printing'],
-  ['/warehouse-settings', 'page.warehouse_settings'],
-  ['/customers', 'page.customers'],
-  ['/products', 'page.products'],
-  ['/payments', 'page.payments'],
-  ['/shipments', 'page.shipments'],
-  ['/invoices', 'page.invoices'],
-  ['/activity-logs', 'page.activity_logs'],
-  ['/settings', 'page.settings']
-]
 
 export default defineNuxtRouteMiddleware(async (to) => {
   if (process.server) return
@@ -30,7 +11,9 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (to.path === '/forbidden') return
   if (to.path.startsWith('/settings/users') && !isAdmin.value) return navigateTo('/forbidden', { replace: true })
 
-  const required = ROUTE_PERMISSIONS.find(([prefix]) => to.path === prefix || to.path.startsWith(`${prefix}/`))?.[1]
+  const required = APP_ROUTE_PERMISSIONS.find(route => (
+    to.path === route.path || to.path.startsWith(`${route.path}/`)
+  ))?.permission
   if (required && !hasPermission(required)) {
     permissionDebug({
       module: 'route', action: 'navigate', stage: 'denied', documentId: to.path,
