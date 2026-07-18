@@ -4,6 +4,8 @@ import { test } from 'node:test'
 
 const source = readFileSync('utils/warehouseLotAllocation.ts', 'utf8')
 const transactions = readFileSync('composables/useWarehouseCostTransactions.ts', 'utf8')
+const productsPage = readFileSync('pages/products.vue', 'utf8')
+const settingsPage = readFileSync('pages/settings/general.vue', 'utf8')
 
 test('lot engine supports configured issue policies', () => {
   assert.match(source, /'fifo'/)
@@ -25,4 +27,11 @@ test('priced fields are limited to import transaction payloads', () => {
   )
   assert.match(importSection, /unit_cost:/)
   assert.match(importSection, /line_cost:/)
+})
+
+test('product catalog removes legacy cost_price and settings provides migration', () => {
+  assert.match(productsPage, /cost_price:\s*deleteField\(\)/)
+  assert.doesNotMatch(productsPage, /Giá vốn/)
+  assert.match(settingsPage, /cleanupLegacyProductCosts/)
+  assert.match(settingsPage, /cost_price:\s*deleteField\(\)/)
 })
