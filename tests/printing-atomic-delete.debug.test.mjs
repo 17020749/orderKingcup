@@ -55,7 +55,13 @@ beforeEach(async () => {
         email: PRINTING,
         active: true,
         deleted: false,
-        permissions_flat: ['page.printing', 'printing.view', 'printing.delete'],
+        permissions_flat: [
+          'page.printing',
+          'printing.view',
+          'printing.create',
+          'printing.edit',
+          'printing.delete',
+        ],
       }),
       setDoc(doc(db, 'orders', 'order-a'), {
         id: 'order-a',
