@@ -676,6 +676,17 @@ service cloud.firestore {
         );
     }
 
+    function printingCanDeleteProgressAfterById(printOrderId) {
+      let path = printOrderPath(printOrderId);
+      return printOrderId is string
+        && printOrderId != ''
+        && existsAfter(path)
+        && (
+          hasPerm('printing.view_all')
+          || ownsPrintOrderData(getAfter(path).data)
+        );
+    }
+
     function ownsPrintOrderAfterById(printOrderId) {
       let path = printOrderPath(printOrderId);
       return printOrderId is string
@@ -1306,7 +1317,7 @@ service cloud.firestore {
         || (
           hasPerm('printing.delete')
           && resource.data.print_order_id is string
-          && printingCanOperateProgressAfterById(resource.data.print_order_id)
+          && printingCanDeleteProgressAfterById(resource.data.print_order_id)
           && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
           && warehouseSoftDeleteOnly()
         );
