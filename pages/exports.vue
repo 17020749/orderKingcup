@@ -142,7 +142,15 @@ const selectedItems = computed(() =>
 );
 
 function newBlankLine() {
-  return { product_id: "", logo: "", quantity: 0, unit: "", note: "" };
+  return {
+    product_id: "",
+    from_warehouse_id: "",
+    source_logo: "",
+    logo: "",
+    quantity: 0,
+    unit: "",
+    note: "",
+  };
 }
 
 function findProduct(id: string) {
@@ -183,6 +191,13 @@ function itemWarehouseReceiver(item: any) {
 
 function itemCustomerReceiver(item: any) {
   return item.to_warehouse_id || item.to_warehouse_name ? "-" : (item.destination_name || selected.value?.customer_name || selected.value?.destination_name || "-");
+}
+
+function itemSourceLogoText(item: any) {
+  const logo = Object.prototype.hasOwnProperty.call(item, "source_logo")
+    ? item.source_logo
+    : item.logo;
+  return logo || "Không logo";
 }
 
 function isRequestGenerated(row: any) {
@@ -254,6 +269,10 @@ function openEditModal(row: ExportOrderDoc) {
     lines: orderItems.length
       ? orderItems.map((item) => ({
           product_id: item.product_id || "",
+          from_warehouse_id: item.from_warehouse_id || "",
+          source_logo: Object.prototype.hasOwnProperty.call(item, "source_logo")
+            ? (item as any).source_logo || ""
+            : item.logo || "",
           logo: item.logo || "",
           quantity: toNumber(item.quantity),
           unit: item.unit || "",
@@ -319,15 +338,8 @@ function onProductChanged(line: any) {
 }
 
 async function saveExportOrder() {
-  if (!form.from_warehouse_id)
-    return showToast("Vui lòng chọn kho xuất.", "error");
   if (form.destination_type === "warehouse" && !form.to_warehouse_id)
     return showToast("Vui lòng chọn kho nhận.", "error");
-  if (
-    form.destination_type === "warehouse" &&
-    form.to_warehouse_id === form.from_warehouse_id
-  )
-    return showToast("Kho nhận phải khác kho xuất.", "error");
 
   const validLines = form.lines.filter(
     (line) => line.product_id && toNumber(line.quantity) > 0,
@@ -337,10 +349,17 @@ async function saveExportOrder() {
       "Vui lòng nhập ít nhất một dòng sản phẩm và số lượng xuất hợp lệ.",
       "error",
     );
+  const missingWarehouse = validLines.find((line) => !line.from_warehouse_id);
+  if (missingWarehouse)
+    return showToast("Vui lòng chọn kho xuất cho từng dòng sản phẩm.", "error");
+  if (
+    form.destination_type === "warehouse" &&
+    validLines.some((line) => line.from_warehouse_id === form.to_warehouse_id)
+  )
+    return showToast("Kho nhận phải khác kho xuất ở từng dòng.", "error");
 
   saving.value = true;
   try {
-    const fromWarehouse = findWarehouse(form.from_warehouse_id);
     const toWarehouse =
       form.destination_type === "warehouse"
         ? findWarehouse(form.to_warehouse_id)
@@ -359,7 +378,12 @@ async function saveExportOrder() {
       operation_id: form.operation_id,
       lines: validLines.map((line) => ({
         product: findProduct(line.product_id),
-        fromWarehouse,
+        fromWarehouse: findWarehouse(line.from_warehouse_id),
+        source_logo:
+          form.destination_type === "warehouse"
+            ? line.source_logo || ""
+            : line.logo || "",
+        target_logo: line.logo || "",
         logo: line.logo,
         quantity: toNumber(line.quantity),
         unit: line.unit || findProduct(line.product_id)?.unit || "",
@@ -495,7 +519,6 @@ onMounted(() => loadRows());
     >
       <div class="form-grid">
         <div class="form-group"><label>Ngày xuất</label><input v-model="form.export_date" class="input" type="date" /></div>
-        <div class="form-group"><label>Kho xuất</label><SearchableSelect v-model="form.from_warehouse_id" :options="warehouseOptions" placeholder="Chọn kho xuất" /></div>
         <div class="form-group"><label>Loại xuất</label><select v-model="form.destination_type" class="select"><option value="customer">Xuất tới khách</option><option value="warehouse">Xuất tới kho</option></select></div>
         <div v-if="form.destination_type === 'warehouse'" class="form-group"><label>Kho nhận</label><SearchableSelect v-model="form.to_warehouse_id" :options="warehouseOptions" placeholder="Chọn kho nhận" /></div>
         <div v-else class="form-group"><label>Khách hàng / nơi nhận</label><input v-model="form.customer_name" class="input" placeholder="Tên khách hàng hoặc nơi nhận" /></div>
@@ -503,12 +526,25 @@ onMounted(() => loadRows());
       </div>
 
       <div class="table-wrap" style="margin-top: 14px">
-        <table style="min-width: 980px">
-          <thead><tr><th>Sản phẩm</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Ghi chú</th><th></th></tr></thead>
+        <table :style="{ minWidth: form.destination_type === 'warehouse' ? '1380px' : '1180px' }">
+          <thead>
+            <tr>
+              <th>Kho xuất</th>
+              <th>Sản phẩm</th>
+              <th v-if="form.destination_type === 'warehouse'">Logo kho xuất</th>
+              <th>{{ form.destination_type === 'warehouse' ? 'Logo kho nhận' : 'Logo' }}</th>
+              <th>Đơn vị</th>
+              <th>Số lượng</th>
+              <th>Ghi chú</th>
+              <th></th>
+            </tr>
+          </thead>
           <tbody>
             <tr v-for="(line, index) in form.lines" :key="index">
+              <td><SearchableSelect v-model="line.from_warehouse_id" :options="warehouseOptions" placeholder="Chọn kho xuất" /></td>
               <td><SearchableSelect v-model="line.product_id" :options="productOptions" placeholder="Tìm theo mã hoặc tên sản phẩm" @change="onProductChanged(line)" /></td>
-              <td><input v-model="line.logo" class="input" placeholder="Để trống nếu không logo" /></td>
+              <td v-if="form.destination_type === 'warehouse'"><input v-model="line.source_logo" class="input" placeholder="Để trống nếu hàng trơn" /></td>
+              <td><input v-model="line.logo" class="input" :placeholder="form.destination_type === 'warehouse' ? 'Logo nhập vào kho nhận' : 'Để trống nếu không logo'" /></td>
               <td><input v-model="line.unit" class="input" placeholder="Đơn vị" /></td>
               <td><input v-model.number="line.quantity" class="input" type="number" min="0" step="1" /></td>
               <td><input v-model="line.note" class="input" placeholder="Ghi chú dòng" /></td>
@@ -543,20 +579,21 @@ onMounted(() => loadRows());
       </div>
 
       <div class="table-wrap">
-        <table style="min-width: 1040px">
-          <thead><tr><th>Sản phẩm</th><th>Kho xuất</th><th>Kho nhận</th><th>Khách nhận</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Ghi chú</th></tr></thead>
+        <table style="min-width: 1180px">
+          <thead><tr><th>Sản phẩm</th><th>Kho xuất</th><th>Kho nhận</th><th>Khách nhận</th><th>Logo kho xuất</th><th>Logo kho nhận/khách</th><th>Đơn vị</th><th>Số lượng</th><th>Ghi chú</th></tr></thead>
           <tbody>
             <tr v-for="item in selectedItems" :key="item.id">
               <td><b>{{ item.product_code }}</b><div class="small subtle">{{ item.product_name }}</div></td>
               <td>{{ item.from_warehouse_name || item.from_warehouse_id || "-" }}</td>
               <td>{{ itemWarehouseReceiver(item) }}</td>
               <td>{{ itemCustomerReceiver(item) }}</td>
+              <td>{{ itemSourceLogoText(item) }}</td>
               <td>{{ item.logo || "Không logo" }}</td>
               <td>{{ item.unit || "-" }}</td>
               <td><b>{{ quantityText(item.quantity) }}</b></td>
               <td>{{ item.note || "-" }}</td>
             </tr>
-            <tr v-if="!selectedItems.length"><td colspan="8" class="empty">Phiếu này chưa có dòng chi tiết.</td></tr>
+            <tr v-if="!selectedItems.length"><td colspan="9" class="empty">Phiếu này chưa có dòng chi tiết.</td></tr>
           </tbody>
         </table>
       </div>
