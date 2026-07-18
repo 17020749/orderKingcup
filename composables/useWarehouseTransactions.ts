@@ -1127,9 +1127,9 @@ export function useWarehouseTransactions() {
     const preparedLines = [] as Array<WarehouseLineInput & { product: any; fromWarehouse: any; toWarehouse: any | null; sourceLogo: string; targetLogo: string; quantity: number; itemId: string; outMovementId: string; inMovementId: string }>
     rawLines.forEach((line, index) => {
       const product = ensureProduct(line.product)
-      const fromWarehouse = ensureWarehouse(line.fromWarehouse || line.warehouse || line.from_warehouse_id || line.warehouse_id, 'kho xuất')
+      const fromWarehouse = ensureWarehouse(line.from_warehouse_id || line.warehouse_id || line.fromWarehouse || line.warehouse, 'kho xuất')
       const toWarehouse = destinationType === 'warehouse'
-        ? ensureWarehouse(line.toWarehouse || line.to_warehouse_id || defaultToWarehouse, 'kho nhận')
+        ? ensureWarehouse(line.to_warehouse_id || line.toWarehouse || defaultToWarehouse, 'kho nhận')
         : null
       if (toWarehouse && toWarehouse.id === fromWarehouse.id) throw new Error('Kho nhận phải khác kho xuất.')
       const quantity = ensurePositiveQuantity(line.quantity)
@@ -1392,9 +1392,9 @@ export function useWarehouseTransactions() {
       : null
     const preparedNew = rawLines.map((line, index) => {
       const product = ensureProduct(line.product)
-      const fromWarehouse = ensureWarehouse(line.fromWarehouse || line.warehouse || line.from_warehouse_id || line.warehouse_id, 'kho xuất')
+      const fromWarehouse = ensureWarehouse(line.from_warehouse_id || line.warehouse_id || line.fromWarehouse || line.warehouse, 'kho xuất')
       const toWarehouse = destinationType === 'warehouse'
-        ? ensureWarehouse(line.toWarehouse || line.to_warehouse_id || defaultToWarehouse, 'kho nhận')
+        ? ensureWarehouse(line.to_warehouse_id || line.toWarehouse || defaultToWarehouse, 'kho nhận')
         : null
       if (toWarehouse && toWarehouse.id === fromWarehouse.id) throw new Error('Kho nhận phải khác kho xuất.')
       const quantity = ensurePositiveQuantity(line.quantity)
@@ -2119,7 +2119,7 @@ export function useWarehouseTransactions() {
     const preparedLines = [] as Array<{ product: any; fromWarehouse: any; logo: string; unit?: string; note?: string; quantity: number; itemId: string; outMovementId: string }>
     rawLines.forEach((line, index) => {
       const product = ensureProduct(line.product)
-      const fromWarehouse = ensureWarehouse(line.fromWarehouse || line.warehouse || line.from_warehouse_id || line.warehouse_id || fallbackWarehouse, 'kho xuất')
+      const fromWarehouse = ensureWarehouse(line.from_warehouse_id || line.warehouse_id || line.fromWarehouse || line.warehouse || fallbackWarehouse, 'kho xuất')
       const quantity = ensurePositiveQuantity(line.quantity)
       preparedLines.push({
         product,
