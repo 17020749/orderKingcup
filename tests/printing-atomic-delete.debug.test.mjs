@@ -9,12 +9,25 @@ import {
   deleteDoc,
   doc,
   setDoc,
+  updateDoc,
   writeBatch,
 } from 'firebase/firestore'
 
 const projectId = 'demo-orderkingcup-printing-atomic-delete'
 const PRINTING = 'printing@example.com'
 let env
+
+function deletedPatch() {
+  return {
+    deleted: true,
+    active: false,
+    status: 'deleted',
+    deleted_at: 'now',
+    deleted_by: PRINTING,
+    updated_by: PRINTING,
+    updated_at: 'now',
+  }
+}
 
 before(async () => {
   env = await initializeTestEnvironment({
@@ -71,20 +84,21 @@ beforeEach(async () => {
 
 after(async () => env.cleanup())
 
+test('xóa mềm riêng đơn cha', async () => {
+  const db = env.authenticatedContext(PRINTING, { email: PRINTING }).firestore()
+  await assertSucceeds(updateDoc(doc(db, 'print_orders', 'print-a'), deletedPatch()))
+})
+
+test('xóa mềm riêng dòng con khi cha còn active', async () => {
+  const db = env.authenticatedContext(PRINTING, { email: PRINTING }).firestore()
+  await assertSucceeds(updateDoc(doc(db, 'print_order_items', 'print-item-a'), deletedPatch()))
+})
+
 test('xóa mềm cha và dòng in trong cùng batch', async () => {
   const db = env.authenticatedContext(PRINTING, { email: PRINTING }).firestore()
-  const patch = {
-    deleted: true,
-    active: false,
-    status: 'deleted',
-    deleted_at: 'now',
-    deleted_by: PRINTING,
-    updated_by: PRINTING,
-    updated_at: 'now',
-  }
   const batch = writeBatch(db)
-  batch.update(doc(db, 'print_orders', 'print-a'), patch)
-  batch.update(doc(db, 'print_order_items', 'print-item-a'), patch)
+  batch.update(doc(db, 'print_orders', 'print-a'), deletedPatch())
+  batch.update(doc(db, 'print_order_items', 'print-item-a'), deletedPatch())
   await assertSucceeds(batch.commit())
 })
 
