@@ -40,6 +40,9 @@ test('warehouse transaction resolver accepts ids from line payload shapes', () =
   assert.match(ensureSection, /warehouse\?\.from_warehouse_id/)
   assert.match(ensureSection, /warehouse\?\.warehouse_id/)
   assert.match(ensureSection, /warehouse\?\.to_warehouse_id/)
+  assert.match(ensureSection, /function missingWarehouseError\(fields: string\)/)
+  assert.match(ensureSection, /Payload \$\{label\}: \$\{fields \|\| 'rỗng'\}/)
+  assert.match(ensureSection, /if \(!id\) throw missingWarehouseError\(warehouse\)/)
 
   const createSection = transactions.slice(
     transactions.indexOf('async function createExportOrder'),
@@ -59,6 +62,7 @@ test('warehouse transaction resolver accepts ids from line payload shapes', () =
     transactions.indexOf('async function processExportRequestToExportOrder'),
     transactions.indexOf('const balanceDeltas = new Map<string, BalanceDelta>()', transactions.indexOf('async function processExportRequestToExportOrder')),
   )
+  assert.match(requestReleaseSection, /ensureWarehouse\(input\.warehouse, 'kho xuất mặc định'\)/)
   assert.match(requestReleaseSection, /line\.from_warehouse_id \|\| line\.warehouse_id \|\| line\.fromWarehouse \|\| line\.warehouse \|\| fallbackWarehouse \|\| line/)
   assert.match(requestReleaseSection, /`kho xuất dòng \$\{index \+ 1\}`/)
 })
