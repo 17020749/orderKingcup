@@ -393,6 +393,7 @@ async function submitRelease(row: any) {
     orderSummaryPatch: orderPatchAfter(row, 'da_xuat', { warehouse_export_code: 'pending_firestore' }),
     lines: lines.map((line: any) => ({
       product: findProductByCode(line.product_code),
+      from_warehouse_id: line.from_warehouse_id,
       fromWarehouse: findWarehouse(line.from_warehouse_id),
       logo: line.logo,
       quantity: toNumber(line.requested_qty),
