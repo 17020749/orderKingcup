@@ -379,7 +379,6 @@ async function saveExportOrder() {
       lines: validLines.map((line) => ({
         product: findProduct(line.product_id),
         from_warehouse_id: line.from_warehouse_id,
-        fromWarehouse: findWarehouse(line.from_warehouse_id),
         source_logo:
           form.destination_type === "warehouse"
             ? line.source_logo || ""
