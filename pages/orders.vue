@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore'
+import { collection, doc, getDoc, serverTimestamp, writeBatch } from 'firebase/firestore'
 import { INVOICE_STATUS_OPTIONS, ORDER_CLASSIFICATION_OPTIONS, ORDER_STATUS_OPTIONS, VAT_RATE_OPTIONS } from '~/constants/permissions'
 import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, PrintOrderDoc, ProductDoc } from '~/types/models'
 import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
@@ -8,14 +8,17 @@ import { generateCustomerCode } from '~/utils/customerCode'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import { printingDeleteBlocker } from '~/utils/orderPrintingDeleteLock.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { orderRelationDeleteBlocker } from '~/utils/orderRelationState.mjs'
 
 const { db } = useFirebaseServices()
-const { appUser, hasPermission } = useAuth()
+const { appUser, hasPermission, isAdmin } = useAuth()
 const { calcItems, computePaymentStatus, parseLogoLines } = useOrderLogic()
 const { invalidateScopedCache } = useRepo()
 const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
 const { loadScopedOrders, loadScopedOrderItems, loadScopedPayments, loadScopedExportRequests, loadScopedCustomers, loadProducts } = useScopedQueries()
 const { saveOrderAtomic } = useAtomicOrderSave()
+const { reconcileOrderRelationLocks } = useAtomicOrderRelations()
 const { loadPrintingProgressForOrders, loadPrintingProgressForOrder } = useOrderPrintingDeleteGuard()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
@@ -399,7 +402,9 @@ function orderDeleteBlocker(row: OrderDoc) {
   if (orderHasWarehouseExport(row)) {
     return 'Đơn hàng đã có số lượng xuất kho hoặc mã phiếu Warehouse nên không thể xóa.'
   }
-  return printingDeleteBlocker(row, printingProgress.value)
+  const printingBlocker = printingDeleteBlocker(row, printingProgress.value)
+  if (printingBlocker) return printingBlocker
+  return orderRelationDeleteBlocker(row)
 }
 
 function canDeleteRow(row: OrderDoc) {
@@ -589,6 +594,21 @@ async function saveOrder() {
         printing_last_print_order_id: '',
         printing_lock_updated_by: createdBy,
         printing_lock_updated_at: serverTimestamp(),
+        relation_lock_version: 1,
+        payment_record_count: 0,
+        invoice_record_count: 0,
+        shipment_record_count: 0,
+        payment_relation_revision: 0,
+        invoice_relation_revision: 0,
+        shipment_relation_revision: 0,
+        relation_last_module: 'all',
+        relation_last_action: 'reconcile',
+        relation_last_document_id: '',
+        relation_updated_by: createdBy,
+        relation_updated_at: serverTimestamp(),
+        shipment_status: '',
+        shipping_fee_total: 0,
+        cod_amount_total: 0,
         created_at: serverTimestamp(),
         active: true,
         deleted: false,
@@ -687,6 +707,24 @@ async function saveOrder() {
   })
 }
 
+async function reconcileRelationLocks() {
+  if (!isAdmin.value) return showToast('Chỉ quản trị viên được đồng bộ khóa liên kết đơn.', 'error')
+  const confirmed = await askConfirm({
+    title: 'Đồng bộ khóa liên kết đơn',
+    message: 'Hệ thống sẽ đếm lại thanh toán, hóa đơn và vận chuyển đang hoạt động của tất cả đơn hàng. Dữ liệu mồ côi sẽ được báo riêng và không tự động xóa.',
+    confirmLabel: 'Đồng bộ'
+  })
+  if (!confirmed) return
+  await withLoading(async () => {
+    const result = await reconcileOrderRelationLocks()
+    await loadRows(true)
+    const orphanNote = result.orphanCount
+      ? ` Phát hiện ${result.orphanCount} chứng từ mồ côi cần quản trị viên xử lý riêng.`
+      : ''
+    showToast(`Đã đồng bộ ${result.updatedOrders} đơn hàng.${orphanNote}`, result.orphanCount ? 'info' : 'success')
+  }).catch(error => showToast(reportFirebaseError(error, 'Không đồng bộ được khóa liên kết đơn.'), 'error'))
+}
+
 async function softDeleteOrder(row: OrderDoc) {
   if (!hasPermission('orders.delete')) return showToast('Bạn không có quyền xóa đơn hàng.', 'error')
   const initialBlocker = orderDeleteBlocker(row)
@@ -707,6 +745,10 @@ async function softDeleteOrder(row: OrderDoc) {
     const latestPrintingProgress = await loadPrintingProgressForOrder(row.id)
     const latestPrintingBlocker = printingDeleteBlocker(row, latestPrintingProgress)
     if (latestPrintingBlocker) throw new Error(latestPrintingBlocker)
+    const latestOrderSnap = await getDoc(doc(db, 'orders', row.id))
+    if (!latestOrderSnap.exists()) throw new Error('Không tìm thấy đơn hàng cần xóa.')
+    const latestRelationBlocker = orderRelationDeleteBlocker({ ...latestOrderSnap.data(), id: latestOrderSnap.id })
+    if (latestRelationBlocker) throw new Error(latestRelationBlocker)
 
     if (orderItems.length + orderRequests.length + 2 > 500) {
       throw new Error('Đơn hàng có quá nhiều dữ liệu liên quan để xóa an toàn trong một lần.')
@@ -779,6 +821,7 @@ onMounted(loadRows)
 <template>
   <AppShell>
     <PageHeader title="Đơn hàng" subtitle="Đơn hàng và chi tiết sản phẩm">
+      <button v-if="isAdmin" class="btn" @click="reconcileRelationLocks">Đồng bộ khóa liên kết đơn</button>
       <button v-if="hasPermission('orders.create')" class="btn primary" @click="openModal()">+ Tạo đơn hàng</button>
     </PageHeader>
 

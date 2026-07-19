@@ -139,6 +139,21 @@ export interface OrderDoc {
   printing_last_print_order_id?: string
   printing_lock_updated_by?: string
   printing_lock_updated_at?: any
+  relation_lock_version?: number
+  payment_record_count?: number
+  invoice_record_count?: number
+  shipment_record_count?: number
+  payment_relation_revision?: number
+  invoice_relation_revision?: number
+  shipment_relation_revision?: number
+  relation_last_module?: string
+  relation_last_action?: string
+  relation_last_document_id?: string
+  relation_updated_by?: string
+  relation_updated_at?: any
+  shipment_status?: string
+  shipping_fee_total?: number
+  cod_amount_total?: number
   status?: string
   created_at?: any
   updated_at?: any
@@ -159,7 +174,11 @@ export interface PaymentDoc {
   order_owner_email?: string
   order_created_by?: string
   order_sale_email?: string
+  relation_revision?: number
+  last_operation_id?: string
   status?: string
+  active?: boolean
+  deleted?: boolean
 }
 
 export interface ExportRequestDoc {
@@ -200,7 +219,11 @@ export interface ShipmentDoc {
   order_owner_email?: string
   order_created_by?: string
   order_sale_email?: string
+  relation_revision?: number
+  last_operation_id?: string
   status?: string
+  active?: boolean
+  deleted?: boolean
 }
 
 export interface PrintOrderDoc {
@@ -265,4 +288,10 @@ export interface InvoiceDoc {
   created_by?: string
   order_owner_email?: string
   order_created_by?: string
+  order_sale_email?: string
+  relation_revision?: number
+  last_operation_id?: string
+  status?: string
+  active?: boolean
+  deleted?: boolean
 }
