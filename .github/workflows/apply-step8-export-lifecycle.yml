@@ -32,7 +32,9 @@ jobs:
           fi
       - name: Fix patcher
         if: steps.state.outputs.applied == 'false'
-        run: python3 scripts/fix-step8-patcher.py
+        run: |
+          python3 scripts/fix-step8-patcher.py
+          python3 scripts/fix-step8-regex-escaping.py
       - name: Apply Step 8 patches
         id: patch
         if: steps.state.outputs.applied == 'false'
@@ -53,6 +55,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           rm -f step8-patch-error.txt
-          git add composables/useWarehouseTransactions.ts pages/warehouse-export-requests.vue firestore.rules types/models.ts package.json
+          git add -A composables/useWarehouseTransactions.ts pages/warehouse-export-requests.vue firestore.rules types/models.ts package.json step8-patch-error.txt
           git commit -m "feat(step8): enforce atomic export request lifecycle"
           git push origin HEAD:agent/step-8-export-lifecycle
