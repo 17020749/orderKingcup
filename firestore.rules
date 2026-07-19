@@ -590,135 +590,84 @@ service cloud.firestore {
         && data.get('active', true) != false;
     }
 
-    function paymentParentMutationMatches(orderId, paymentId, action) {
+    // Reads the parent only once for child validation. Ownership fields must
+    // match the active parent, and the relation summary must advance atomically.
+    function relationCreateBase(orderId) {
       let path = orderPath(orderId);
-      let childPath = paymentPath(paymentId);
-      let before = get(path).data;
-      let after = getAfter(path).data;
-      return exists(path)
-        && existsAfter(path)
-        && relationLockReadyData(before)
-        && relationLockReadyData(after)
-        && relationMetadataMatches(after, 'payments', action, paymentId)
-        && after.get('payment_relation_revision', -1) == before.get('payment_relation_revision', -1) + 1
-        && after.get('invoice_relation_revision', -1) == before.get('invoice_relation_revision', -1)
-        && after.get('shipment_relation_revision', -1) == before.get('shipment_relation_revision', -1)
-        && after.get('invoice_record_count', -1) == before.get('invoice_record_count', -1)
-        && after.get('shipment_record_count', -1) == before.get('shipment_record_count', -1)
-        && (
-          (
-            action == 'create'
-            && after.get('payment_record_count', -1) == before.get('payment_record_count', -1) + 1
-            && !exists(childPath)
-            && existsAfter(childPath)
-            && activeRelationData(getAfter(childPath).data)
-          )
-          || (
-            action == 'update'
-            && after.get('payment_record_count', -1) == before.get('payment_record_count', -1)
-            && exists(childPath)
-            && existsAfter(childPath)
-            && activeRelationData(get(childPath).data)
-            && activeRelationData(getAfter(childPath).data)
-            && getAfter(childPath).data != get(childPath).data
-          )
-          || (
-            action == 'delete'
-            && before.get('payment_record_count', 0) > 0
-            && after.get('payment_record_count', -1) == before.get('payment_record_count', -1) - 1
-            && exists(childPath)
-            && existsAfter(childPath)
-            && activeRelationData(get(childPath).data)
-            && getAfter(childPath).data.get('deleted', false) == true
-            && getAfter(childPath).data.get('active', true) == false
-          )
-        );
+      let order = get(path).data;
+      return orderId is string
+        && exists(path)
+        && orderDataIsActive(order)
+        && (ownsOrderData(order) || isAdmin())
+        && requestMatchesOrderData(order)
+        && ownEmailField(request.resource.data, 'created_by');
     }
 
-    function invoiceParentMutationMatches(orderId, invoiceId, action) {
+    function relationExistingChildBase(orderId) {
       let path = orderPath(orderId);
-      let childPath = invoicePath(invoiceId);
-      let before = get(path).data;
-      let after = getAfter(path).data;
-      return exists(path)
-        && existsAfter(path)
-        && relationLockReadyData(before)
-        && relationLockReadyData(after)
-        && relationMetadataMatches(after, 'invoices', action, invoiceId)
-        && after.get('invoice_relation_revision', -1) == before.get('invoice_relation_revision', -1) + 1
-        && after.get('payment_relation_revision', -1) == before.get('payment_relation_revision', -1)
-        && after.get('shipment_relation_revision', -1) == before.get('shipment_relation_revision', -1)
-        && after.get('payment_record_count', -1) == before.get('payment_record_count', -1)
-        && after.get('shipment_record_count', -1) == before.get('shipment_record_count', -1)
-        && (
-          (
-            action == 'create'
-            && after.get('invoice_record_count', -1) == before.get('invoice_record_count', -1) + 1
-            && !exists(childPath)
-            && existsAfter(childPath)
-            && activeRelationData(getAfter(childPath).data)
-          )
-          || (
-            action == 'update'
-            && after.get('invoice_record_count', -1) == before.get('invoice_record_count', -1)
-            && exists(childPath)
-            && existsAfter(childPath)
-            && activeRelationData(get(childPath).data)
-            && activeRelationData(getAfter(childPath).data)
-            && getAfter(childPath).data != get(childPath).data
-          )
-          || (
-            action == 'delete'
-            && before.get('invoice_record_count', 0) > 0
-            && after.get('invoice_record_count', -1) == before.get('invoice_record_count', -1) - 1
-            && exists(childPath)
-            && existsAfter(childPath)
-            && activeRelationData(get(childPath).data)
-            && getAfter(childPath).data.get('deleted', false) == true
-            && getAfter(childPath).data.get('active', true) == false
-          )
-        );
+      let order = get(path).data;
+      return orderId is string
+        && exists(path)
+        && orderDataIsActive(order)
+        && (ownsOrderData(order) || isAdmin())
+        && request.resource.data.order_id == resource.data.order_id
+        && childIdentityUnchanged()
+        && childOwnershipSafe(orderId);
     }
 
-    function shipmentParentMutationMatches(orderId, shipmentId, action) {
+    function relationParentMarkerMatches(orderId, module, action, documentId, revisionField) {
       let path = orderPath(orderId);
-      let childPath = shipmentPath(shipmentId);
       let before = get(path).data;
       let after = getAfter(path).data;
       return exists(path)
         && existsAfter(path)
-        && relationLockReadyData(before)
-        && relationLockReadyData(after)
-        && relationMetadataMatches(after, 'shipments', action, shipmentId)
-        && after.get('shipment_relation_revision', -1) == before.get('shipment_relation_revision', -1) + 1
-        && after.get('payment_relation_revision', -1) == before.get('payment_relation_revision', -1)
-        && after.get('invoice_relation_revision', -1) == before.get('invoice_relation_revision', -1)
-        && after.get('payment_record_count', -1) == before.get('payment_record_count', -1)
-        && after.get('invoice_record_count', -1) == before.get('invoice_record_count', -1)
+        && orderDataIsActive(before)
+        && orderDataIsActive(after)
+        && before.get('relation_lock_version', 0) == 1
+        && after.get('relation_lock_version', 0) == 1
+        && relationMetadataMatches(after, module, action, documentId)
+        && after.get(revisionField, -1) == before.get(revisionField, -1) + 1;
+    }
+
+    // Evaluated only by the matching module branch on the parent order.
+    function relationParentTransitionMatches(orderId, childPath, module, action, documentId, countField, revisionField) {
+      let currentCount = resource.data.get(countField, -1);
+      let nextCount = request.resource.data.get(countField, -1);
+      let currentRevision = resource.data.get(revisionField, -1);
+      let nextRevision = request.resource.data.get(revisionField, -1);
+      return resource.data.get('relation_lock_version', 0) == 1
+        && request.resource.data.get('relation_lock_version', 0) == 1
+        && relationMetadataMatches(request.resource.data, module, action, documentId)
+        && nextRevision == currentRevision + 1
         && (
           (
             action == 'create'
-            && after.get('shipment_record_count', -1) == before.get('shipment_record_count', -1) + 1
+            && nextCount == currentCount + 1
             && !exists(childPath)
             && existsAfter(childPath)
             && activeRelationData(getAfter(childPath).data)
+            && getAfter(childPath).data.get('order_id', '') == orderId
           )
           || (
             action == 'update'
-            && after.get('shipment_record_count', -1) == before.get('shipment_record_count', -1)
+            && nextCount == currentCount
             && exists(childPath)
             && existsAfter(childPath)
             && activeRelationData(get(childPath).data)
             && activeRelationData(getAfter(childPath).data)
+            && get(childPath).data.get('order_id', '') == orderId
+            && getAfter(childPath).data.get('order_id', '') == orderId
             && getAfter(childPath).data != get(childPath).data
           )
           || (
             action == 'delete'
-            && before.get('shipment_record_count', 0) > 0
-            && after.get('shipment_record_count', -1) == before.get('shipment_record_count', -1) - 1
+            && currentCount > 0
+            && nextCount == currentCount - 1
             && exists(childPath)
             && existsAfter(childPath)
             && activeRelationData(get(childPath).data)
+            && get(childPath).data.get('order_id', '') == orderId
+            && getAfter(childPath).data.get('order_id', '') == orderId
             && getAfter(childPath).data.get('deleted', false) == true
             && getAfter(childPath).data.get('active', true) == false
           )
@@ -728,8 +677,7 @@ service cloud.firestore {
     function orderPaymentSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return hasAnyPerm(['payments.create', 'payments.edit', 'payments.delete'])
-        && ownsOrderData(resource.data)
+      return ownsOrderData(resource.data)
         && orderIdentityUnchanged()
         && onlyChanged([
           'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
@@ -738,28 +686,42 @@ service cloud.firestore {
           'relation_last_action', 'relation_last_document_id', 'relation_updated_by',
           'relation_updated_at', 'updated_at'
         ])
-        && paymentParentMutationMatches(orderId, documentId, action);
+        && (
+          (action == 'create' && hasPerm('payments.create'))
+          || (action == 'update' && hasPerm('payments.edit'))
+          || (action == 'delete' && hasPerm('payments.delete'))
+        )
+        && relationParentTransitionMatches(
+          orderId, paymentPath(documentId), 'payments', action, documentId,
+          'payment_record_count', 'payment_relation_revision'
+        );
     }
 
     function orderInvoiceSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return hasAnyPerm(['invoices.create', 'invoices.edit', 'invoices.delete'])
-        && ownsOrderData(resource.data)
+      return ownsOrderData(resource.data)
         && orderIdentityUnchanged()
         && onlyChanged([
           'invoice_status', 'invoice_record_count', 'invoice_relation_revision',
           'relation_lock_version', 'relation_last_module', 'relation_last_action',
           'relation_last_document_id', 'relation_updated_by', 'relation_updated_at', 'updated_at'
         ])
-        && invoiceParentMutationMatches(orderId, documentId, action);
+        && (
+          (action == 'create' && hasPerm('invoices.create'))
+          || (action == 'update' && hasPerm('invoices.edit'))
+          || (action == 'delete' && hasPerm('invoices.delete'))
+        )
+        && relationParentTransitionMatches(
+          orderId, invoicePath(documentId), 'invoices', action, documentId,
+          'invoice_record_count', 'invoice_relation_revision'
+        );
     }
 
     function orderShipmentSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return hasAnyPerm(['shipments.create', 'shipments.edit', 'shipments.delete'])
-        && ownsOrderData(resource.data)
+      return ownsOrderData(resource.data)
         && orderIdentityUnchanged()
         && onlyChanged([
           'shipment_status', 'shipping_fee_total', 'cod_amount_total',
@@ -767,7 +729,15 @@ service cloud.firestore {
           'relation_last_module', 'relation_last_action', 'relation_last_document_id',
           'relation_updated_by', 'relation_updated_at', 'updated_at'
         ])
-        && shipmentParentMutationMatches(orderId, documentId, action);
+        && (
+          (action == 'create' && hasPerm('shipments.create'))
+          || (action == 'update' && hasPerm('shipments.edit'))
+          || (action == 'delete' && hasPerm('shipments.delete'))
+        )
+        && relationParentTransitionMatches(
+          orderId, shipmentPath(documentId), 'shipments', action, documentId,
+          'shipment_record_count', 'shipment_relation_revision'
+        );
     }
 
     function onlyWarehouseSummaryChanged() {
@@ -1538,32 +1508,31 @@ service cloud.firestore {
         );
 
       allow create: if hasPerm('payments.create')
-        && request.resource.data.order_id is string
-        && canMutateOrderById(request.resource.data.order_id)
-        && requestMatchesOrder(request.resource.data.order_id)
-        && ownEmailField(request.resource.data, 'created_by')
-        && paymentParentMutationMatches(request.resource.data.order_id, docId, 'create');
+        && relationCreateBase(request.resource.data.order_id)
+        && relationParentMarkerMatches(
+          request.resource.data.order_id, 'payments', 'create', docId,
+          'payment_relation_revision'
+        );
 
       allow update: if isAdmin()
         || (
-          resource.data.order_id is string
-          && (
-            ownEmailField(resource.data, 'created_by')
-            || ownsOrderById(resource.data.order_id)
-          )
-          && request.resource.data.order_id == resource.data.order_id
-          && childIdentityUnchanged()
-          && childOwnershipSafe(resource.data.order_id)
+          relationExistingChildBase(resource.data.order_id)
           && (
             (
               hasPerm('payments.edit')
               && unchanged(['deleted', 'active', 'status', 'deleted_at'])
-              && paymentParentMutationMatches(resource.data.order_id, docId, 'update')
+              && relationParentMarkerMatches(
+                resource.data.order_id, 'payments', 'update', docId,
+                'payment_relation_revision'
+              )
             )
             || (
               hasPerm('payments.delete')
               && softDeleteOnly()
-              && paymentParentMutationMatches(resource.data.order_id, docId, 'delete')
+              && relationParentMarkerMatches(
+                resource.data.order_id, 'payments', 'delete', docId,
+                'payment_relation_revision'
+              )
             )
           )
         );
@@ -1703,31 +1672,33 @@ service cloud.firestore {
         );
 
       allow create: if hasPerm('shipments.create')
-        && request.resource.data.order_id is string
-        && canMutateOrderById(request.resource.data.order_id)
-        && requestMatchesOrder(request.resource.data.order_id)
-        && ownEmailField(request.resource.data, 'created_by')
-        && shipmentParentMutationMatches(request.resource.data.order_id, docId, 'create');
+        && relationCreateBase(request.resource.data.order_id)
+        && relationParentMarkerMatches(
+          request.resource.data.order_id, 'shipments', 'create', docId,
+          'shipment_relation_revision'
+        );
 
       allow update: if isAdmin()
         || (
-          hasPerm('shipments.edit')
-          && resource.data.order_id is string
-          && canMutateOrderById(resource.data.order_id)
-          && request.resource.data.order_id == resource.data.order_id
-          && childIdentityUnchanged()
-          && childOwnershipSafe(resource.data.order_id)
-          && unchanged(['deleted', 'active', 'status', 'deleted_at'])
-          && shipmentParentMutationMatches(resource.data.order_id, docId, 'update')
-        )
-        || (
-          hasPerm('shipments.delete')
-          && resource.data.order_id is string
-          && canMutateOrderById(resource.data.order_id)
-          && childIdentityUnchanged()
-          && childOwnershipSafe(resource.data.order_id)
-          && softDeleteOnly()
-          && shipmentParentMutationMatches(resource.data.order_id, docId, 'delete')
+          relationExistingChildBase(resource.data.order_id)
+          && (
+            (
+              hasPerm('shipments.edit')
+              && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+              && relationParentMarkerMatches(
+                resource.data.order_id, 'shipments', 'update', docId,
+                'shipment_relation_revision'
+              )
+            )
+            || (
+              hasPerm('shipments.delete')
+              && softDeleteOnly()
+              && relationParentMarkerMatches(
+                resource.data.order_id, 'shipments', 'delete', docId,
+                'shipment_relation_revision'
+              )
+            )
+          )
         );
 
       allow delete: if isAdmin();
@@ -1747,31 +1718,33 @@ service cloud.firestore {
         );
 
       allow create: if hasPerm('invoices.create')
-        && request.resource.data.order_id is string
-        && canMutateOrderById(request.resource.data.order_id)
-        && requestMatchesOrder(request.resource.data.order_id)
-        && ownEmailField(request.resource.data, 'created_by')
-        && invoiceParentMutationMatches(request.resource.data.order_id, docId, 'create');
+        && relationCreateBase(request.resource.data.order_id)
+        && relationParentMarkerMatches(
+          request.resource.data.order_id, 'invoices', 'create', docId,
+          'invoice_relation_revision'
+        );
 
       allow update: if isAdmin()
         || (
-          hasPerm('invoices.edit')
-          && resource.data.order_id is string
-          && canMutateOrderById(resource.data.order_id)
-          && request.resource.data.order_id == resource.data.order_id
-          && childIdentityUnchanged()
-          && childOwnershipSafe(resource.data.order_id)
-          && unchanged(['deleted', 'active', 'status', 'deleted_at'])
-          && invoiceParentMutationMatches(resource.data.order_id, docId, 'update')
-        )
-        || (
-          hasPerm('invoices.delete')
-          && resource.data.order_id is string
-          && canMutateOrderById(resource.data.order_id)
-          && childIdentityUnchanged()
-          && childOwnershipSafe(resource.data.order_id)
-          && softDeleteOnly()
-          && invoiceParentMutationMatches(resource.data.order_id, docId, 'delete')
+          relationExistingChildBase(resource.data.order_id)
+          && (
+            (
+              hasPerm('invoices.edit')
+              && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+              && relationParentMarkerMatches(
+                resource.data.order_id, 'invoices', 'update', docId,
+                'invoice_relation_revision'
+              )
+            )
+            || (
+              hasPerm('invoices.delete')
+              && softDeleteOnly()
+              && relationParentMarkerMatches(
+                resource.data.order_id, 'invoices', 'delete', docId,
+                'invoice_relation_revision'
+              )
+            )
+          )
         );
 
       allow delete: if isAdmin();
