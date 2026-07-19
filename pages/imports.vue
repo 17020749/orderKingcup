@@ -30,6 +30,11 @@ const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
+const dateFrom = ref('')
+const dateTo = ref('')
+const supplierFilter = ref('')
+const warehouseFilter = ref('')
+const statusFilter = ref('')
 const rows = ref<ImportOrderDoc[]>([])
 const items = ref<ImportOrderItemDoc[]>([])
 const products = ref<ProductDoc[]>([])
@@ -108,6 +113,7 @@ const enrichedRows = computed(() => rows.value.map(row => {
     item_count: orderItems.length,
     total_quantity: orderItems.reduce((sum, item) => sum + toNumber(item.quantity), 0),
     total_cost: toNumber((row as any).total_cost) || orderItems.reduce((sum, item) => sum + lineCost(item), 0),
+    warehouse_ids: orderItems.map(item => String(item.warehouse_id || '')).filter(Boolean),
     product_search_text: orderItems
       .map(item => `${item.product_code || ''} ${item.product_name || ''} ${item.logo || ''} ${item.unit || ''}`)
       .join(' '),
@@ -116,17 +122,34 @@ const enrichedRows = computed(() => rows.value.map(row => {
 
 const filtered = computed(() => {
   const keyword = normalizeText(search.value)
-  if (!keyword) return enrichedRows.value
-  return enrichedRows.value.filter(row => normalizeText([
-    row.code,
-    row.import_code,
-    row.supplier_name,
-    row.created_by,
-    row.status,
-    row.note,
-    row.product_search_text,
-  ].join(' ')).includes(keyword))
+  return enrichedRows.value.filter(row => {
+    const rowDate = String(row.import_date || row.created_at || '').slice(0, 10)
+    const matchedDateFrom = !dateFrom.value || rowDate >= dateFrom.value
+    const matchedDateTo = !dateTo.value || rowDate <= dateTo.value
+    const matchedSupplier = !supplierFilter.value || row.supplier_id === supplierFilter.value
+    const matchedWarehouse = !warehouseFilter.value || row.warehouse_ids.includes(warehouseFilter.value)
+    const matchedStatus = !statusFilter.value || String(row.status || 'active') === statusFilter.value
+    const matchedText = !keyword || normalizeText([
+      row.code,
+      row.import_code,
+      row.supplier_name,
+      row.created_by,
+      row.status,
+      row.note,
+      row.product_search_text,
+    ].join(' ')).includes(keyword)
+    return matchedDateFrom && matchedDateTo && matchedSupplier && matchedWarehouse && matchedStatus && matchedText
+  })
 })
+
+function resetFilters() {
+  search.value = ''
+  dateFrom.value = ''
+  dateTo.value = ''
+  supplierFilter.value = ''
+  warehouseFilter.value = ''
+  statusFilter.value = ''
+}
 
 const summary = computed(() => ({
   orders: filtered.value.length,
@@ -343,7 +366,24 @@ onMounted(() => loadRows())
 
     <div class="card" style="margin: 24px;">
       <div class="toolbar">
-        <input v-model="search" class="input" style="max-width: 620px" placeholder="Tìm mã phiếu, nhà cung cấp, tên/mã sản phẩm, người tạo, ghi chú..." />
+        <input v-model="search" class="input" style="max-width: 360px" placeholder="Tìm mã phiếu, nhà cung cấp, tên/mã sản phẩm, người tạo, ghi chú..." />
+        <input v-model="dateFrom" class="input" type="date" style="max-width: 160px" title="Từ ngày" />
+        <input v-model="dateTo" class="input" type="date" style="max-width: 160px" title="Đến ngày" />
+        <select v-model="supplierFilter" class="select" style="max-width: 220px">
+          <option value="">Tất cả nhà cung cấp</option>
+          <option v-for="supplier in suppliers" :key="supplier.id" :value="supplier.id">{{ supplier.name || supplier.supplier_code || supplier.id }}</option>
+        </select>
+        <select v-model="warehouseFilter" class="select" style="max-width: 220px">
+          <option value="">Tất cả kho nhập</option>
+          <option v-for="warehouse in warehouses" :key="warehouse.id" :value="warehouse.id">{{ warehouse.name || warehouse.warehouse_code || warehouse.id }}</option>
+        </select>
+        <select v-model="statusFilter" class="select" style="max-width: 180px">
+          <option value="">Tất cả trạng thái</option>
+          <option value="active">active</option>
+          <option value="cancelled">cancelled</option>
+          <option value="deleted">deleted</option>
+        </select>
+        <button class="btn" type="button" @click="resetFilters">Xóa lọc</button>
       </div>
 
       <LoadingState v-if="loading" />
