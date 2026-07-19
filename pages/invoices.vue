@@ -14,16 +14,38 @@ const orders = ref<OrderDoc[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
+const invoiceStatusFilter = ref('')
+const dateFrom = ref('')
+const dateTo = ref('')
 const showModal = ref(false)
 const showDetailModal = ref(false)
 const selectedDetail = ref<InvoiceDoc | null>(null)
 const editing = ref<InvoiceDoc | null>(null)
 const form = reactive<any>({})
 
-const filtered = computed(() => rows.value.filter(row =>
-  normalizeText(`${row.order_code} ${row.invoice_number} ${row.company_name} ${row.invoice_status}`)
-    .includes(normalizeText(search.value))
-))
+function dateKey(value: any) {
+  return String(value || '').slice(0, 10)
+}
+
+const filtered = computed(() => {
+  const keyword = normalizeText(search.value)
+  return rows.value.filter(row => {
+    const matchedText = !keyword || normalizeText(`${row.order_code} ${row.invoice_number} ${row.company_name} ${row.invoice_status}`).includes(keyword)
+    const rowDate = dateKey(row.invoice_date || row.created_at)
+    return matchedText
+      && (!invoiceStatusFilter.value || row.invoice_status === invoiceStatusFilter.value)
+      && (!dateFrom.value || (!!rowDate && rowDate >= dateFrom.value))
+      && (!dateTo.value || (!!rowDate && rowDate <= dateTo.value))
+  })
+})
+
+function resetFilters() {
+  search.value = ''
+  invoiceStatusFilter.value = ''
+  dateFrom.value = ''
+  dateTo.value = ''
+}
+
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id))
 
 async function loadRows(force = false) {
@@ -142,7 +164,7 @@ onMounted(() => loadRows())
       <button v-if="hasPermission('invoices.create') || hasPermission('*')" class="btn primary" @click="openModal()">+ Thêm hóa đơn</button>
     </PageHeader>
     <div class="card" style="padding: 24px;">
-      <div class="toolbar"><input v-model="search" class="input" placeholder="Tìm đơn, số hóa đơn, công ty..."/><button class="btn" @click="loadRows(true)">Làm mới</button></div>
+      <div class="toolbar"><input v-model="search" class="input" placeholder="Tìm đơn, số hóa đơn, công ty..."/><select v-model="invoiceStatusFilter" class="select"><option value="">Tất cả trạng thái</option><option>Yêu cầu xuất</option><option>HĐ nháp</option><option>Đã xuất</option></select><input v-model="dateFrom" class="input" type="date" aria-label="Từ ngày"/><input v-model="dateTo" class="input" type="date" aria-label="Đến ngày"/><button class="btn" @click="resetFilters">Xóa lọc</button><button class="btn" @click="loadRows(true)">Làm mới</button></div>
       <LoadingState v-if="loading"/>
       <div v-else class="table-wrap">
         <table>
