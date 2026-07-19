@@ -14,6 +14,8 @@ const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
 const statusFilter = ref('')
+const categoryFilter = ref('')
+const unitFilter = ref('')
 const rows = ref<ProductDoc[]>([])
 const showModal = ref(false)
 const showDetailModal = ref(false)
@@ -53,14 +55,31 @@ function stockValue(row: ProductDoc, field: string, aliases: string[] = []) {
   return toNumber(raw)
 }
 
+function uniqueOptions(values: any[]) {
+  return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, 'vi'))
+}
+
+const categoryOptions = computed(() => uniqueOptions(rows.value.map(row => row.category)))
+const unitOptions = computed(() => uniqueOptions(rows.value.map(row => row.unit)))
+
 const filtered = computed(() => {
   const keyword = normalizeText(search.value)
   return rows.value.filter(row => {
-    const matchedText = !keyword || normalizeText(`${row.product_code} ${row.product_name} ${row.unit}`).includes(keyword)
+    const matchedText = !keyword || normalizeText(`${row.product_code} ${row.product_name} ${row.unit} ${row.category}`).includes(keyword)
     const matchedStatus = !statusFilter.value || productStatus(row) === statusFilter.value
-    return matchedText && matchedStatus
+    const matchedCategory = !categoryFilter.value || normalizeText(row.category) === categoryFilter.value
+    const matchedUnit = !unitFilter.value || normalizeText(row.unit) === unitFilter.value
+    return matchedText && matchedStatus && matchedCategory && matchedUnit
   })
 })
+
+function resetFilters() {
+  search.value = ''
+  statusFilter.value = ''
+  categoryFilter.value = ''
+  unitFilter.value = ''
+}
 
 async function loadRows(force = false) {
   loading.value = true
@@ -206,6 +225,15 @@ onMounted(() => loadRows())
           <option value="active">Đang bán</option>
           <option value="inactive">Ngừng bán</option>
         </select>
+        <select v-model="categoryFilter" class="select" style="max-width: 220px">
+          <option value="">Tất cả nhóm</option>
+          <option v-for="category in categoryOptions" :key="category" :value="normalizeText(category)">{{ category }}</option>
+        </select>
+        <select v-model="unitFilter" class="select" style="max-width: 180px">
+          <option value="">Tất cả đơn vị</option>
+          <option v-for="unit in unitOptions" :key="unit" :value="normalizeText(unit)">{{ unit }}</option>
+        </select>
+        <button class="btn" @click="resetFilters">Xóa lọc</button>
       </div>
 
       <LoadingState v-if="loading" />

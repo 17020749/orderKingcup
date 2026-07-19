@@ -48,6 +48,10 @@ const realtimeLoading = ref(true);
 const loading = computed(() => supportingLoading.value || realtimeLoading.value);
 const saving = ref(false);
 const search = ref("");
+const statusFilter = ref("");
+const dateFrom = ref("");
+const dateTo = ref("");
+const requestedByFilter = ref("");
 const rows = ref<any[]>([]);
 const orders = ref<OrderDoc[]>([]);
 const itemsByOrder = ref<Record<string, OrderItemDoc[]>>({});
@@ -62,13 +66,34 @@ const form = reactive<any>({});
 let stopRequestsListener: (() => void) | null = null;
 let lastRealtimeError = "";
 
-const filtered = computed(() =>
-  rows.value.filter((row) =>
-    normalizeText(
-      `${row.request_id} ${row.order_code} ${row.customer_name} ${row.status} ${row.requested_by}`,
-    ).includes(normalizeText(search.value)),
-  ),
-);
+function uniqueOptions(values: any[]) {
+  return Array.from(new Set(values.map(value => String(value || "").trim()).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, "vi"));
+}
+
+function dateKey(value: any) {
+  const date = value?.toDate ? value.toDate() : value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+const requestedByOptions = computed(() => uniqueOptions(rows.value.map(row => row.requested_by)));
+const statusOptions = computed(() => uniqueOptions(rows.value.map(row => row.status)));
+
+const filtered = computed(() => {
+  const keyword = normalizeText(search.value);
+  return rows.value.filter((row) => {
+    const rowDate = dateKey(row.requested_at || row.created_at);
+    const matchedText = !keyword || normalizeText(
+      `${row.request_id} ${row.order_code} ${row.customer_name} ${row.status} ${statusLabel(row.status)} ${row.requested_by}`,
+    ).includes(keyword);
+    const matchedStatus = !statusFilter.value || String(row.status || "") === statusFilter.value;
+    const matchedFrom = !dateFrom.value || (rowDate && rowDate >= dateFrom.value);
+    const matchedTo = !dateTo.value || (rowDate && rowDate <= dateTo.value);
+    const matchedRequester = !requestedByFilter.value || normalizeText(row.requested_by) === requestedByFilter.value;
+    return matchedText && matchedStatus && matchedFrom && matchedTo && matchedRequester;
+  });
+});
 
 const summary = computed(() =>
   filtered.value.reduce(
@@ -111,6 +136,14 @@ function timestampKey(value: any) {
   if (typeof value?.toMillis === "function") return value.toMillis();
   if (typeof value?.seconds === "number") return value.seconds * 1000;
   return String(value || "");
+}
+
+function resetFilters() {
+  search.value = "";
+  statusFilter.value = "";
+  dateFrom.value = "";
+  dateTo.value = "";
+  requestedByFilter.value = "";
 }
 
 function requestRevision(row: any) {
@@ -749,6 +782,17 @@ onBeforeUnmount(() => {
           style="max-width: 480px"
           placeholder="Tìm phiếu, mã đơn, khách hàng..."
         />
+        <select v-model="statusFilter" class="select" style="max-width: 220px">
+          <option value="">Tất cả trạng thái</option>
+          <option v-for="status in statusOptions" :key="status" :value="status">{{ statusLabel(status) }}</option>
+        </select>
+        <input v-model="dateFrom" class="input" type="date" style="max-width: 170px" />
+        <input v-model="dateTo" class="input" type="date" style="max-width: 170px" />
+        <select v-model="requestedByFilter" class="select" style="max-width: 240px">
+          <option value="">Tất cả người yêu cầu</option>
+          <option v-for="requester in requestedByOptions" :key="requester" :value="normalizeText(requester)">{{ requester }}</option>
+        </select>
+        <button class="btn" @click="resetFilters">Xóa lọc</button>
         <button class="btn" @click="loadRows(true)">Làm mới</button>
       </div>
       <LoadingState v-if="loading" />

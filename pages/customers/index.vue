@@ -12,6 +12,8 @@ const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
+const statusFilter = ref('')
+const sourceFilter = ref('')
 const rows = ref<CustomerDoc[]>([])
 const showModal = ref(false)
 const showDetailModal = ref(false)
@@ -19,11 +21,32 @@ const selectedDetail = ref<CustomerDoc | null>(null)
 const editing = ref<CustomerDoc | null>(null)
 const form = reactive<any>({})
 
-const filtered = computed(() => rows.value.filter(r => normalizeText(`${r.customer_code} ${r.customer_name} ${r.company_name} ${r.phone} ${r.email} ${customerStatusLabel(r.status)}`).includes(normalizeText(search.value))))
+const sourceOptions = computed(() => uniqueOptions(rows.value.map(row => row.source)))
+
+const filtered = computed(() => {
+  const keyword = normalizeText(search.value)
+  return rows.value.filter(row => {
+    const matchedText = !keyword || normalizeText(`${row.customer_code} ${row.customer_name} ${row.company_name} ${row.phone} ${row.email} ${customerStatusLabel(row.status)} ${row.source}`).includes(keyword)
+    const matchedStatus = !statusFilter.value || String(row.status || 'active').trim().toLowerCase() === statusFilter.value
+    const matchedSource = !sourceFilter.value || normalizeText(row.source) === sourceFilter.value
+    return matchedText && matchedStatus && matchedSource
+  })
+})
 const selectedDetailDisplay = computed(() => selectedDetail.value ? {
   ...selectedDetail.value,
   status: customerStatusLabel(selectedDetail.value.status)
 } : null)
+
+function uniqueOptions(values: any[]) {
+  return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, 'vi'))
+}
+
+function resetFilters() {
+  search.value = ''
+  statusFilter.value = ''
+  sourceFilter.value = ''
+}
 
 function customerStatusLabel(value: any) {
   const status = String(value || 'active').trim().toLowerCase()
@@ -120,7 +143,17 @@ onMounted(() => loadRows())
     </PageHeader>
     <div class="card" style="margin: 24px;">
       <div class="toolbar">
-        <input v-model="search" class="input" style="max-width:420px" placeholder="Tìm khách hàng, SĐT, email, trạng thái..." />
+        <input v-model="search" class="input" style="max-width:420px" placeholder="Tìm khách hàng, SĐT, email, trạng thái, nguồn..." />
+        <select v-model="statusFilter" class="select" style="max-width: 180px">
+          <option value="">Tất cả trạng thái</option>
+          <option value="active">Hoạt động</option>
+          <option value="inactive">Không hoạt động</option>
+        </select>
+        <select v-model="sourceFilter" class="select" style="max-width: 220px">
+          <option value="">Tất cả nguồn khách</option>
+          <option v-for="source in sourceOptions" :key="source" :value="normalizeText(source)">{{ source }}</option>
+        </select>
+        <button class="btn" @click="resetFilters">Xóa lọc</button>
         <button class="btn" @click="loadRows(true)">Làm mới</button>
       </div>
       <LoadingState v-if="loading" />
