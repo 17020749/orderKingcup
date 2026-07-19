@@ -1,67 +1,41 @@
-1192-# [2026-07-19T09:57:10.683Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x27d5b0f6 error. Code: 7 Message: 7 PERMISSION_DENIED: 
-1193-# evaluation error at L2035:24 for 'create' @ L2035, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L2051, false for 'create' @ L2035
-1194-# Subtest: Dòng phiếu xuất chỉ cần mã lô và số lượng, không cần giá nhập
-1195:not ok 196 - Dòng phiếu xuất chỉ cần mã lô và số lượng, không cần giá nhập
-1196-  ---
-1197-  duration_ms: 45.953154
-1198-  location: '/home/runner/work/orderKingcup/orderKingcup/tests/warehouse-cost.rules.test.mjs:202:1'
-1199-  failureType: 'testCodeFailure'
-1200-  error: |-
-1201-    7 PERMISSION_DENIED: 
-1202-    evaluation error at L2035:24 for 'create' @ L2035, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L2051, false for 'create' @ L2035
-1203-  code: 'permission-denied'
-1204-  name: 'FirebaseError'
-1205-  ...
-1206-# Subtest: chuyển kho dùng logo nguồn trống và logo nhận A độc lập
-1207-ok 197 - chuyển kho dùng logo nguồn trống và logo nhận A độc lập
-1208-  ---
-1209-  duration_ms: 1.378751
-1210-  ...
-1211-# Subtest: khóa tồn hàng trơn dùng no_logo thay vì logo A của kho nhận
-1212-ok 198 - khóa tồn hàng trơn dùng no_logo thay vì logo A của kho nhận
-1213-  ---
-1214-  duration_ms: 6.601695
-1215-  ...
-1216-# Subtest: preflight đọc tồn hàng trơn ở kho xuất, không đọc logo A của kho nhận
-1217-ok 199 - preflight đọc tồn hàng trơn ở kho xuất, không đọc logo A của kho nhận
 --- SUMMARY ---
+  ...
+# Subtest: printing source order includes only products with valid logo lines
+ok 212 - printing source order includes only products with valid logo lines
   ---
-  duration_ms: 0.27991
+  duration_ms: 0.363636
   ...
 # Subtest: inventory keeps zero stock after import or transfer-in history
 ok 213 - inventory keeps zero stock after import or transfer-in history
   ---
-  duration_ms: 0.232108
+  duration_ms: 0.23679
   ...
 # Subtest: inventory does not show a movement-only outbound row
 ok 214 - inventory does not show a movement-only outbound row
   ---
-  duration_ms: 0.206778
+  duration_ms: 0.24216
   ...
 # Subtest: V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction chạy đồng thời
 ok 215 - V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction chạy đồng thời
   ---
-  duration_ms: 2423.6854
+  duration_ms: 3106.657135
   ...
 # Subtest: V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tại cùng phiên bản
 ok 216 - V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tại cùng phiên bản
   ---
-  duration_ms: 1014.923779
+  duration_ms: 1117.90639
   ...
 1..216
 # tests 216
 # suites 0
-# pass 215
-# fail 1
+# pass 216
+# fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 36414.264524
-[33m[1m⚠ [22m[39m Script exited unsuccessfully (code 1)
+# duration_ms 43299.381593
+[32m[1m✔ [22m[39m Script exited successfully (code 0)
 [36m[1mi  emulators:[22m[39m Shutting down emulators.
 [36m[1mi  firestore:[22m[39m Stopping Firestore Emulator
 [36m[1mi  hub:[22m[39m Stopping emulator hub
 [36m[1mi  logging:[22m[39m Stopping Logging Emulator
-
-[1m[31mError:[39m[22m Script "[1mnode --test --test-concurrency=1 tests/order-code.test.mjs tests/firestore.rules.test.mjs tests/warehouse.transactions.test.mjs tests/warehouse-cost.rules.test.mjs tests/warehouse-lot-allocation.static.test.mjs tests/warehouse-client-payload.static.test.mjs tests/warehouse-export-client.runtime.test.mjs tests/permission-audit.client.test.mjs tests/authorization-source.client.test.mjs tests/permission-matrix.client.test.mjs tests/order-items-by-order.client.test.mjs tests/order-items-by-order.rules.test.mjs tests/order-atomic-save.client.test.mjs tests/order-atomic-save.rules.test.mjs tests/order-printing-delete-lock.rules.test.mjs tests/order-printing-delete-lock.client.test.mjs tests/order-relations.client.test.mjs tests/order-relations.rules.test.mjs tests/export-lifecycle.client.test.mjs tests/export-lifecycle.rules.test.mjs tests/firebase-error-message.static.test.mjs tests/printing-owner.rules.test.mjs tests/printing-permission.static.test.mjs tests/customer-create-flow.test.mjs tests/export-print-permission.test.mjs[22m" exited with code 1
- ELIFECYCLE  Command failed with exit code 1.
