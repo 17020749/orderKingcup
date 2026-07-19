@@ -1581,8 +1581,7 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
 
     match /orders/{docId} {
-      allow read: if isAdmin()
-        || hasPerm('orders.view_all')
+      allow read: if hasPerm('orders.view_all')
         || hasPerm('printing.view_all')
         || (
           hasPerm('printing.orders_view')
@@ -1735,8 +1734,7 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
 
     match /payments/{docId} {
-      allow read: if isAdmin()
-        || hasPerm('payments.view_all')
+      allow read: if hasPerm('payments.view_all')
         || (
           hasPerm('payments.view')
           && (
