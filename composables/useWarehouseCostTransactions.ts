@@ -1804,8 +1804,12 @@ export function useWarehouseCostTransactions() {
             product_id: line.product.id,
             product_code: productCode(line.product),
             product_name: productName(line.product),
+            export_order_item_id: line.itemId,
             warehouse_id: line.fromWarehouse.id,
             warehouse_name: warehouseName(line.fromWarehouse),
+            from_warehouse_id: line.fromWarehouse.id,
+            from_warehouse_name: warehouseName(line.fromWarehouse),
+            source_logo: normalizeLogo(line.sourceLogo),
             logo: normalizeLogo(line.targetLogo),
             quantity: line.quantity,
             unit: line.unit || line.product.unit || '',
@@ -1901,27 +1905,35 @@ export function useWarehouseCostTransactions() {
         product_name: line.product_name,
         unit: line.unit,
       })
-      const fromWarehouse = ensureWarehouse({
-        id: line.warehouse_id,
-        name: line.warehouse_name,
-      }, `kho xuất dòng ${index + 1}`)
       const quantity = positiveQuantity(line.quantity)
       return {
         product,
-        fromWarehouse,
-        logo: normalizeLogo(line.logo),
+        fromWarehouse: null as any,
+        summaryWarehouseId: normalizeId(
+          line.from_warehouse_id
+          || line.warehouse_id
+          || line.source_warehouse_id,
+        ),
+        summaryWarehouseName: String(
+          line.from_warehouse_name
+          || line.warehouse_name
+          || line.source_warehouse_name
+          || '',
+        ).trim(),
+        logo: normalizeLogo(line.source_logo || line.logo),
         unit: line.unit || product.unit || '',
         quantity,
-        itemId: safeDocId(`${exportOrderId}__${index + 1}`, 'export_item'),
+        itemId: safeDocId(
+          line.export_order_item_id
+          || line.export_item_id
+          || line.item_id
+          || `${exportOrderId}__${index + 1}`,
+          'export_item',
+        ),
         reverseMovementId: safeDocId(`export_request_cancel:${exportOrderId}:${index + 1}:${operationId}`, 'movement'),
         summaryAllocations: Array.isArray(line.lot_allocations) ? line.lot_allocations : [],
       }
     })
-    const refs = await buildBalanceRefs(lines.map((line: any) => ({
-      product: line.product,
-      warehouse: line.fromWarehouse,
-      logo: line.logo,
-    })))
     const replay = await claimOperation({
       operationId,
       action: 'export_request_cancel',
@@ -1970,7 +1982,47 @@ export function useWarehouseCostTransactions() {
 
         const itemSnaps = new Map<string, any>()
         for (const line of lines) itemSnaps.set(line.itemId, await tx.get(doc(db, 'export_order_items', line.itemId)))
-        const states = await readBalanceStates(tx, refs, request.export_date || todayKey())
+
+        // The persisted export item is the source of truth for reversal. Older
+        // request summaries may contain warehouse_name but omit warehouse_id.
+        for (const [lineIndex, line] of lines.entries()) {
+          const itemSnap = itemSnaps.get(line.itemId)
+          if (!itemSnap?.exists()) throw new Error(`Thiếu chi tiết phiếu xuất ${line.itemId}, không thể hoàn tồn.`)
+          const item = itemSnap.data() || {}
+          if (String(item.export_order_id || '') !== exportOrderId || item.deleted === true || item.active === false) {
+            throw new Error(`Chi tiết phiếu xuất ${line.itemId} không còn hợp lệ để hoàn tồn.`)
+          }
+          line.product = ensureProduct({
+            id: item.product_id || line.product.id,
+            product_code: item.product_code || productCode(line.product),
+            product_name: item.product_name || productName(line.product),
+            unit: item.unit || line.unit,
+          })
+          line.fromWarehouse = ensureWarehouse({
+            id: item.from_warehouse_id
+              || item.warehouse_id
+              || item.source_warehouse_id
+              || line.summaryWarehouseId,
+            firestore_id: item.from_warehouse_id
+              || item.warehouse_id
+              || item.source_warehouse_id
+              || line.summaryWarehouseId,
+            name: item.from_warehouse_name
+              || item.warehouse_name
+              || item.source_warehouse_name
+              || line.summaryWarehouseName,
+          }, `kho xuất dòng ${lineIndex + 1}`)
+          line.logo = exportItemSourceLogo(item)
+          line.unit = item.unit || line.unit || line.product.unit || ''
+          line.quantity = positiveQuantity(item.quantity ?? line.quantity, `Số lượng xuất dòng ${lineIndex + 1}`)
+        }
+
+        const refs = await buildBalanceRefs(lines.map((line: any) => ({
+          product: line.product,
+          warehouse: line.fromWarehouse,
+          logo: line.logo,
+        })))
+        const states = await readBalanceStates(tx, refs, currentExport.export_date || request.export_date || todayKey())
 
         const restoredAllocations = new Map<string, LotAllocation[]>()
         for (const line of lines) {

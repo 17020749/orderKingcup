@@ -38,3 +38,18 @@ test('relation reconciliation remains an explicit admin maintenance action', () 
   assert.match(rules, /function orderRelationReconcileAllowed\(\)/)
   assert.match(rules, /relation_last_module', ''\) == 'all'/)
 })
+
+
+test('cancel release resolves the source warehouse from the persisted export item', () => {
+  const source = readFileSync('composables/useWarehouseCostTransactions.ts', 'utf8')
+
+  assert.match(source, /The persisted export item is the source of truth for reversal/)
+  assert.match(source, /item\.from_warehouse_id\s*
+\s*\|\| item\.warehouse_id/)
+  assert.match(source, /line\.fromWarehouse = ensureWarehouse\(/)
+  assert.match(source, /line\.logo = exportItemSourceLogo\(item\)/)
+  assert.match(source, /currentExport\.export_date \|\| request\.export_date/)
+  assert.match(source, /export_order_item_id: line\.itemId/)
+  assert.match(source, /from_warehouse_id: line\.fromWarehouse\.id/)
+  assert.match(source, /source_logo: normalizeLogo\(line\.sourceLogo\)/)
+})
