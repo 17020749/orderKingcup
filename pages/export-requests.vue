@@ -21,6 +21,7 @@ import {
   toNumber,
 } from "~/utils/format";
 import { reportFirebaseError } from "~/utils/firebaseErrors";
+import { isDateInRange, matchesKeyword, uniqueOptions } from "~/utils/listFilters";
 import {
   buildNotificationPayload,
   WAREHOUSE_NOTIFICATION_PERMISSIONS,
@@ -66,32 +67,32 @@ const form = reactive<any>({});
 let stopRequestsListener: (() => void) | null = null;
 let lastRealtimeError = "";
 
-function uniqueOptions(values: any[]) {
-  return Array.from(new Set(values.map(value => String(value || "").trim()).filter(Boolean)))
-    .sort((a, b) => a.localeCompare(b, "vi"));
-}
 
-function dateKey(value: any) {
-  const date = value?.toDate ? value.toDate() : value ? new Date(value) : null;
-  if (!date || Number.isNaN(date.getTime())) return "";
-  return date.toISOString().slice(0, 10);
-}
+const requestedByOptions = computed(() => uniqueOptions(rows.value, "requested_by"));
+const statusOptions = computed(() => uniqueOptions(rows.value, "status"));
+const filterValues = computed(() => ({ status: statusFilter.value, from: dateFrom.value, to: dateTo.value, requestedBy: requestedByFilter.value }));
+const toolbarFilters = computed(() => [
+  { key: "status", allLabel: "Tất cả trạng thái", width: "200px", options: statusOptions.value.map(status => ({ label: statusLabel(status), value: status })) },
+  { key: "requestedBy", allLabel: "Tất cả người yêu cầu", width: "240px", options: requestedByOptions.value.map(user => ({ label: user, value: normalizeText(user) })) },
+  { key: "from", type: "date" as const, label: "Từ ngày" },
+  { key: "to", type: "date" as const, label: "Đến ngày" },
+]);
 
-const requestedByOptions = computed(() => uniqueOptions(rows.value.map(row => row.requested_by)));
-const statusOptions = computed(() => uniqueOptions(rows.value.map(row => row.status)));
+function updateFilter(key: string, value: string) {
+  if (key === "status") statusFilter.value = value;
+  if (key === "requestedBy") requestedByFilter.value = value;
+  if (key === "from") dateFrom.value = value;
+  if (key === "to") dateTo.value = value;
+}
 
 const filtered = computed(() => {
   const keyword = normalizeText(search.value);
   return rows.value.filter((row) => {
-    const rowDate = dateKey(row.requested_at || row.created_at);
-    const matchedText = !keyword || normalizeText(
-      `${row.request_id} ${row.order_code} ${row.customer_name} ${row.status} ${statusLabel(row.status)} ${row.requested_by}`,
-    ).includes(keyword);
+    const matchedText = matchesKeyword([row.request_id, row.order_code, row.customer_name, row.status, statusLabel(row.status), row.requested_by], keyword);
     const matchedStatus = !statusFilter.value || String(row.status || "") === statusFilter.value;
-    const matchedFrom = !dateFrom.value || (rowDate && rowDate >= dateFrom.value);
-    const matchedTo = !dateTo.value || (rowDate && rowDate <= dateTo.value);
+    const matchedDate = isDateInRange(row.requested_at || row.created_at, dateFrom.value, dateTo.value);
     const matchedRequester = !requestedByFilter.value || normalizeText(row.requested_by) === requestedByFilter.value;
-    return matchedText && matchedStatus && matchedFrom && matchedTo && matchedRequester;
+    return matchedText && matchedStatus && matchedDate && matchedRequester;
   });
 });
 
@@ -775,26 +776,19 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="card" style="margin: 24px;">
-      <div class="toolbar">
-        <input
-          v-model="search"
-          class="input"
-          style="max-width: 480px"
-          placeholder="Tìm phiếu, mã đơn, khách hàng..."
-        />
-        <select v-model="statusFilter" class="select" style="max-width: 220px">
-          <option value="">Tất cả trạng thái</option>
-          <option v-for="status in statusOptions" :key="status" :value="status">{{ statusLabel(status) }}</option>
-        </select>
-        <input v-model="dateFrom" class="input" type="date" style="max-width: 170px" />
-        <input v-model="dateTo" class="input" type="date" style="max-width: 170px" />
-        <select v-model="requestedByFilter" class="select" style="max-width: 240px">
-          <option value="">Tất cả người yêu cầu</option>
-          <option v-for="requester in requestedByOptions" :key="requester" :value="normalizeText(requester)">{{ requester }}</option>
-        </select>
-        <button class="btn" @click="resetFilters">Xóa lọc</button>
-        <button class="btn" @click="loadRows(true)">Làm mới</button>
-      </div>
+      <FilterToolbar
+        v-model:search="search"
+        search-width="480px"
+        search-placeholder="Tìm phiếu, mã đơn, khách hàng..."
+        :filters="toolbarFilters"
+        :values="filterValues"
+        :result-count="filtered.length"
+        :loading="loading"
+        show-refresh
+        @update:filter="updateFilter"
+        @reset="resetFilters"
+        @refresh="loadRows(true)"
+      />
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
         <table>

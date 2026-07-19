@@ -2,6 +2,7 @@
 import type { CustomerDoc } from '~/types/models'
 import { makeId, normalizeText } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { matchesKeyword, uniqueOptions } from '~/utils/listFilters'
 import { generateCustomerCode } from '~/utils/customerCode'
 
 const { softDeleteDoc, listDocs, q } = useRepo()
@@ -21,12 +22,25 @@ const selectedDetail = ref<CustomerDoc | null>(null)
 const editing = ref<CustomerDoc | null>(null)
 const form = reactive<any>({})
 
-const sourceOptions = computed(() => uniqueOptions(rows.value.map(row => row.source)))
+const sourceOptions = computed(() => uniqueOptions(rows.value, 'source'))
+const filterValues = computed(() => ({ status: statusFilter.value, source: sourceFilter.value }))
+const toolbarFilters = computed(() => [
+  { key: 'status', allLabel: 'Tất cả trạng thái', width: '180px', options: [
+    { label: 'Hoạt động', value: 'active' },
+    { label: 'Không hoạt động', value: 'inactive' },
+  ] },
+  { key: 'source', allLabel: 'Tất cả nguồn khách', width: '220px', options: sourceOptions.value.map(source => ({ label: source, value: normalizeText(source) })) },
+])
+
+function updateFilter(key: string, value: string) {
+  if (key === 'status') statusFilter.value = value
+  if (key === 'source') sourceFilter.value = value
+}
 
 const filtered = computed(() => {
   const keyword = normalizeText(search.value)
   return rows.value.filter(row => {
-    const matchedText = !keyword || normalizeText(`${row.customer_code} ${row.customer_name} ${row.company_name} ${row.phone} ${row.email} ${customerStatusLabel(row.status)} ${row.source}`).includes(keyword)
+    const matchedText = matchesKeyword([row.customer_code, row.customer_name, row.company_name, row.phone, row.email, customerStatusLabel(row.status), row.source], keyword)
     const matchedStatus = !statusFilter.value || String(row.status || 'active').trim().toLowerCase() === statusFilter.value
     const matchedSource = !sourceFilter.value || normalizeText(row.source) === sourceFilter.value
     return matchedText && matchedStatus && matchedSource
@@ -36,11 +50,6 @@ const selectedDetailDisplay = computed(() => selectedDetail.value ? {
   ...selectedDetail.value,
   status: customerStatusLabel(selectedDetail.value.status)
 } : null)
-
-function uniqueOptions(values: any[]) {
-  return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)))
-    .sort((a, b) => a.localeCompare(b, 'vi'))
-}
 
 function resetFilters() {
   search.value = ''
@@ -142,20 +151,18 @@ onMounted(() => loadRows())
       <button v-if="hasPermission('customers.create')" class="btn primary" @click="openModal()">+ Thêm khách hàng</button>
     </PageHeader>
     <div class="card" style="margin: 24px;">
-      <div class="toolbar">
-        <input v-model="search" class="input" style="max-width:420px" placeholder="Tìm khách hàng, SĐT, email, trạng thái, nguồn..." />
-        <select v-model="statusFilter" class="select" style="max-width: 180px">
-          <option value="">Tất cả trạng thái</option>
-          <option value="active">Hoạt động</option>
-          <option value="inactive">Không hoạt động</option>
-        </select>
-        <select v-model="sourceFilter" class="select" style="max-width: 220px">
-          <option value="">Tất cả nguồn khách</option>
-          <option v-for="source in sourceOptions" :key="source" :value="normalizeText(source)">{{ source }}</option>
-        </select>
-        <button class="btn" @click="resetFilters">Xóa lọc</button>
-        <button class="btn" @click="loadRows(true)">Làm mới</button>
-      </div>
+      <FilterToolbar
+        v-model:search="search"
+        search-placeholder="Tìm khách hàng, SĐT, email, trạng thái, nguồn..."
+        :filters="toolbarFilters"
+        :values="filterValues"
+        :result-count="filtered.length"
+        :loading="loading"
+        show-refresh
+        @update:filter="updateFilter"
+        @reset="resetFilters"
+        @refresh="loadRows(true)"
+      />
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
         <table>
