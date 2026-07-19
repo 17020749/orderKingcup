@@ -1,4 +1,6 @@
-export const PERMISSION_SCHEMA_VERSION = 1
+import { resolvePermissionDependencies } from '../constants/accessMatrix.mjs'
+
+export const PERMISSION_SCHEMA_VERSION = 2
 
 function text(value) {
   return String(value || '').trim()
@@ -41,10 +43,6 @@ export function roleMatchesName(role, name) {
   return Boolean(needle && roleAliases(role).includes(needle))
 }
 
-function adminRoleName(name) {
-  return ['admin', 'role_admin', 'quản trị', 'quan tri'].includes(normalized(name))
-}
-
 function userEmail(user = {}) {
   return normalized(user.email || user.id || user.firestore_id)
 }
@@ -60,19 +58,21 @@ export function auditPermissionAssignments({ users = [], roles = [], catalogKeys
       const matchedRoles = activeRoles.filter(role => roleNames.some(name => roleMatchesName(role, name)))
       const matchedNames = new Set(matchedRoles.flatMap(roleAliases))
       const unknownRoles = roleNames.filter(name => !matchedNames.has(normalized(name)))
-      const expectedPermissions = permissionList(matchedRoles.flatMap(role => permissionList(role.permissions)))
+      const rawRolePermissions = matchedRoles.flatMap(role => permissionList(role.permissions))
+      const expectedPermissions = permissionList(resolvePermissionDependencies(rawRolePermissions))
       const actualPermissions = permissionList(user.permissions_flat)
       const expectedSet = new Set(expectedPermissions)
       const actualSet = new Set(actualPermissions)
       const missingPermissions = expectedPermissions.filter(permission => !actualSet.has(permission))
       const extraPermissions = actualPermissions.filter(permission => !expectedSet.has(permission))
       const unknownPermissions = actualPermissions.filter(permission => !catalog.has(permission))
-      const expectedAdmin = expectedPermissions.includes('*') || roleNames.some(adminRoleName)
-      const currentAdmin = user.is_admin === true || actualPermissions.includes('*')
-      const protectedAdminMismatch = currentAdmin && !expectedAdmin
+      const expectedAdmin = expectedPermissions.includes('*')
+      const currentAdmin = actualPermissions.includes('*')
+      const protectedAdminMismatch = (user.is_admin === true || currentAdmin) && !expectedAdmin
       const isInSync = !unknownRoles.length
         && !missingPermissions.length
         && !extraPermissions.length
+        && user.is_admin === expectedAdmin
         && currentAdmin === expectedAdmin
         && Number(user.permission_schema_version || 0) === PERMISSION_SCHEMA_VERSION
 
@@ -119,7 +119,7 @@ export function buildPermissionSyncPatch(row, schemaVersion = PERMISSION_SCHEMA_
 
 export function summarizePermissionAudit(rows = [], roles = [], catalogKeys = []) {
   const rolePermissionSet = new Set(
-    roles.filter(activeRecord).flatMap(role => permissionList(role.permissions)),
+    roles.filter(activeRecord).flatMap(role => resolvePermissionDependencies(permissionList(role.permissions))),
   )
   const catalog = permissionList(catalogKeys)
   return {

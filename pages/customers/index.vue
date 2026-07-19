@@ -2,6 +2,7 @@
 import type { CustomerDoc } from '~/types/models'
 import { makeId, normalizeText } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { matchesKeyword, uniqueOptions } from '~/utils/listFilters'
 import { generateCustomerCode } from '~/utils/customerCode'
 
 const { softDeleteDoc, listDocs, q } = useRepo()
@@ -12,6 +13,8 @@ const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
+const statusFilter = ref('')
+const sourceFilter = ref('')
 const rows = ref<CustomerDoc[]>([])
 const showModal = ref(false)
 const showDetailModal = ref(false)
@@ -19,11 +22,40 @@ const selectedDetail = ref<CustomerDoc | null>(null)
 const editing = ref<CustomerDoc | null>(null)
 const form = reactive<any>({})
 
-const filtered = computed(() => rows.value.filter(r => normalizeText(`${r.customer_code} ${r.customer_name} ${r.company_name} ${r.phone} ${r.email} ${customerStatusLabel(r.status)}`).includes(normalizeText(search.value))))
+const sourceOptions = computed(() => uniqueOptions(rows.value, 'source'))
+const filterValues = computed(() => ({ status: statusFilter.value, source: sourceFilter.value }))
+const toolbarFilters = computed(() => [
+  { key: 'status', allLabel: 'Tất cả trạng thái', width: '180px', options: [
+    { label: 'Hoạt động', value: 'active' },
+    { label: 'Không hoạt động', value: 'inactive' },
+  ] },
+  { key: 'source', allLabel: 'Tất cả nguồn khách', width: '220px', options: sourceOptions.value.map(source => ({ label: source, value: normalizeText(source) })) },
+])
+
+function updateFilter(key: string, value: string) {
+  if (key === 'status') statusFilter.value = value
+  if (key === 'source') sourceFilter.value = value
+}
+
+const filtered = computed(() => {
+  const keyword = normalizeText(search.value)
+  return rows.value.filter(row => {
+    const matchedText = matchesKeyword([row.customer_code, row.customer_name, row.company_name, row.phone, row.email, customerStatusLabel(row.status), row.source], keyword)
+    const matchedStatus = !statusFilter.value || String(row.status || 'active').trim().toLowerCase() === statusFilter.value
+    const matchedSource = !sourceFilter.value || normalizeText(row.source) === sourceFilter.value
+    return matchedText && matchedStatus && matchedSource
+  })
+})
 const selectedDetailDisplay = computed(() => selectedDetail.value ? {
   ...selectedDetail.value,
   status: customerStatusLabel(selectedDetail.value.status)
 } : null)
+
+function resetFilters() {
+  search.value = ''
+  statusFilter.value = ''
+  sourceFilter.value = ''
+}
 
 function customerStatusLabel(value: any) {
   const status = String(value || 'active').trim().toLowerCase()
@@ -119,10 +151,18 @@ onMounted(() => loadRows())
       <button v-if="hasPermission('customers.create')" class="btn primary" @click="openModal()">+ Thêm khách hàng</button>
     </PageHeader>
     <div class="card" style="margin: 24px;">
-      <div class="toolbar">
-        <input v-model="search" class="input" style="max-width:420px" placeholder="Tìm khách hàng, SĐT, email, trạng thái..." />
-        <button class="btn" @click="loadRows(true)">Làm mới</button>
-      </div>
+      <FilterToolbar
+        v-model:search="search"
+        search-placeholder="Tìm khách hàng, SĐT, email, trạng thái, nguồn..."
+        :filters="toolbarFilters"
+        :values="filterValues"
+        :result-count="filtered.length"
+        :loading="loading"
+        show-refresh
+        @update:filter="updateFilter"
+        @reset="resetFilters"
+        @refresh="loadRows(true)"
+      />
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
         <table>

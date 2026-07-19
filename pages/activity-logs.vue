@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { collection, getDocs, limit, orderBy, query } from 'firebase/firestore'
 import { normalizeText } from '~/utils/format'
+import { isDateInRange, matchesKeyword, uniqueOptions } from '~/utils/listFilters'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
 const { db } = useFirebaseServices()
@@ -8,13 +9,54 @@ const { showToast } = useUi()
 const loading = ref(false)
 const rows = ref<any[]>([])
 const search = ref('')
+const moduleFilter = ref('')
+const actionFilter = ref('')
+const actorFilter = ref('')
+const dateFrom = ref('')
+const dateTo = ref('')
 const showDetailModal = ref(false)
 const selectedDetail = ref<any>(null)
 
-const filtered = computed(() => rows.value.filter(row =>
-  normalizeText(`${row.module} ${row.action} ${row.item_code} ${row.item_name} ${row.changed_by}`)
-    .includes(normalizeText(search.value))
-))
+const moduleOptions = computed(() => uniqueOptions(rows.value, 'module'))
+const actionOptions = computed(() => uniqueOptions(rows.value, 'action'))
+const actorOptions = computed(() => uniqueOptions(rows.value, 'changed_by'))
+const filterValues = computed(() => ({ module: moduleFilter.value, action: actionFilter.value, actor: actorFilter.value, from: dateFrom.value, to: dateTo.value }))
+const toolbarFilters = computed(() => [
+  { key: 'module', allLabel: 'Tất cả module', width: '200px', options: moduleOptions.value.map(module => ({ label: module, value: normalizeText(module) })) },
+  { key: 'action', allLabel: 'Tất cả hành động', width: '180px', options: actionOptions.value.map(action => ({ label: action, value: normalizeText(action) })) },
+  { key: 'actor', allLabel: 'Tất cả người đổi', width: '240px', options: actorOptions.value.map(actor => ({ label: actor, value: normalizeText(actor) })) },
+  { key: 'from', type: 'date' as const, label: 'Từ ngày' },
+  { key: 'to', type: 'date' as const, label: 'Đến ngày' },
+])
+
+function updateFilter(key: string, value: string) {
+  if (key === 'module') moduleFilter.value = value
+  if (key === 'action') actionFilter.value = value
+  if (key === 'actor') actorFilter.value = value
+  if (key === 'from') dateFrom.value = value
+  if (key === 'to') dateTo.value = value
+}
+
+const filtered = computed(() => {
+  const keyword = normalizeText(search.value)
+  return rows.value.filter(row => {
+    const matchedText = matchesKeyword([row.module, row.action, row.item_code, row.item_name, row.changed_by], keyword)
+    const matchedModule = !moduleFilter.value || normalizeText(row.module) === moduleFilter.value
+    const matchedAction = !actionFilter.value || normalizeText(row.action) === actionFilter.value
+    const matchedActor = !actorFilter.value || normalizeText(row.changed_by) === actorFilter.value
+    const matchedDate = isDateInRange(row.created_at, dateFrom.value, dateTo.value)
+    return matchedText && matchedModule && matchedAction && matchedActor && matchedDate
+  })
+})
+
+function resetFilters() {
+  search.value = ''
+  moduleFilter.value = ''
+  actionFilter.value = ''
+  actorFilter.value = ''
+  dateFrom.value = ''
+  dateTo.value = ''
+}
 
 function openDetail(row: any) {
   selectedDetail.value = row
@@ -43,9 +85,19 @@ onMounted(loadRows)
     </PageHeader>
 
     <div class="card" style="margin: 24px;">
-      <div class="toolbar">
-        <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm log..." />
-      </div>
+      <FilterToolbar
+        v-model:search="search"
+        search-width="480px"
+        search-placeholder="Tìm log..."
+        :filters="toolbarFilters"
+        :values="filterValues"
+        :result-count="filtered.length"
+        :loading="loading"
+        show-refresh
+        @update:filter="updateFilter"
+        @reset="resetFilters"
+        @refresh="loadRows"
+      />
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
         <table>

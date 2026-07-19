@@ -2,6 +2,8 @@ import type { OrderItemDoc } from '~/types/models'
 import { normalizeText, safeJsonParse, toNumber } from '~/utils/format'
 
 export type FulfillmentRow = {
+  order_item_id: string
+  product_id: string
   product_code: string
   product_name: string
   logo: string
@@ -96,6 +98,8 @@ function expandOrderItems(items: OrderItemDoc[]) {
     const logos = safeJsonParse(item.logo_json, [])
     if (Array.isArray(logos) && logos.length) {
       return logos.map(line => ({
+        order_item_id: item.id || '',
+        product_id: item.product_id || '',
         product_code: item.product_code || '',
         product_name: item.product_name || '',
         unit: item.unit || '',
@@ -104,6 +108,8 @@ function expandOrderItems(items: OrderItemDoc[]) {
       }))
     }
     return [{
+      order_item_id: item.id || '',
+      product_id: item.product_id || '',
       product_code: item.product_code || '',
       product_name: item.product_name || '',
       unit: item.unit || '',
@@ -186,6 +192,8 @@ export function useWarehouseLogic() {
       const processed = Math.min(requested, maps.processed.get(rowKey) || 0)
       const exported = Math.min(processed || requested, maps.exported.get(rowKey) || 0)
       return {
+        order_item_id: line.order_item_id,
+        product_id: line.product_id,
         product_code: line.product_code,
         product_name: line.product_name,
         logo: line.logo,

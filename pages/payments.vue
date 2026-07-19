@@ -4,8 +4,8 @@ import type { OrderDoc, PaymentDoc } from '~/types/models'
 import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
-const { saveDoc, softDeleteDoc } = useRepo()
 const { computePaymentStatus } = useOrderLogic()
+const { mutateOrderRelation } = useAtomicOrderRelations()
 const { appUser, hasPermission } = useAuth()
 const { loadScopedOrders, loadScopedPayments } = useScopedQueries()
 const { showToast, withLoading } = useUi()
@@ -14,6 +14,11 @@ const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
+const paymentTypeFilter = ref('')
+const methodFilter = ref('')
+const paymentStatusFilter = ref('')
+const dateFrom = ref('')
+const dateTo = ref('')
 const rows = ref<PaymentDoc[]>([])
 const orders = ref<OrderDoc[]>([])
 const showModal = ref(false)
@@ -22,10 +27,33 @@ const selectedDetail = ref<PaymentDoc | null>(null)
 const editing = ref<PaymentDoc | null>(null)
 const form = reactive<any>({})
 
-const filtered = computed(() => rows.value.filter(row =>
-  normalizeText(`${row.order_code} ${row.payment_type} ${row.method} ${row.payment_status} ${row.created_by}`)
-    .includes(normalizeText(search.value))
-))
+function dateKey(value: any) {
+  return String(value || '').slice(0, 10)
+}
+
+const filtered = computed(() => {
+  const keyword = normalizeText(search.value)
+  return rows.value.filter(row => {
+    const matchedText = !keyword || normalizeText(`${row.order_code} ${row.payment_type} ${row.method} ${row.payment_status} ${row.created_by}`).includes(keyword)
+    const rowDate = dateKey(row.payment_date || row.created_at)
+    return matchedText
+      && (!paymentTypeFilter.value || row.payment_type === paymentTypeFilter.value)
+      && (!methodFilter.value || row.method === methodFilter.value)
+      && (!paymentStatusFilter.value || row.payment_status === paymentStatusFilter.value)
+      && (!dateFrom.value || (!!rowDate && rowDate >= dateFrom.value))
+      && (!dateTo.value || (!!rowDate && rowDate <= dateTo.value))
+  })
+})
+
+function resetFilters() {
+  search.value = ''
+  paymentTypeFilter.value = ''
+  methodFilter.value = ''
+  paymentStatusFilter.value = ''
+  dateFrom.value = ''
+  dateTo.value = ''
+}
+
 const canEditPayments = computed(() => hasPermission('*') || hasPermission('payments.edit'))
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id || order.order_code === form.order_code))
 
@@ -91,31 +119,31 @@ async function savePayment() {
   if (!order) return showToast(`Không tìm thấy đơn hàng với mã: ${form.order_code || form.order_id}`, 'error')
   if (!String(order.customer_name || '').trim()) return showToast('Đơn hàng chưa có thông tin khách hàng, không thể tạo thanh toán.', 'error')
 
-  const oldOrderId = editing.value?.order_id
   saving.value = true
   await withLoading(async () => {
-    const record = await saveDoc('payments', {
-      ...form,
-      amount: toNumber(form.amount),
-      cod_status: '',
-      created_by: editing.value?.created_by || appUser.value?.email || '',
-      order_owner_email: order.owner_email || '',
-      order_created_by: order.created_by || '',
-      order_sale_email: order.sale_email || '',
-      active: true,
-      deleted: false
-    }, form.id, { isCreate: !editing.value }) as PaymentDoc
+    const result = await mutateOrderRelation({
+      module: 'payments',
+      mode: editing.value ? 'update' : 'create',
+      order,
+      record: {
+        ...form,
+        amount: toNumber(form.amount),
+        cod_status: '',
+        created_by: editing.value?.created_by || appUser.value?.email || '',
+      },
+      existingRecords: rows.value.filter(row => row.order_id === order.id),
+      actor: appUser.value?.email || '',
+    })
 
+    const record = result.record as PaymentDoc
     const index = rows.value.findIndex(row => row.id === record.id)
     if (index >= 0) rows.value[index] = { ...rows.value[index], ...record }
     else rows.value.unshift(record)
-
-    if (oldOrderId && oldOrderId !== form.order_id) applyLocalPaymentSummary(oldOrderId)
-    applyLocalPaymentSummary(form.order_id)
+    Object.assign(order, result.orderPatch)
     showModal.value = false
-    showToast(editing.value ? 'Đã cập nhật thanh toán.' : 'Đã thêm thanh toán.', 'success')
+    showToast(editing.value ? 'Đã cập nhật thanh toán và tổng hợp đơn hàng.' : 'Đã thêm thanh toán và cập nhật đơn hàng.', 'success')
   }).catch(error => {
-    showToast(reportFirebaseError(error, editing.value ? 'Không cập nhật được thanh toán.' : 'Không tạo được thanh toán.'), 'error')
+    showToast(reportFirebaseError(error, editing.value ? 'Không cập nhật được thanh toán. Toàn bộ thay đổi đã hoàn tác.' : 'Không tạo được thanh toán. Toàn bộ thay đổi đã hoàn tác.'), 'error')
   }).finally(() => {
     saving.value = false
   })
@@ -123,6 +151,8 @@ async function savePayment() {
 
 async function removePayment(row: PaymentDoc) {
   if (!hasPermission('payments.delete') && !hasPermission('*')) return showToast('Bạn không có quyền xóa thanh toán.', 'error')
+  const order = orders.value.find(item => item.id === row.order_id)
+  if (!order) return showToast('Không tìm thấy đơn hàng cha của thanh toán.', 'error')
   const confirmed = await askConfirm({
     title: 'Xóa thanh toán',
     message: `Bạn chắc chắn muốn xóa phiếu thanh toán của đơn ${row.order_code}?`,
@@ -131,11 +161,18 @@ async function removePayment(row: PaymentDoc) {
   if (!confirmed) return
 
   await withLoading(async () => {
-    await softDeleteDoc('payments', row.id, `${row.order_code} - ${row.payment_type || ''}`)
+    const result = await mutateOrderRelation({
+      module: 'payments',
+      mode: 'delete',
+      order,
+      record: row,
+      existingRecords: rows.value.filter(item => item.order_id === order.id),
+      actor: appUser.value?.email || '',
+    })
     rows.value = rows.value.filter(item => item.id !== row.id)
-    applyLocalPaymentSummary(row.order_id)
-    showToast('Đã xóa thanh toán.', 'success')
-  }).catch(error => showToast(reportFirebaseError(error, 'Không xóa được thanh toán.'), 'error'))
+    Object.assign(order, result.orderPatch)
+    showToast('Đã xóa thanh toán và cập nhật lại công nợ đơn hàng.', 'success')
+  }).catch(error => showToast(reportFirebaseError(error, 'Không xóa được thanh toán. Toàn bộ thay đổi đã hoàn tác.'), 'error'))
 }
 
 onMounted(() => loadRows())
@@ -150,6 +187,12 @@ onMounted(() => loadRows())
     <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm mã đơn, loại thanh toán..." />
+        <select v-model="paymentTypeFilter" class="select"><option value="">Tất cả loại</option><option v-for="value in PAYMENT_TYPES" :key="value" :value="value">{{ value }}</option></select>
+        <select v-model="methodFilter" class="select"><option value="">Tất cả phương thức</option><option v-for="value in PAYMENT_METHODS" :key="value" :value="value">{{ value }}</option></select>
+        <select v-model="paymentStatusFilter" class="select"><option value="">Tất cả trạng thái</option><option v-for="value in PAYMENT_STATUSES" :key="value" :value="value">{{ value }}</option></select>
+        <input v-model="dateFrom" class="input" type="date" aria-label="Từ ngày" />
+        <input v-model="dateTo" class="input" type="date" aria-label="Đến ngày" />
+        <button class="btn" @click="resetFilters">Xóa lọc</button>
         <button class="btn" @click="loadRows(true)">Làm mới</button>
       </div>
       <LoadingState v-if="loading" />
@@ -185,14 +228,14 @@ onMounted(() => loadRows())
       <div class="form-grid">
         <div class="form-group">
           <label>Mã đơn hàng</label>
-          <select v-model="form.order_id" class="select" @change="chooseOrder">
+          <select v-model="form.order_id" class="select" :disabled="!!editing" @change="chooseOrder">
             <option value="">Chọn đơn</option>
             <option v-for="order in orders" :key="order.id" :value="order.id">{{ order.order_code }} - {{ order.customer_name }}</option>
           </select>
         </div>
         <div class="form-group">
           <label>Nhập mã đơn</label>
-          <input v-model="form.order_code" class="input" placeholder="VD: DH-..." @input="form.order_id = ''; chooseOrder()" />
+          <input v-model="form.order_code" class="input" :readonly="!!editing" placeholder="VD: DH-..." @input="form.order_id = ''; chooseOrder()" />
         </div>
       </div>
 
@@ -216,15 +259,11 @@ onMounted(() => loadRows())
       v-if="showDetailModal && selectedDetail"
       title="Chi tiết thanh toán"
       :record="selectedDetail"
-      :field-order="['id','order_id','order_code','payment_date','payment_type','amount','method','payment_status','cod_status','note','created_by','created_at','updated_at','order_owner_email','order_created_by','order_sale_email','status','active','deleted']"
+      :field-order="['id','order_id','order_code','payment_date','payment_type','amount','method','payment_status','cod_status','note','created_by','created_at','updated_at','order_owner_email','order_created_by','order_sale_email','relation_revision','last_operation_id','status','active','deleted']"
       :money-fields="['amount']"
       @close="showDetailModal = false"
     />
 
-    <ConfirmModal
-      v-bind="confirmState"
-      @cancel="resolveConfirm(false)"
-      @confirm="resolveConfirm(true)"
-    />
+    <ConfirmModal v-bind="confirmState" @cancel="resolveConfirm(false)" @confirm="resolveConfirm(true)" />
   </AppShell>
 </template>

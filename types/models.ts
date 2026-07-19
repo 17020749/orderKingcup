@@ -133,6 +133,27 @@ export interface OrderDoc {
   created_by?: string
   warehouse_fulfillment_status?: string
   warehouse_request_status?: string
+  printing_progress_count?: number
+  printing_lock_version?: number
+  printing_last_action?: 'create' | 'delete' | 'reconcile'
+  printing_last_print_order_id?: string
+  printing_lock_updated_by?: string
+  printing_lock_updated_at?: any
+  relation_lock_version?: number
+  payment_record_count?: number
+  invoice_record_count?: number
+  shipment_record_count?: number
+  payment_relation_revision?: number
+  invoice_relation_revision?: number
+  shipment_relation_revision?: number
+  relation_last_module?: string
+  relation_last_action?: string
+  relation_last_document_id?: string
+  relation_updated_by?: string
+  relation_updated_at?: any
+  shipment_status?: string
+  shipping_fee_total?: number
+  cod_amount_total?: number
   status?: string
   created_at?: any
   updated_at?: any
@@ -153,7 +174,11 @@ export interface PaymentDoc {
   order_owner_email?: string
   order_created_by?: string
   order_sale_email?: string
+  relation_revision?: number
+  last_operation_id?: string
   status?: string
+  active?: boolean
+  deleted?: boolean
 }
 
 export interface ExportRequestDoc {
@@ -173,6 +198,71 @@ export interface ExportRequestDoc {
   warehouse_note?: string
   payload_json?: string
   request_timeline_json?: string
+  lifecycle_status?: string
+  release_sequence?: number
+  active_export_order_id?: string
+  warehouse_export_id?: string
+  warehouse_export_order_id?: string
+  export_order_id?: string
+  last_released_export_order_id?: string
+  last_released_export_code?: string
+  last_cancelled_export_order_id?: string
+  last_cancelled_export_code?: string
+  last_cancel_reason?: string
+  cancel_count?: number
+  actual_export_summary_json?: string
+  stock_movement_ids?: string[]
+  revision?: number
+}
+
+export interface ExportOrderDoc {
+  id: string
+  code?: string
+  export_code?: string
+  export_date?: string
+  destination_type?: string
+  source_order_code?: string
+  source_request_id?: string
+  sync_source?: string
+  source?: string
+  lifecycle_status?: string
+  release_sequence?: number
+  source_request_revision?: number
+  request_operation_id?: string
+  customer_name?: string
+  destination_name?: string
+  to_warehouse_id?: string
+  to_warehouse_name?: string
+  note?: string
+  status?: string
+  active?: boolean
+  deleted?: boolean
+  created_by?: string
+  revision?: number
+}
+
+export interface ExportOrderItemDoc {
+  id: string
+  export_order_id: string
+  product_id?: string
+  product_code?: string
+  product_name?: string
+  from_warehouse_id?: string
+  from_warehouse_name?: string
+  to_warehouse_id?: string
+  to_warehouse_name?: string
+  destination_name?: string
+  logo?: string
+  source_logo?: string
+  target_logo?: string
+  quantity: number
+  unit?: string
+  note?: string
+  status?: string
+  active?: boolean
+  deleted?: boolean
+  created_by?: string
+  revision?: number
 }
 
 export interface ShipmentDoc {
@@ -194,7 +284,11 @@ export interface ShipmentDoc {
   order_owner_email?: string
   order_created_by?: string
   order_sale_email?: string
+  relation_revision?: number
+  last_operation_id?: string
   status?: string
+  active?: boolean
+  deleted?: boolean
 }
 
 export interface PrintOrderDoc {
@@ -220,6 +314,7 @@ export interface PrintOrderDoc {
 export interface PrintOrderItemDoc {
   id: string
   print_order_id: string
+  source_order_item_id?: string
   product_id?: string
   product_code?: string
   product_name?: string
@@ -259,4 +354,10 @@ export interface InvoiceDoc {
   created_by?: string
   order_owner_email?: string
   order_created_by?: string
+  order_sale_email?: string
+  relation_revision?: number
+  last_operation_id?: string
+  status?: string
+  active?: boolean
+  deleted?: boolean
 }

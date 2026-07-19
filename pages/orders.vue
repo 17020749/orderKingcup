@@ -1,18 +1,27 @@
 <script setup lang="ts">
-import { collection, doc, runTransaction, serverTimestamp, writeBatch } from 'firebase/firestore'
+import { collection, doc, getDoc, serverTimestamp, writeBatch } from 'firebase/firestore'
 import { INVOICE_STATUS_OPTIONS, ORDER_CLASSIFICATION_OPTIONS, ORDER_STATUS_OPTIONS, VAT_RATE_OPTIONS } from '~/constants/permissions'
-import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, ProductDoc } from '~/types/models'
+import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, PrintOrderDoc, PrintOrderItemDoc, ProductDoc } from '~/types/models'
 import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
-import { buildOrderCode, customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, ORDER_SEQUENCE_START, userCodeValidationError } from '~/utils/orderCode'
+import { customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, userCodeValidationError } from '~/utils/orderCode'
 import { generateCustomerCode } from '~/utils/customerCode'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+// @ts-ignore Shared ESM helpers are executed directly by Node client tests.
+import { printingDeleteBlocker } from '~/utils/orderPrintingDeleteLock.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { orderRelationDeleteBlocker } from '~/utils/orderRelationState.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { validateOrderItemEdit } from '~/utils/orderItemDependencies.mjs'
 
 const { db } = useFirebaseServices()
-const { appUser, hasPermission } = useAuth()
+const { appUser, hasPermission, isAdmin } = useAuth()
 const { calcItems, computePaymentStatus, parseLogoLines } = useOrderLogic()
 const { invalidateScopedCache } = useRepo()
 const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
 const { loadScopedOrders, loadScopedOrderItems, loadScopedPayments, loadScopedExportRequests, loadScopedCustomers, loadProducts } = useScopedQueries()
+const { saveOrderAtomic } = useAtomicOrderSave()
+const { reconcileOrderRelationLocks } = useAtomicOrderRelations()
+const { loadPrintingDependenciesForOrders, loadPrintingProgressForOrder } = useOrderPrintingDeleteGuard()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const { buildFulfillmentRows, orderSummary, requestLineProgress } = useWarehouseLogic()
@@ -20,12 +29,21 @@ const { buildFulfillmentRows, orderSummary, requestLineProgress } = useWarehouse
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
+const orderStatusFilter = ref('')
+const paymentStatusFilter = ref('')
+const invoiceStatusFilter = ref('')
+const classificationFilter = ref('')
+const dateFrom = ref('')
+const dateTo = ref('')
+const ownerFilter = ref('')
 const rows = ref<OrderDoc[]>([])
 const customers = ref<CustomerDoc[]>([])
 const products = ref<ProductDoc[]>([])
 const itemsByOrder = ref<Record<string, OrderItemDoc[]>>({})
 const paymentsByOrder = ref<Record<string, PaymentDoc[]>>({})
 const exportRequests = ref<any[]>([])
+const printingProgress = ref<PrintOrderDoc[]>([])
+const printingProgressItems = ref<PrintOrderItemDoc[]>([])
 const showModal = ref(false)
 const showDetailModal = ref(false)
 const selectedDetail = ref<OrderDoc | null>(null)
@@ -37,14 +55,41 @@ const form = reactive<any>({})
 const formItems = ref<any[]>([])
 const customerForm = reactive<any>({})
 
-const filtered = computed(() => rows.value.filter(row =>
-  normalizeText(`${row.order_code} ${row.customer_name} ${row.phone} ${row.order_classification} ${row.order_status} ${row.payment_status} ${row.invoice_status}`).includes(normalizeText(search.value))
-))
+function dateKey(value: any) {
+  return String(value || '').slice(0, 10)
+}
+
+const ownerOptions = computed(() => Array.from(new Set(rows.value.flatMap(row => [row.owner_email, row.sale_email, row.created_by]).map(value => String(value || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')))
+
+const filtered = computed(() => {
+  const keyword = normalizeText(search.value)
+  return rows.value.filter(row => {
+    const matchedText = !keyword || normalizeText(`${row.order_code} ${row.customer_name} ${row.phone} ${row.order_classification} ${row.order_status} ${row.payment_status} ${row.invoice_status} ${row.owner_email} ${row.sale_email} ${row.created_by}`).includes(keyword)
+    const matchedOrderStatus = !orderStatusFilter.value || row.order_status === orderStatusFilter.value
+    const matchedPaymentStatus = !paymentStatusFilter.value || row.payment_status === paymentStatusFilter.value
+    const matchedInvoiceStatus = !invoiceStatusFilter.value || row.invoice_status === invoiceStatusFilter.value
+    const matchedClassification = !classificationFilter.value || row.order_classification === classificationFilter.value
+    const rowDate = dateKey(row.order_date || row.created_at)
+    const matchedDateFrom = !dateFrom.value || (!!rowDate && rowDate >= dateFrom.value)
+    const matchedDateTo = !dateTo.value || (!!rowDate && rowDate <= dateTo.value)
+    const matchedOwner = !ownerFilter.value || [row.owner_email, row.sale_email, row.created_by].includes(ownerFilter.value)
+    return matchedText && matchedOrderStatus && matchedPaymentStatus && matchedInvoiceStatus && matchedClassification && matchedDateFrom && matchedDateTo && matchedOwner
+  })
+})
+
+function resetFilters() {
+  search.value = ''
+  orderStatusFilter.value = ''
+  paymentStatusFilter.value = ''
+  invoiceStatusFilter.value = ''
+  classificationFilter.value = ''
+  dateFrom.value = ''
+  dateTo.value = ''
+  ownerFilter.value = ''
+}
+
 const canEditOrders = computed(() => hasPermission('orders.edit'))
-const canManageInvoiceStatus = computed(() => editing.value
-  ? hasPermission('invoices.edit')
-  : hasPermission('invoices.create')
-)
+const canManageInvoiceStatus = computed(() => !editing.value && hasPermission('invoices.create'))
 const itemCount = computed(() => `${formItems.value.length} dòng`)
 const modalTotals = computed(() => calcItems(formItems.value, form))
 const selectedDetailItems = computed(() => selectedDetail.value ? (itemsByOrder.value[selectedDetail.value.id] || []) : [])
@@ -161,10 +206,11 @@ async function loadRows(force = false) {
     customers.value = loadedCustomers.filter(isActive)
     products.value = loadedProducts.filter(isActive)
 
-    const [loadedItems, loadedPayments, loadedRequests] = await Promise.all([
+    const [loadedItems, loadedPayments, loadedRequests, loadedPrintingDependencies] = await Promise.all([
       loadScopedOrderItems(allOrders, force),
       loadScopedPayments(allOrders, force),
-      loadScopedExportRequests(allOrders, force)
+      loadScopedExportRequests(allOrders, force),
+      loadPrintingDependenciesForOrders(allOrders)
     ])
 
     const itemMap: Record<string, OrderItemDoc[]> = {}
@@ -181,6 +227,8 @@ async function loadRows(force = false) {
     })
     paymentsByOrder.value = payMap
     exportRequests.value = loadedRequests
+    printingProgress.value = loadedPrintingDependencies.printOrders
+    printingProgressItems.value = loadedPrintingDependencies.printItems
 
     rows.value = allOrders.map(order => {
       const orderRequests = loadedRequests.filter(request => request.order_id === order.id && isActive(request))
@@ -343,7 +391,7 @@ function itemLineTotal(item: any) {
 }
 
 function canEditRow(row: OrderDoc) {
-  return canEditOrders.value && (String(row.warehouse_fulfillment_status || '') !== 'da_xuat_du' || hasPermission('orders.edit_fulfilled'))
+  return canEditOrders.value && String(row.warehouse_fulfillment_status || '') !== 'da_xuat_du'
 }
 
 function itemQuantityMap(items: any[]) {
@@ -388,8 +436,17 @@ function orderHasWarehouseExport(row: OrderDoc) {
   return exportedByQuantity || exportedByRequest
 }
 
+function orderDeleteBlocker(row: OrderDoc) {
+  if (orderHasWarehouseExport(row)) {
+    return 'Đơn hàng đã có số lượng xuất kho hoặc mã phiếu Warehouse nên không thể xóa.'
+  }
+  const printingBlocker = printingDeleteBlocker(row, printingProgress.value)
+  if (printingBlocker) return printingBlocker
+  return orderRelationDeleteBlocker(row)
+}
+
 function canDeleteRow(row: OrderDoc) {
-  return hasPermission('orders.delete') && !orderHasWarehouseExport(row)
+  return hasPermission('orders.delete') && !orderDeleteBlocker(row)
 }
 
 function fulfillmentLabel(value: any) {
@@ -495,14 +552,6 @@ function closePrint() {
   selectedPrintOrder.value = null
 }
 
-async function commitWriteChunks(writes: Array<(batch: ReturnType<typeof writeBatch>) => void>, size = 8) {
-  for (let index = 0; index < writes.length; index += size) {
-    const batch = writeBatch(db)
-    writes.slice(index, index + size).forEach(write => write(batch))
-    await batch.commit()
-  }
-}
-
 async function saveOrder() {
   if (editing.value && !canEditRow(editing.value)) return showToast('Bạn không có quyền sửa đơn hàng này', 'error')
   if (!editing.value && !hasPermission('orders.create')) return showToast('Bạn không có quyền tạo đơn hàng', 'error')
@@ -524,12 +573,49 @@ async function saveOrder() {
       customers.value = customers.value.map(customer => customer.id === selectedCustomer?.id ? selectedCustomer as CustomerDoc : customer)
       form.customer_code = selectedCustomer.customer_code || ''
     }
+
     const customerCode = normalizeCustomerCode(form.customer_code || selectedCustomer?.customer_code)
     const customerCodeError = customerCodeValidationError(customerCode)
-    if (!editing.value && customerCodeError) throw new Error(customerCodeError)
+    if (customerCodeError) throw new Error(customerCodeError)
+    const userCode = normalizeUserCode(
+      editing.value
+        ? (form.user_code || String(form.order_code || '').split('-')[0])
+        : appUser.value?.user_code,
+    )
+    const userCodeError = userCodeValidationError(userCode)
+    if (userCodeError) {
+      throw new Error(`${userCodeError} Vui lòng nhờ quản trị viên cập nhật tài khoản.`)
+    }
+
     const saveItems = buildSaveItems()
-    const exportError = validateNotBelowExported(saveItems)
-    if (exportError) throw new Error(exportError)
+    if (editing.value) {
+      const [latestRequests, latestPrinting] = await Promise.all([
+        loadScopedExportRequests([editing.value], true),
+        loadPrintingDependenciesForOrders([editing.value]),
+      ])
+      exportRequests.value = [
+        ...exportRequests.value.filter(request => request.order_id !== editing.value?.id),
+        ...latestRequests.filter(request => request.order_id === editing.value?.id),
+      ]
+      printingProgress.value = [
+        ...printingProgress.value.filter(progress => progress.order_id !== editing.value?.id),
+        ...latestPrinting.printOrders,
+      ]
+      const latestPrintOrderIds = new Set(latestPrinting.printOrders.map(progress => progress.id))
+      printingProgressItems.value = [
+        ...printingProgressItems.value.filter(item => !latestPrintOrderIds.has(item.print_order_id)),
+        ...latestPrinting.printItems,
+      ]
+      const dependencyError = validateOrderItemEdit({
+        order: editing.value,
+        previousItems: itemsByOrder.value[editing.value.id] || [],
+        nextItems: saveItems,
+        exportRequests: exportRequests.value.filter(request => request.order_id === editing.value?.id),
+        printOrders: printingProgress.value.filter(progress => progress.order_id === editing.value?.id),
+        printItems: printingProgressItems.value,
+      })
+      if (dependencyError) throw new Error(dependencyError)
+    }
     const totals = calcItems(saveItems, form)
     if (!totals.items.length) throw new Error('Thiếu sản phẩm hợp lệ')
 
@@ -548,142 +634,95 @@ async function saveOrder() {
     const paymentSummary = editing.value
       ? {}
       : computePaymentStatus(baseOrder, paymentsByOrder.value[form.id] || [])
-
-    const orderRef = doc(db, 'orders', form.id)
-    const activityRef = doc(collection(db, 'activity_logs'))
-    const makeOrderPayload = () => ({
+    const existingItems = itemsByOrder.value[form.id] || []
+    const orderPayload = {
       ...baseOrder,
       ...paymentSummary,
-      order_code: form.order_code,
+      order_code: form.order_code || '',
       ...(form.order_sequence ? { order_sequence: toNumber(form.order_sequence) } : {}),
-      ...(form.user_code ? { user_code: normalizeUserCode(form.user_code) } : {}),
-      ...(form.customer_code ? { customer_code: normalizeCustomerCode(form.customer_code) } : {}),
+      user_code: userCode,
+      customer_code: customerCode,
       vat_rate: toNumber(form.vat_rate),
       owner_email: ownerEmail,
       sale_email: saleEmail,
       created_by: createdBy,
       items_count: totals.items.length,
-      search_text: normalizeText(`${form.order_code} ${form.customer_name} ${form.phone}`),
-      updated_at: serverTimestamp(),
+      search_text: normalizeText(`${form.order_code || ''} ${form.customer_name} ${form.phone}`),
       ...(editing.value ? {} : {
         invoice_status: form.invoice_status || 'Không xuất',
         warehouse_fulfillment_status: form.warehouse_fulfillment_status || 'chua_xuat',
         warehouse_request_status: form.warehouse_request_status || '',
+        printing_progress_count: 0,
+        printing_lock_version: 1,
+        printing_last_action: 'reconcile',
+        printing_last_print_order_id: '',
+        printing_lock_updated_by: createdBy,
+        printing_lock_updated_at: serverTimestamp(),
+        relation_lock_version: 1,
+        payment_record_count: 0,
+        invoice_record_count: 0,
+        shipment_record_count: 0,
+        payment_relation_revision: 0,
+        invoice_relation_revision: 0,
+        shipment_relation_revision: 0,
+        relation_last_module: 'all',
+        relation_last_action: 'reconcile',
+        relation_last_document_id: '',
+        relation_updated_by: createdBy,
+        relation_updated_at: serverTimestamp(),
+        shipment_status: '',
+        shipping_fee_total: 0,
+        cod_amount_total: 0,
         created_at: serverTimestamp(),
         active: true,
-        deleted: false
-      })
-    })
-    const makeActivityPayload = () => ({
-      module: 'orders',
-      action: editing.value ? 'update' : 'create',
-      item_code: form.order_code,
-      item_name: form.customer_name || form.order_code,
-      changed_by: appUser.value?.email || '',
-      after_json: JSON.stringify({
-        ...baseOrder,
-        ...paymentSummary,
-        order_code: form.order_code,
-        order_sequence: form.order_sequence,
-        user_code: form.user_code,
-        owner_email: ownerEmail,
-        sale_email: saleEmail,
-        created_by: createdBy
-      }),
-      created_at: serverTimestamp(),
-      active: true,
-      deleted: false
-    })
-
-    if (editing.value) {
-      const orderBatch = writeBatch(db)
-      orderBatch.set(orderRef, makeOrderPayload(), { merge: true })
-      orderBatch.set(activityRef, makeActivityPayload())
-      await orderBatch.commit()
-    } else {
-      const userCode = normalizeUserCode(appUser.value?.user_code)
-      const userCodeError = userCodeValidationError(userCode)
-      if (userCodeError) {
-        throw new Error(`${userCodeError} Vui lòng nhờ quản trị viên cập nhật tài khoản.`)
-      }
-
-      const sequenceRef = doc(db, 'order_sequences', form.customer_id)
-
-      await runTransaction(db, async transaction => {
-        const sequenceSnapshot = await transaction.get(sequenceRef)
-        const nextNumber = sequenceSnapshot.exists()
-          ? Math.max(ORDER_SEQUENCE_START - 1, toNumber(sequenceSnapshot.data().last_number)) + 1
-          : ORDER_SEQUENCE_START
-        const orderCode = buildOrderCode(userCode, customerCode, nextNumber)
-
-        form.order_code = orderCode
-        form.order_sequence = nextNumber
-        form.user_code = userCode
-        form.customer_code = customerCode
-        baseOrder.order_code = orderCode
-        baseOrder.order_sequence = nextNumber
-        baseOrder.user_code = userCode
-        baseOrder.customer_code = customerCode
-
-        transaction.set(sequenceRef, {
-          customer_id: form.customer_id,
-          customer_code: customerCode,
-          last_number: nextNumber,
-          updated_by: createdBy,
-          updated_at: serverTimestamp(),
-          ...(sequenceSnapshot.exists() ? {} : { created_at: serverTimestamp() })
-        }, { merge: true })
-        transaction.set(orderRef, makeOrderPayload())
-        transaction.set(activityRef, makeActivityPayload())
+        deleted: false,
+        status: form.status || 'active'
       })
     }
 
-    const existingItemIds = new Set((itemsByOrder.value[form.id] || []).map(item => item.id))
-    const nextIds = new Set(totals.items.map((item: any) => item.id))
-    const itemWrites: Array<(batch: ReturnType<typeof writeBatch>) => void> = []
-    ;(itemsByOrder.value[form.id] || []).forEach(item => {
-      if (!nextIds.has(item.id)) {
-        itemWrites.push(batch => batch.update(doc(db, 'order_items', item.id), {
-          deleted: true,
-          active: false,
-          status: 'deleted',
-          updated_at: serverTimestamp()
-        }))
-      }
+    const result = await saveOrderAtomic({
+      mode: editing.value ? 'edit' : 'create',
+      orderId: form.id,
+      customerId: form.customer_id,
+      customerCode,
+      userCode,
+      expectedRevision: toNumber(editing.value?.revision),
+      ownerEmail,
+      saleEmail,
+      createdBy,
+      changedBy: appUser.value?.email || '',
+      orderPayload,
+      nextItems: totals.items,
+      existingItems,
+      activityAction: editing.value ? 'update' : 'create',
+      activityItemName: form.customer_name || form.order_code,
+      activityBefore: editing.value
+        ? { ...editing.value, items: existingItems }
+        : null,
     })
 
-    totals.items.forEach((item: any) => {
-      const isNewItem = !existingItemIds.has(item.id)
-      itemWrites.push(batch => batch.set(doc(db, 'order_items', item.id), {
-        ...item,
-        order_id: form.id,
-        order_code: form.order_code,
-        owner_email: ownerEmail,
-        sale_email: saleEmail,
-        created_by: createdBy,
-        updated_at: serverTimestamp(),
-        ...(isNewItem ? {
-          status: 'active',
-          active: true,
-          deleted: false,
-          created_at: serverTimestamp()
-        } : {})
-      }, { merge: true }))
-    })
-
-    await commitWriteChunks(itemWrites)
+    form.order_code = result.orderCode
+    form.order_sequence = result.orderSequence
+    form.user_code = userCode
+    form.customer_code = customerCode
+    form.revision = result.revision
+    form.last_operation_id = result.operationId
 
     const now = new Date().toISOString()
+    const previousItems = new Map(existingItems.map(item => [item.id, item]))
     const localItems = totals.items.map((item: any) => ({
       ...item,
       order_id: form.id,
-      order_code: form.order_code,
+      order_code: result.orderCode,
       owner_email: ownerEmail,
       sale_email: saleEmail,
       created_by: createdBy,
+      order_revision: result.revision,
+      last_operation_id: result.operationId,
       status: 'active',
       active: true,
       deleted: false,
+      created_at: previousItems.get(item.id)?.created_at || now,
       updated_at: now
     })) as OrderItemDoc[]
     itemsByOrder.value[form.id] = localItems
@@ -693,15 +732,22 @@ async function saveOrder() {
       ...baseOrder,
       ...paymentSummary,
       id: form.id,
+      order_code: result.orderCode,
+      order_sequence: result.orderSequence,
+      user_code: userCode,
+      customer_code: customerCode,
       owner_email: ownerEmail,
       sale_email: saleEmail,
       created_by: createdBy,
+      revision: result.revision,
+      last_operation_id: result.operationId,
       invoice_status: editing.value && !canManageInvoiceStatus.value
         ? (editing.value.invoice_status || 'Không xuất')
         : (form.invoice_status || 'Không xuất'),
       items_count: localItems.length,
       active: true,
       deleted: false,
+      created_at: editing.value?.created_at || now,
       updated_at: now
     } as OrderDoc
     const orderRequests = exportRequests.value.filter(request => request.order_id === form.id && isActive(request))
@@ -715,13 +761,38 @@ async function saveOrder() {
     invalidateScopedCache('activity_logs')
     showModal.value = false
     showToast(editing.value ? 'Đã cập nhật đơn hàng' : 'Đã thêm đơn hàng', 'success')
-  }).catch(error => showToast((error as any)?.code ? reportFirebaseError(error, 'Lưu đơn thất bại.') : ((error as any)?.message || 'Lưu đơn thất bại.'), 'error')).finally(() => {
+  }).catch(error => showToast(
+    (error as any)?.code
+      ? reportFirebaseError(error, 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.')
+      : ((error as any)?.message || 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.'),
+    'error',
+  )).finally(() => {
     saving.value = false
   })
 }
 
+async function reconcileRelationLocks() {
+  if (!isAdmin.value) return showToast('Chỉ quản trị viên được đồng bộ khóa liên kết đơn.', 'error')
+  const confirmed = await askConfirm({
+    title: 'Đồng bộ khóa liên kết đơn',
+    message: 'Hệ thống sẽ đếm lại thanh toán, hóa đơn và vận chuyển đang hoạt động của tất cả đơn hàng. Dữ liệu mồ côi sẽ được báo riêng và không tự động xóa.',
+    confirmLabel: 'Đồng bộ'
+  })
+  if (!confirmed) return
+  await withLoading(async () => {
+    const result = await reconcileOrderRelationLocks()
+    await loadRows(true)
+    const orphanNote = result.orphanCount
+      ? ` Phát hiện ${result.orphanCount} chứng từ mồ côi cần quản trị viên xử lý riêng.`
+      : ''
+    showToast(`Đã đồng bộ ${result.updatedOrders} đơn hàng.${orphanNote}`, result.orphanCount ? 'info' : 'success')
+  }).catch(error => showToast(reportFirebaseError(error, 'Không đồng bộ được khóa liên kết đơn.'), 'error'))
+}
+
 async function softDeleteOrder(row: OrderDoc) {
-  if (!canDeleteRow(row)) return showToast('Đơn đã có lịch sử xuất kho, không thể xóa', 'error')
+  if (!hasPermission('orders.delete')) return showToast('Bạn không có quyền xóa đơn hàng.', 'error')
+  const initialBlocker = orderDeleteBlocker(row)
+  if (initialBlocker) return showToast(initialBlocker, 'error')
   const confirmed = await askConfirm({
     title: 'Xóa đơn hàng',
     message: `Bạn chắc chắn muốn xóa đơn hàng ${row.order_code}?\nCác dòng sản phẩm và phiếu xuất chưa thực hiện của đơn này cũng sẽ được xóa mềm.`,
@@ -735,6 +806,13 @@ async function softDeleteOrder(row: OrderDoc) {
     if (orderHasWarehouseExport(row)) {
       throw new Error('Đơn hàng đã có số lượng xuất kho hoặc mã phiếu Warehouse nên không thể xóa.')
     }
+    const latestPrintingProgress = await loadPrintingProgressForOrder(row.id)
+    const latestPrintingBlocker = printingDeleteBlocker(row, latestPrintingProgress)
+    if (latestPrintingBlocker) throw new Error(latestPrintingBlocker)
+    const latestOrderSnap = await getDoc(doc(db, 'orders', row.id))
+    if (!latestOrderSnap.exists()) throw new Error('Không tìm thấy đơn hàng cần xóa.')
+    const latestRelationBlocker = orderRelationDeleteBlocker({ ...latestOrderSnap.data(), id: latestOrderSnap.id })
+    if (latestRelationBlocker) throw new Error(latestRelationBlocker)
 
     if (orderItems.length + orderRequests.length + 2 > 500) {
       throw new Error('Đơn hàng có quá nhiều dữ liệu liên quan để xóa an toàn trong một lần.')
@@ -786,6 +864,7 @@ async function softDeleteOrder(row: OrderDoc) {
     await batch.commit()
     rows.value = rows.value.filter(r => r.id !== row.id)
     exportRequests.value = exportRequests.value.filter(request => request.order_id !== row.id)
+    printingProgress.value = printingProgress.value.filter(progress => progress.order_id !== row.id)
     delete itemsByOrder.value[row.id]
     invalidateScopedCache('orders')
     invalidateScopedCache('order_items')
@@ -806,12 +885,21 @@ onMounted(loadRows)
 <template>
   <AppShell>
     <PageHeader title="Đơn hàng" subtitle="Đơn hàng và chi tiết sản phẩm">
+      <button v-if="isAdmin" class="btn" @click="reconcileRelationLocks">Đồng bộ khóa liên kết đơn</button>
       <button v-if="hasPermission('orders.create')" class="btn primary" @click="openModal()">+ Tạo đơn hàng</button>
     </PageHeader>
 
     <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm mã đơn, khách hàng, SĐT..." />
+        <select v-model="orderStatusFilter" class="select"><option value="">Tất cả trạng thái đơn</option><option v-for="value in ORDER_STATUS_OPTIONS" :key="value" :value="value">{{ value }}</option></select>
+        <select v-model="paymentStatusFilter" class="select"><option value="">Tất cả thanh toán</option><option value="Chưa thanh toán">Chưa thanh toán</option><option value="Thanh toán một phần">Thanh toán một phần</option><option value="Đã thanh toán">Đã thanh toán</option></select>
+        <select v-model="invoiceStatusFilter" class="select"><option value="">Tất cả hóa đơn</option><option v-for="value in INVOICE_STATUS_OPTIONS" :key="value" :value="value">{{ value }}</option></select>
+        <select v-model="classificationFilter" class="select"><option value="">Tất cả phân loại</option><option v-for="value in ORDER_CLASSIFICATION_OPTIONS" :key="value" :value="value">{{ value }}</option></select>
+        <input v-model="dateFrom" class="input" type="date" aria-label="Từ ngày" />
+        <input v-model="dateTo" class="input" type="date" aria-label="Đến ngày" />
+        <select v-model="ownerFilter" class="select"><option value="">Tất cả phụ trách</option><option v-for="value in ownerOptions" :key="value" :value="value">{{ value }}</option></select>
+        <button class="btn" @click="resetFilters">Xóa lọc</button>
         <button class="btn" @click="loadRows(true)">Làm mới</button>
       </div>
       <LoadingState v-if="loading" />
@@ -847,7 +935,7 @@ onMounted(loadRows)
                   <button v-if="canEditRow(row)" class="btn-sm" @click="openModal(row)">Sửa</button>
                   <button v-else class="btn-sm" disabled>Khóa</button>
                   <button v-if="canDeleteRow(row)" class="btn-sm btn-delete" @click="softDeleteOrder(row)">Xóa</button>
-                  <button v-else-if="hasPermission('orders.delete')" class="btn-sm" disabled>Khóa</button>
+                  <button v-else-if="hasPermission('orders.delete')" class="btn-sm" disabled :title="orderDeleteBlocker(row)">Khóa</button>
                 </div>
               </td>
             </tr>

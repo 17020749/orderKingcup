@@ -57,6 +57,24 @@ function order(email, code) {
     owner_email: email,
     created_by: email,
     sale_email: email,
+    printing_progress_count: 0,
+    printing_lock_version: 1,
+    printing_last_action: 'reconcile',
+    printing_last_print_order_id: '',
+    printing_lock_updated_by: email,
+    printing_lock_updated_at: 'now',
+    relation_lock_version: 1,
+    payment_record_count: 0,
+    invoice_record_count: 0,
+    shipment_record_count: 0,
+    payment_relation_revision: 0,
+    invoice_relation_revision: 0,
+    shipment_relation_revision: 0,
+    relation_last_module: 'all',
+    relation_last_action: 'reconcile',
+    relation_last_document_id: '',
+    relation_updated_by: email,
+    relation_updated_at: 'now',
     active: true,
     deleted: false,
     warehouse_fulfillment_status: 'chua_xuat'
@@ -106,15 +124,32 @@ async function seed() {
       setDoc(doc(db, 'users', LEGACY), { email: LEGACY, status: 'Hoạt động', deleted: false, permissions_flat: ['orders.view'] }),
       setDoc(doc(db, 'users', ROLE_ADMIN), { email: ROLE_ADMIN, active: true, deleted: false, role: 'Admin' }),
       setDoc(doc(db, 'users', EDITOR), { email: EDITOR, active: true, deleted: false, permissions_flat: ['orders.view', 'orders.edit'] }),
-      setDoc(doc(db, 'orders', 'order-a'), order(A, 'order-a')),
+      setDoc(doc(db, 'orders', 'order-a'), {
+        ...order(A, 'order-a'),
+        printing_progress_count: 1,
+        printing_last_action: 'create',
+        printing_last_print_order_id: 'print-a'
+      }),
+      setDoc(doc(db, 'orders', 'order-delete'), order(A, 'order-delete')),
       setDoc(doc(db, 'orders', 'order-a-exported'), { ...order(A, 'order-a-exported'), warehouse_fulfillment_status: 'da_xuat_1_phan', warehouse_request_status: 'da_xuat' }),
-      setDoc(doc(db, 'orders', 'order-b'), order(B, 'order-b')),
+      setDoc(doc(db, 'orders', 'order-b'), {
+        ...order(B, 'order-b'),
+        payment_record_count: 1,
+        invoice_record_count: 1,
+        shipment_record_count: 1
+      }),
       setDoc(doc(db, 'orders', 'order-legacy'), order(LEGACY, 'order-legacy')),
       setDoc(doc(db, 'orders', 'order-editor'), order(EDITOR, 'order-editor')),
-      setDoc(doc(db, 'order_items', 'item-a'), { order_id: 'order-a', created_by: A, owner_email: A, sale_email: A, active: true, deleted: false, status: 'active' }),
+      setDoc(doc(db, 'order_items', 'item-a'), {
+        id: 'item-a', order_id: 'order-a', product_id: 'product-existing', product_code: 'SP001',
+        product_name: 'Sản phẩm cũ', quantity: 100,
+        created_by: A, owner_email: A, sale_email: A, active: true, deleted: false, status: 'active'
+      }),
+      setDoc(doc(db, 'order_items', 'item-delete'), { order_id: 'order-delete', created_by: A, owner_email: A, sale_email: A, active: true, deleted: false, status: 'active' }),
       setDoc(doc(db, 'order_items', 'item-b'), { order_id: 'order-b', created_by: B, owner_email: B, sale_email: B, active: true }),
       setDoc(doc(db, 'payments', 'payment-b'), { order_id: 'order-b', created_by: B, ...ownership(B), amount: 100, active: true }),
       setDoc(doc(db, 'order_export_requests', 'export-a'), { order_id: 'order-a', requested_by: A, ...ownership(A), status: 'cho_xu_ly', payload_json: '{}', active: true, deleted: false }),
+      setDoc(doc(db, 'order_export_requests', 'export-delete'), { order_id: 'order-delete', requested_by: A, ...ownership(A), status: 'cho_xu_ly', payload_json: '{}', active: true, deleted: false }),
       setDoc(doc(db, 'order_export_requests', 'export-a-accepted'), { order_id: 'order-a', requested_by: A, ...ownership(A), status: 'da_tiep_nhan', payload_json: '{}', warehouse_export_code: '', warehouse_handled_by: WAREHOUSE, active: true, deleted: false }),
       setDoc(doc(db, 'order_export_requests', 'export-a-done'), { order_id: 'order-a-exported', requested_by: A, ...ownership(A), status: 'da_xuat', payload_json: '{}', active: true }),
       setDoc(doc(db, 'shipments', 'shipment-b'), { order_id: 'order-b', created_by: B, ...ownership(B), active: true }),
@@ -219,7 +254,7 @@ async function seed() {
         created_by: PRINTING, active: true, deleted: false, status: 'active', source: 'test'
       }),
       setDoc(doc(db, 'print_order_items', 'print-item-a'), {
-        id: 'print-item-a', print_order_id: 'print-a', product_id: 'product-existing',
+        id: 'print-item-a', print_order_id: 'print-a', source_order_item_id: 'item-a', product_id: 'product-existing',
         product_code: 'SP001', product_name: 'Sản phẩm cũ', logo: '', print_quantity: 10,
         actual_print_quantity: 4, is_completed: false, created_by: PRINTING,
         active: true, deleted: false, status: 'active', source: 'test'
@@ -246,13 +281,13 @@ after(async () => env.cleanup())
 test('Xóa mềm order và order_items trong cùng batch là nguyên tử', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
   const batch = writeBatch(db)
-  batch.update(doc(db, 'orders', 'order-a'), {
+  batch.update(doc(db, 'orders', 'order-delete'), {
     deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now'
   })
-  batch.update(doc(db, 'order_items', 'item-a'), {
+  batch.update(doc(db, 'order_items', 'item-delete'), {
     deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now'
   })
-  batch.update(doc(db, 'order_export_requests', 'export-a'), {
+  batch.update(doc(db, 'order_export_requests', 'export-delete'), {
     deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now'
   })
 
@@ -261,8 +296,8 @@ test('Xóa mềm order và order_items trong cùng batch là nguyên tử', asyn
   await env.withSecurityRulesDisabled(async context => {
     const adminDb = context.firestore()
     const [orderSnap, itemSnap] = await Promise.all([
-      getDoc(doc(adminDb, 'orders', 'order-a')),
-      getDoc(doc(adminDb, 'order_items', 'item-a'))
+      getDoc(doc(adminDb, 'orders', 'order-delete')),
+      getDoc(doc(adminDb, 'order_items', 'item-delete'))
     ])
     if (orderSnap.data()?.deleted !== true || itemSnap.data()?.deleted !== true) {
       throw new Error('Batch phải xóa mềm đồng thời cả order và order_item')
@@ -270,11 +305,25 @@ test('Xóa mềm order và order_items trong cùng batch là nguyên tử', asyn
   })
 })
 
-test('User A tạo payment chuẩn cho order A', async () => {
+test('User A tạo payment chuẩn cho order A bằng batch nguyên tử', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
-  await assertSucceeds(setDoc(doc(db, 'payments', 'payment-a'), {
-    order_id: 'order-a', created_by: A, ...ownership(A), amount: 200, active: true
-  }))
+  const batch = writeBatch(db)
+  batch.set(doc(db, 'payments', 'payment-a'), {
+    id: 'payment-a', order_id: 'order-a', order_code: 'order-a', created_by: A,
+    ...ownership(A), payment_type: 'Cọc', payment_status: 'Đã nhận', amount: 200,
+    active: true, deleted: false, status: 'active'
+  })
+  batch.update(doc(db, 'orders', 'order-a'), {
+    relation_lock_version: 1,
+    relation_last_module: 'payments', relation_last_action: 'create',
+    relation_last_document_id: 'payment-a', relation_updated_by: A, relation_updated_at: 'now',
+    payment_record_count: 1, payment_relation_revision: 1,
+    paid_amount: 200, debt_amount: -200,
+    payment_status: 'Thanh toán thừa', computed_payment_status: 'Thanh toán thừa',
+    payment_count: 1, deposit_count: 1, collect_count: 0,
+    updated_at: 'now'
+  })
+  await assertSucceeds(batch.commit())
 })
 
 test('User A không thể giả ownership để tạo payment cho order B', async () => {
@@ -490,76 +539,93 @@ test('Quyền từ chối chỉ được từ chối, không được tiếp nh�
   }))
 })
 
-test('Quyền cho xuất được tạo phiếu xuất thật, ghi tồn và cập nhật request/order', async () => {
+test('Quyền cho xuất được tạo phiếu xuất thật và cập nhật request/order nguyên tử', async () => {
   const db = env.authenticatedContext(WAREHOUSE_RELEASE, { email: WAREHOUSE_RELEASE }).firestore()
-
-  await assertSucceeds(setDoc(doc(db, 'export_orders', 'export-real-from-request'), {
-    id: 'export-real-from-request',
+  const exportId = 'request_export__export-a-accepted'
+  const operationId = 'op-release-test'
+  const batch = writeBatch(db)
+  batch.set(doc(db, 'export_orders', exportId), {
+    id: exportId,
     code: 'PX-YC-001',
-    source_request_id: 'export-a',
+    export_code: 'PX-YC-001',
+    source_request_id: 'export-a-accepted',
+    sync_source: 'kingcup_firestore:export-a-accepted',
+    source: 'kingcup_firestore',
+    lifecycle_status: 'released',
+    release_sequence: 1,
+    source_request_revision: 0,
+    request_operation_id: operationId,
     created_by: WAREHOUSE_RELEASE,
     created_at: 'now',
     updated_at: 'now',
+    operation_id: operationId,
+    last_operation_id: operationId,
+    revision: 1,
+    status: 'completed',
     active: true,
-    deleted: false,
-    source: 'nuxt'
-  }))
-  await assertSucceeds(setDoc(doc(db, 'export_order_items', 'export-real-from-request-item'), {
-    export_order_id: 'export-real-from-request',
+    deleted: false
+  })
+  batch.set(doc(db, 'export_order_items', `${exportId}__1`), {
+    id: `${exportId}__1`,
+    export_order_id: exportId,
+    source_order_id: 'order-a',
+    source_order_item_id: 'item-a',
     product_id: 'product-existing',
+    product_code: 'SP001',
     from_warehouse_id: 'wh-a',
     quantity: 2,
     created_by: WAREHOUSE_RELEASE,
     created_at: 'now',
     updated_at: 'now',
+    operation_id: operationId,
+    last_operation_id: operationId,
+    revision: 1,
     active: true,
     deleted: false,
-    source: 'nuxt'
-  }))
-  await assertSucceeds(setDoc(doc(db, 'stock_movements', 'move-release'), {
-    id: 'move-release',
-    movement_type: 'export_customer',
-    direction: 'out',
-    product_id: 'product-existing',
-    warehouse_id: 'wh-a',
-    quantity: -2,
-    created_by: WAREHOUSE_RELEASE,
-    operation_id: 'op-release-test',
-    created_at: 'now',
-    active: true,
-    deleted: false,
-    source: 'nuxt'
-  }))
-  await assertSucceeds(updateDoc(doc(db, 'inventory_balances', 'wh-a__product-existing__no_logo'), {
-    quantity: 3,
-    last_operation_id: 'op-release-test',
-    updated_by: WAREHOUSE_RELEASE,
-    updated_at: 'now'
-  }))
-  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
+    status: 'completed',
+    source: 'kingcup_firestore'
+  })
+  batch.update(doc(db, 'order_export_requests', 'export-a-accepted'), {
     status: 'da_xuat',
+    lifecycle_status: 'released',
+    release_sequence: 1,
+    active_export_order_id: exportId,
+    warehouse_export_code: 'PX-YC-001',
+    warehouse_export_id: exportId,
+    warehouse_export_order_id: exportId,
+    export_order_id: exportId,
     warehouse_handled_by: WAREHOUSE_RELEASE,
-    export_order_id: 'export-real-from-request',
-    warehouse_export_order_id: 'export-real-from-request',
+    warehouse_handled_at: 'now',
+    warehouse_note: '',
     exported_at: 'now',
+    actual_exported_at: 'now',
+    actual_export_summary_json: '[{"source_order_id":"order-a","source_order_item_id":"item-a","product_id":"product-existing","warehouse_id":"wh-a","quantity":2}]',
+    stock_movement_ids: ['move-release'],
+    request_timeline_json: '[]',
+    operation_id: operationId,
+    last_operation_id: operationId,
+    last_released_export_order_id: exportId,
+    last_released_export_code: 'PX-YC-001',
+    last_released_by: WAREHOUSE_RELEASE,
+    revision: 1,
     updated_at: 'now'
-  }))
-  await assertSucceeds(updateDoc(doc(db, 'orders', 'order-a'), {
+  })
+  batch.update(doc(db, 'orders', 'order-a'), {
     warehouse_fulfillment_status: 'da_xuat_1_phan',
     warehouse_request_status: 'da_xuat',
     updated_at: 'now'
+  })
+  await assertSucceeds(batch.commit())
+
+  await assertSucceeds(setDoc(doc(db, 'stock_movements', 'move-release'), {
+    id: 'move-release', movement_type: 'export_customer', direction: 'out',
+    product_id: 'product-existing', warehouse_id: 'wh-a', quantity: -2,
+    created_by: WAREHOUSE_RELEASE, operation_id: operationId,
+    created_at: 'now', active: true, deleted: false, source: 'nuxt'
   }))
-  await assertSucceeds(setDoc(doc(db, 'notifications', 'notification-release-to-sale'), {
-    type: 'warehouse_export_request_released',
-    title: 'Kho đã cho xuất hàng',
-    message: 'Đã tạo phiếu PX-YC-001',
-    created_by: WAREHOUSE_RELEASE,
-    to_email: A,
-    audience: '',
-    audience_permissions: [],
-    status: 'unread',
-    active: true,
-    deleted: false
+  await assertSucceeds(updateDoc(doc(db, 'inventory_balances', 'wh-a__product-existing__no_logo'), {
+    quantity: 3, last_operation_id: operationId,
+    updated_by: WAREHOUSE_RELEASE, updated_at: 'now'
   }))
 })
 
@@ -780,10 +846,18 @@ test('User A không thể sửa hoặc xóa order của User B', async () => {
 })
 
 test('User A không thể đổi order_id của payment thuộc mình sang order B', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    const adminDb = context.firestore()
+    await setDoc(doc(adminDb, 'payments', 'payment-a-immutable'), {
+      id: 'payment-a-immutable', order_id: 'order-a', order_code: 'order-a',
+      created_by: A, ...ownership(A), amount: 200, active: true, deleted: false, status: 'active'
+    })
+    await updateDoc(doc(adminDb, 'orders', 'order-a'), {
+      payment_record_count: 1,
+      payment_relation_revision: 1
+    })
+  })
   const db = env.authenticatedContext(A, { email: A }).firestore()
-  await assertSucceeds(setDoc(doc(db, 'payments', 'payment-a-immutable'), {
-    order_id: 'order-a', created_by: A, ...ownership(A), amount: 200, active: true
-  }))
   await assertFails(updateDoc(doc(db, 'payments', 'payment-a-immutable'), {
     order_id: 'order-b', ...ownership(B)
   }))
@@ -832,11 +906,24 @@ test('Order item dùng owner_email/created_by/sale_email và đối chiếu pare
   }))
 })
 
-test('Admin có thể tạo dữ liệu con cho order của user khác', async () => {
+test('Admin có thể tạo dữ liệu con cho order của user khác bằng batch nguyên tử', async () => {
   const db = env.authenticatedContext(ADMIN, { email: ADMIN }).firestore()
-  await assertSucceeds(setDoc(doc(db, 'payments', 'payment-b-by-admin'), {
-    order_id: 'order-b', created_by: ADMIN, ...ownership(B), amount: 300, active: true
-  }))
+  const paymentBatch = writeBatch(db)
+  paymentBatch.set(doc(db, 'payments', 'payment-b-by-admin'), {
+    id: 'payment-b-by-admin', order_id: 'order-b', order_code: 'order-b',
+    created_by: ADMIN, ...ownership(B), payment_type: 'Thu 1', payment_status: 'Đã nhận',
+    amount: 300, active: true, deleted: false, status: 'active'
+  })
+  paymentBatch.update(doc(db, 'orders', 'order-b'), {
+    relation_lock_version: 1,
+    relation_last_module: 'payments', relation_last_action: 'create',
+    relation_last_document_id: 'payment-b-by-admin', relation_updated_by: ADMIN,
+    relation_updated_at: 'now', payment_record_count: 2, payment_relation_revision: 1,
+    paid_amount: 300, debt_amount: -300,
+    payment_status: 'Thanh toán thừa', computed_payment_status: 'Thanh toán thừa',
+    payment_count: 1, deposit_count: 0, collect_count: 1, updated_at: 'now'
+  })
+  await assertSucceeds(paymentBatch.commit())
   await assertSucceeds(setDoc(doc(db, 'order_items', 'item-b-by-admin'), {
     order_id: 'order-b', owner_email: B, created_by: B, sale_email: B,
     product_name: 'Admin thêm', active: true
@@ -1221,19 +1308,28 @@ test('Tiến độ in: người có printing.view đọc được đơn, chi ti�
   await assertSucceeds(getDoc(doc(viewerDb, 'order_items', 'item-a')))
   await assertSucceeds(getDocs(query(collection(viewerDb, 'orders'))))
   await assertSucceeds(getDocs(query(collection(viewerDb, 'order_items'))))
-  await assertFails(getDoc(doc(normalDb, 'print_orders', 'print-a')))
+  // Chủ đơn có orders.delete được đọc tiến độ liên quan để hiển thị lý do khóa xóa.
+  await assertSucceeds(getDoc(doc(normalDb, 'print_orders', 'print-a')))
 })
 
 test('Tiến độ in: tạo đơn và dòng sản phẩm hợp lệ trong cùng batch', async () => {
   const db = env.authenticatedContext(PRINTING, { email: PRINTING }).firestore()
   const batch = writeBatch(db)
+  batch.update(doc(db, 'orders', 'order-a'), {
+    printing_progress_count: 2,
+    printing_lock_version: 1,
+    printing_last_action: 'create',
+    printing_last_print_order_id: 'print-new',
+    printing_lock_updated_by: PRINTING,
+    printing_lock_updated_at: 'now'
+  })
   batch.set(doc(db, 'print_orders', 'print-new'), {
     id: 'print-new', order_id: 'order-a', order_code: 'order-a', am_code: 'AM-01',
     created_by: PRINTING, created_at: 'now', updated_at: 'now',
     active: true, deleted: false, status: 'active', source: 'nuxt'
   })
   batch.set(doc(db, 'print_order_items', 'print-item-new'), {
-    id: 'print-item-new', print_order_id: 'print-new', product_id: 'product-existing',
+    id: 'print-item-new', print_order_id: 'print-new', source_order_item_id: 'item-a', product_id: 'product-existing',
     product_code: 'SP001', product_name: 'Sản phẩm cũ', logo: 'Logo A',
     print_quantity: 20, actual_print_quantity: 0, is_completed: false,
     created_by: PRINTING, created_at: 'now', updated_at: 'now',
@@ -1282,6 +1378,14 @@ test('Tiến độ in: sửa và xóa mềm nguyên tử với đúng quyền', 
     deleted: true, active: false, status: 'deleted', deleted_at: 'now',
     deleted_by: PRINTING, updated_by: PRINTING, updated_at: 'now'
   }
+  deleteBatch.update(doc(db, 'orders', 'order-a'), {
+    printing_progress_count: 0,
+    printing_lock_version: 1,
+    printing_last_action: 'delete',
+    printing_last_print_order_id: 'print-a',
+    printing_lock_updated_by: PRINTING,
+    printing_lock_updated_at: 'now'
+  })
   deleteBatch.update(doc(db, 'print_orders', 'print-a'), deletedPatch)
   deleteBatch.update(doc(db, 'print_order_items', 'print-item-a'), deletedPatch)
   await assertSucceeds(deleteBatch.commit())
@@ -1552,13 +1656,31 @@ test('Sale sửa yêu cầu được gửi broadcast cập nhật cho đúng nh�
 
 
 
-test('V7.4 cho phép sửa đơn và trạng thái hóa đơn nguyên tử khi đủ quyền', async () => {
+test('Bước 7 sửa nội dung đơn và hóa đơn qua hai luồng được bảo vệ', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
   await assertSucceeds(updateDoc(doc(db, 'orders', 'order-a'), {
     note: 'Đã cập nhật',
+    updated_at: 'now'
+  }))
+  await assertFails(updateDoc(doc(db, 'orders', 'order-a'), {
     invoice_status: 'Khách lẻ',
     updated_at: 'now'
   }))
+
+  const batch = writeBatch(db)
+  batch.set(doc(db, 'invoices', 'invoice-v74'), {
+    id: 'invoice-v74', order_id: 'order-a', order_code: 'order-a',
+    invoice_status: 'Khách lẻ', created_by: A, ...ownership(A),
+    active: true, deleted: false, status: 'active'
+  })
+  batch.update(doc(db, 'orders', 'order-a'), {
+    relation_lock_version: 1,
+    relation_last_module: 'invoices', relation_last_action: 'create',
+    relation_last_document_id: 'invoice-v74', relation_updated_by: A,
+    relation_updated_at: 'now', invoice_record_count: 1,
+    invoice_relation_revision: 1, invoice_status: 'Khách lẻ', updated_at: 'now'
+  })
+  await assertSucceeds(batch.commit())
 })
 
 test('V7.4 chặn đổi trạng thái hóa đơn khi chỉ có quyền sửa đơn', async () => {
@@ -1623,24 +1745,32 @@ test('V7.5 người không có quyền kho không được tạo operation key',
   }))
 })
 
-test('V7.5 quyền release được ghi revision và operation id khi cho xuất', async () => {
+test('V7.5 quyền release ghi revision và operation id qua liên kết nguyên tử', async () => {
   const db = env.authenticatedContext(WAREHOUSE_RELEASE, { email: WAREHOUSE_RELEASE }).firestore()
-  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a-accepted'), {
-    status: 'da_xuat',
-    warehouse_export_code: 'PXK-V75',
-    warehouse_export_id: 'export-v75',
-    warehouse_export_order_id: 'export-v75',
-    export_order_id: 'export-v75',
-    warehouse_handled_by: WAREHOUSE_RELEASE,
-    warehouse_handled_at: 'now',
-    exported_at: 'now',
-    actual_exported_at: 'now',
-    actual_export_summary_json: '[]',
-    stock_movement_ids: ['move-v75'],
-    request_timeline_json: '[]',
-    operation_id: 'op-v75-release',
-    last_operation_id: 'op-v75-release',
-    revision: 1,
-    updated_at: 'now'
-  }))
+  const exportId = 'export-v75'
+  const operationId = 'op-v75-release'
+  const batch = writeBatch(db)
+  batch.set(doc(db, 'export_orders', exportId), {
+    id: exportId, code: 'PXK-V75', export_code: 'PXK-V75',
+    source_request_id: 'export-a-accepted',
+    sync_source: 'kingcup_firestore:export-a-accepted', source: 'kingcup_firestore',
+    lifecycle_status: 'released', release_sequence: 1, source_request_revision: 0,
+    request_operation_id: operationId, created_by: WAREHOUSE_RELEASE,
+    created_at: 'now', updated_at: 'now', operation_id: operationId,
+    last_operation_id: operationId, revision: 1,
+    status: 'completed', active: true, deleted: false
+  })
+  batch.update(doc(db, 'order_export_requests', 'export-a-accepted'), {
+    status: 'da_xuat', lifecycle_status: 'released', release_sequence: 1,
+    active_export_order_id: exportId, warehouse_export_code: 'PXK-V75',
+    warehouse_export_id: exportId, warehouse_export_order_id: exportId,
+    export_order_id: exportId, warehouse_handled_by: WAREHOUSE_RELEASE,
+    warehouse_handled_at: 'now', warehouse_note: '', exported_at: 'now',
+    actual_exported_at: 'now', actual_export_summary_json: '[]',
+    stock_movement_ids: ['move-v75'], request_timeline_json: '[]',
+    operation_id: operationId, last_operation_id: operationId,
+    last_released_export_order_id: exportId, last_released_export_code: 'PXK-V75',
+    last_released_by: WAREHOUSE_RELEASE, revision: 1, updated_at: 'now'
+  })
+  await assertSucceeds(batch.commit())
 })

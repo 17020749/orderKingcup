@@ -22,6 +22,7 @@ type PrintStatus = 'Đang in' | 'Cảnh báo' | 'Quá hạn' | 'Hoàn thành'
 
 type PrintLineForm = {
   id?: string
+  source_order_item_id: string
   logo: string
   logo_color: string
   print_quantity: number
@@ -47,7 +48,7 @@ const {
   loadPrintingSourceOrderItems,
 } = usePrintingScopedQueries()
 const { loadProducts, loadSuppliers } = useScopedQueries()
-const { savePrintOrder, deletePrintOrder } = usePrintingProgress()
+const { savePrintOrder, deletePrintOrder, reconcilePrintingLocks } = usePrintingProgress()
 const { appUser, authReady, isAdmin, permissions, hasPermission } = useAuth()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
@@ -60,6 +61,7 @@ const sourceOrders = ref<OrderDoc[]>([])
 const sourceOrderItems = ref<OrderItemDoc[]>([])
 const loading = ref(false)
 const saving = ref(false)
+const reconciling = ref(false)
 const search = ref('')
 const statusFilter = ref('')
 const showFormModal = ref(false)
@@ -252,6 +254,7 @@ const selectedItems = computed(() => selected.value ? itemsForOrder(selected.val
 function blankLine(item?: Partial<PrintOrderItemDoc>): PrintLineForm {
   return {
     id: item?.id,
+    source_order_item_id: String(item?.source_order_item_id || ''),
     logo: String(item?.logo || ''),
     logo_color: String(item?.logo_color || ''),
     print_quantity: toNumber(item?.print_quantity),
@@ -283,7 +286,7 @@ function groupsFromItems(orderItems: PrintOrderItemDoc[]) {
       result.push(blankProductGroup(item))
       return
     }
-    const productKey = item.product_id || item.product_code || item.id
+    const productKey = item.source_order_item_id || item.product_id || item.product_code || item.id
     let group = logoGroups.get(productKey)
     if (!group) {
       group = blankProductGroup(item)
@@ -314,6 +317,7 @@ function groupsFromSourceOrder(orderId: string) {
   return orderItems.map(item => {
     const logos = sourceLogoLines(item)
     const group = blankProductGroup({
+      source_order_item_id: item.id,
       product_id: item.product_id,
       product_code: item.product_code,
       product_name: item.product_name,
@@ -321,6 +325,7 @@ function groupsFromSourceOrder(orderId: string) {
     group.use_logo = true
     group.print_quantity = 0
     group.logo_lines = logos.map((line: any) => blankLine({
+      source_order_item_id: item.id,
       logo: String(line.logo || ''),
       logo_color: String(line.logo_color || line.color || ''),
       print_quantity: toNumber(line.quantity ?? line.qty),
@@ -395,6 +400,7 @@ function collectItems(): PrintItemInput[] {
       }
       result.push({
         id: line.id,
+        source_order_item_id: line.source_order_item_id || group.source_order_item_id,
         product,
         logo,
         logo_color: line.logo_color,
@@ -490,6 +496,27 @@ async function removeOrder(order: PrintOrderDoc) {
   }
 }
 
+async function syncOrderPrintingLocks() {
+  if (!isAdmin.value) return showToast('Chỉ quản trị viên được đồng bộ khóa xóa đơn.', 'error')
+  const confirmed = await askConfirm({
+    title: 'Đồng bộ khóa xóa đơn',
+    message: 'Hệ thống sẽ đếm lại toàn bộ tiến độ in còn hiệu lực và cập nhật khóa xóa trên từng đơn hàng. Tiếp tục?',
+    confirmLabel: 'Đồng bộ khóa',
+  })
+  if (!confirmed) return
+
+  reconciling.value = true
+  try {
+    const result = await reconcilePrintingLocks(sourceOrders.value, rows.value)
+    showToast('Đã kiểm tra ' + result.checked + ' đơn và cập nhật ' + result.changed + ' khóa in.', 'success')
+    await loadRows(true)
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không đồng bộ được khóa tiến độ in.'), 'error')
+  } finally {
+    reconciling.value = false
+  }
+}
+
 async function loadRows(force = false) {
   loading.value = true
   try {
@@ -536,6 +563,7 @@ onBeforeUnmount(() => {
   <AppShell>
     <PageHeader title="Tiến độ in ấn" :subtitle="pageSubtitle">
       <button v-if="canCreate" class="btn primary" @click="openCreateModal">+ Thêm đơn in</button>
+      <button v-if="isAdmin" class="btn" :disabled="reconciling" @click="syncOrderPrintingLocks">{{ reconciling ? 'Đang đồng bộ...' : 'Đồng bộ khóa xóa đơn' }}</button>
       <button class="btn" @click="loadRows(true)">Làm mới</button>
     </PageHeader>
 
@@ -618,10 +646,11 @@ onBeforeUnmount(() => {
           <SearchableSelect
             v-model="form.order_id"
             :options="orderOptions"
+            :disabled="!!editing"
             placeholder="Tìm đơn có sản phẩm logo theo mã, khách hàng hoặc SĐT..."
             @change="chooseSourceOrder"
           />
-          <div class="small subtle">Chỉ hiển thị đơn và sản phẩm đã tick Có logo.</div>
+          <div class="small subtle">Chỉ hiển thị đơn và sản phẩm đã tick Có logo. Khi sửa, không thể chuyển tiến độ sang đơn khác.</div>
         </div>
         <div class="form-group">
           <label>Mã AM</label>

@@ -24,6 +24,10 @@ const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog();
 const loading = ref(false);
 const saving = ref(false);
 const search = ref("");
+const dateFrom = ref("");
+const dateTo = ref("");
+const fromWarehouseFilter = ref("");
+const statusFilter = ref("");
 const destinationFilter = ref("");
 const rows = ref<ExportOrderDoc[]>([]);
 const items = ref<ExportOrderItemDoc[]>([]);
@@ -91,6 +95,7 @@ const enrichedRows = computed(() =>
     return {
       ...row,
       item_count: orderItems.length,
+      from_warehouse_ids: orderItems.map((item) => String(item.from_warehouse_id || item.warehouse_id || "")).filter(Boolean),
       total_quantity: orderItems.reduce(
         (sum, item) => sum + toNumber(item.quantity),
         0,
@@ -105,6 +110,12 @@ const enrichedRows = computed(() =>
 const filtered = computed(() => {
   const keyword = normalizeText(search.value);
   return enrichedRows.value.filter((row) => {
+    const rowDate = String(row.export_date || row.created_at || "").slice(0, 10);
+    const matchedDateFrom = !dateFrom.value || rowDate >= dateFrom.value;
+    const matchedDateTo = !dateTo.value || rowDate <= dateTo.value;
+    const matchedFromWarehouse =
+      !fromWarehouseFilter.value || row.from_warehouse_ids.includes(fromWarehouseFilter.value);
+    const matchedStatus = !statusFilter.value || String(row.status || "active") === statusFilter.value;
     const matchedDestination =
       !destinationFilter.value ||
       row.destination_type === destinationFilter.value;
@@ -124,9 +135,18 @@ const filtered = computed(() => {
           row.product_search_text,
         ].join(" "),
       ).includes(keyword);
-    return matchedDestination && matchedText;
+    return matchedDateFrom && matchedDateTo && matchedFromWarehouse && matchedStatus && matchedDestination && matchedText;
   });
 });
+
+function resetFilters() {
+  search.value = "";
+  dateFrom.value = "";
+  dateTo.value = "";
+  fromWarehouseFilter.value = "";
+  statusFilter.value = "";
+  destinationFilter.value = "";
+}
 
 const summary = computed(() => ({
   orders: filtered.value.length,
@@ -483,7 +503,7 @@ onMounted(() => loadRows());
         <input
           v-model="search"
           class="input"
-          style="max-width: 620px"
+          style="max-width: 320px"
           placeholder="Tìm mã phiếu, đơn hàng, khách hàng, tên/mã sản phẩm, người tạo..."
         />
         <select v-model="destinationFilter" class="select" style="max-width: 220px">
@@ -491,6 +511,19 @@ onMounted(() => loadRows());
           <option value="customer">Xuất tới khách</option>
           <option value="warehouse">Xuất tới kho</option>
         </select>
+        <input v-model="dateFrom" class="input" type="date" style="max-width: 160px" title="Từ ngày" />
+        <input v-model="dateTo" class="input" type="date" style="max-width: 160px" title="Đến ngày" />
+        <select v-model="fromWarehouseFilter" class="select" style="max-width: 220px">
+          <option value="">Tất cả kho xuất</option>
+          <option v-for="warehouse in warehouses" :key="warehouse.id" :value="warehouse.id">{{ warehouse.name || warehouse.warehouse_code || warehouse.id }}</option>
+        </select>
+        <select v-model="statusFilter" class="select" style="max-width: 180px">
+          <option value="">Tất cả trạng thái</option>
+          <option value="active">active</option>
+          <option value="cancelled">cancelled</option>
+          <option value="deleted">deleted</option>
+        </select>
+        <button class="btn" type="button" @click="resetFilters">Xóa lọc</button>
       </div>
 
       <LoadingState v-if="loading" />

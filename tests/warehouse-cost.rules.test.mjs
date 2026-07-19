@@ -80,6 +80,19 @@ async function seed() {
         deleted: false,
         status: 'completed',
       }),
+      setDoc(doc(db, 'export_orders', 'export-cost-test'), {
+        id: 'export-cost-test',
+        code: 'PXK-COST-TEST',
+        export_code: 'PXK-COST-TEST',
+        export_date: '2026-07-19',
+        destination_type: 'customer',
+        customer_name: 'Khách kiểm tra giá vốn',
+        created_by: WAREHOUSE,
+        active: true,
+        deleted: false,
+        status: 'completed',
+        source: 'nuxt',
+      }),
       setDoc(doc(db, 'inventory_balances', 'warehouse-a__product-a__no_logo'), {
         id: 'warehouse-a__product-a__no_logo',
         product_id: 'product-a',
@@ -199,7 +212,7 @@ test('Kho được cập nhật số lượng và metadata lô trong cùng opera
   await assertSucceeds(batch.commit())
 })
 
-test('Dòng phiếu xuất chỉ cần mã lô và số lượng, không cần giá nhập', async () => {
+test('Dòng phiếu xuất có parent hợp lệ chỉ cần mã lô và số lượng, không cần giá nhập', async () => {
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   await assertSucceeds(setDoc(doc(db, 'export_order_items', 'export-cost-test__1'), {
     id: 'export-cost-test__1',

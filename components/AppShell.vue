@@ -1,165 +1,145 @@
 <script setup lang="ts">
-const { appUser, firebaseUser, logout, hasPermission, isAdmin } = useAuth();
-const route = useRoute();
+// @ts-ignore Shared ESM manifest is also executed directly by Node client tests.
+import {
+  NAV_SECTION_DEFINITIONS,
+  accessModulesForNavigation,
+} from '~/constants/accessMatrix.mjs'
 
-type NavItem = { to: string; label: string; perm: string };
-type NavGroup = { key: string; label: string; items: NavItem[] };
+const { appUser, firebaseUser, logout, hasPermission, isAdmin } = useAuth()
+const route = useRoute()
+
+type AccessModule = {
+  key: string
+  path: string
+  label: string
+  permission?: string
+  adminOnly?: boolean
+  navSection: string
+  navOrder: number
+}
+type NavItem = { key: string; to: string; label: string; permission?: string; adminOnly?: boolean }
+type NavGroup = { key: string; label: string; items: NavItem[] }
 type NavEntry =
-  | { type: "item"; key: string; item: NavItem }
-  | { type: "group"; key: string; group: NavGroup };
+  | { type: 'item'; key: string; item: NavItem }
+  | { type: 'group'; key: string; group: NavGroup }
 
-const navGroups: NavGroup[] = [
-  {
-    key: "business",
-    label: "Kinh doanh",
-    items: [
-      { to: "/dashboard", label: "Dashboard", perm: "page.dashboard" },
-      { to: "/orders", label: "Đơn hàng", perm: "page.orders" },
-      { to: "/export-requests", label: "Yêu cầu xuất kho", perm: "page.export_requests" },
-      { to: "/customers", label: "Khách hàng", perm: "page.customers" },
-      { to: "/payments", label: "Thanh toán", perm: "page.payments" },
-    ],
-  },
-  {
-    key: "warehouse",
-    label: "Kho",
-    items: [
-      { to: "/imports", label: "Nhập kho", perm: "page.imports" },
-      { to: "/warehouse-export-requests", label: "Xử lý yêu cầu xuất", perm: "page.warehouse_export_requests" },
-      { to: "/exports", label: "Phiếu xuất kho", perm: "page.exports" },
-      { to: "/inventory-adjustments", label: "Điều chỉnh tồn", perm: "page.inventory_adjustments" },
-      { to: "/inventory", label: "Tồn kho", perm: "page.inventory" },
-      { to: "/warehouse-settings", label: "Danh mục kho", perm: "page.warehouse_settings" },
-      { to: "/shipments", label: "Vận chuyển", perm: "page.shipments" },
-    ],
-  },
-  {
-    key: "settings",
-    label: "Cài đặt",
-    items: [
-      { to: "/activity-logs", label: "Nhật ký hoạt động", perm: "page.activity_logs" },
-      { to: "/settings/users", label: "Người dùng & quyền", perm: "admin.only" },
-      { to: "/settings/permission-audit", label: "Kiểm tra quyền", perm: "admin.only" },
-      { to: "/settings/general", label: "Cài đặt chung", perm: "page.settings" },
-    ],
-  },
-];
+const accessModules = accessModulesForNavigation() as AccessModule[]
+const navSections = NAV_SECTION_DEFINITIONS as Array<{
+  key: string
+  label: string
+  order: number
+  grouped: boolean
+}>
 
-const standaloneNavItems: NavItem[] = [
-  { to: "/products", label: "Sản phẩm", perm: "page.products" },
-  { to: "/printing", label: "Tiến độ in ấn", perm: "page.printing" },
-];
-
-function canSeeNavItem(item: NavItem) {
-  return item.perm === "admin.only"
-    ? isAdmin.value
-    : hasPermission(item.perm) || hasPermission("*");
+function toNavItem(module: AccessModule): NavItem {
+  return {
+    key: module.key,
+    to: module.path,
+    label: module.label,
+    permission: module.permission,
+    adminOnly: module.adminOnly === true,
+  }
 }
 
-const visibleNavGroups = computed(() =>
-  navGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter(canSeeNavItem),
-    }))
-    .filter((group) => group.items.length),
-);
+function canSeeNavItem(item: NavItem) {
+  return item.adminOnly
+    ? isAdmin.value
+    : Boolean(item.permission && hasPermission(item.permission))
+}
 
 const visibleNavEntries = computed<NavEntry[]>(() => {
-  const groups = new Map(visibleNavGroups.value.map((group) => [group.key, group]));
-  const entries: NavEntry[] = [];
+  const entries: NavEntry[] = []
+  for (const section of [...navSections].sort((left, right) => left.order - right.order)) {
+    const items = accessModules
+      .filter(module => module.navSection === section.key)
+      .map(toNavItem)
+      .filter(canSeeNavItem)
+    if (!items.length) continue
 
-  const business = groups.get("business");
-  if (business) entries.push({ type: "group", key: business.key, group: business });
-
-  const warehouse = groups.get("warehouse");
-  if (warehouse) entries.push({ type: "group", key: warehouse.key, group: warehouse });
-
-  for (const item of standaloneNavItems.filter(canSeeNavItem)) {
-    entries.push({ type: "item", key: item.to, item });
+    if (section.grouped) {
+      entries.push({
+        type: 'group',
+        key: section.key,
+        group: { key: section.key, label: section.label, items },
+      })
+    } else {
+      items.forEach(item => entries.push({ type: 'item', key: item.key, item }))
+    }
   }
-
-  const settings = groups.get("settings");
-  if (settings) entries.push({ type: "group", key: settings.key, group: settings });
-
-  return entries;
-});
+  return entries
+})
 
 const collapsedGroups = useState<Record<string, boolean>>(
-  "app-shell.collapsed-nav-groups",
-  () => ({ business: true, warehouse: true, settings: true }),
-);
+  'app-shell.collapsed-nav-groups',
+  () => Object.fromEntries(navSections.filter(section => section.grouped).map(section => [section.key, true])),
+)
 
 function routeMatches(item: NavItem) {
-  return route.path === item.to || route.path.startsWith(`${item.to}/`);
+  return route.path === item.to || route.path.startsWith(`${item.to}/`)
 }
 
 function groupIsActive(group: NavGroup) {
-  return group.items.some(routeMatches);
+  return group.items.some(routeMatches)
 }
 
 function toggleNavGroup(key: string) {
   collapsedGroups.value = {
     ...collapsedGroups.value,
     [key]: !collapsedGroups.value[key],
-  };
+  }
 }
 
 function openActiveNavGroup() {
   const activeGroup = visibleNavEntries.value
-    .filter((entry): entry is Extract<NavEntry, { type: "group" }> => entry.type === "group")
-    .map((entry) => entry.group)
-    .find(groupIsActive);
-  if (!activeGroup || !collapsedGroups.value[activeGroup.key]) return;
+    .filter((entry): entry is Extract<NavEntry, { type: 'group' }> => entry.type === 'group')
+    .map(entry => entry.group)
+    .find(groupIsActive)
+  if (!activeGroup || !collapsedGroups.value[activeGroup.key]) return
   collapsedGroups.value = {
     ...collapsedGroups.value,
     [activeGroup.key]: false,
-  };
+  }
 }
 
 const visibleNavCount = computed(() =>
   visibleNavEntries.value.reduce(
-    (count, entry) => count + (entry.type === "group" ? entry.group.items.length : 1),
+    (count, entry) => count + (entry.type === 'group' ? entry.group.items.length : 1),
     0,
   ),
-);
+)
 
 watch(
   () => route.path,
   () => openActiveNavGroup(),
   { immediate: true },
-);
+)
 
-const navElement = ref<HTMLElement | null>(null);
-const navScrollTop = useState<number>("app-shell.nav-scroll-top", () => 0);
+const navElement = ref<HTMLElement | null>(null)
+const navScrollTop = useState<number>('app-shell.nav-scroll-top', () => 0)
 
 function saveNavScroll() {
-  if (navElement.value) {
-    navScrollTop.value = navElement.value.scrollTop;
-  }
+  if (navElement.value) navScrollTop.value = navElement.value.scrollTop
 }
 
 function restoreNavScroll() {
-  if (navElement.value) {
-    navElement.value.scrollTop = navScrollTop.value;
-  }
+  if (navElement.value) navElement.value.scrollTop = navScrollTop.value
 }
 
 onMounted(async () => {
-  await nextTick();
-  restoreNavScroll();
-});
+  await nextTick()
+  restoreNavScroll()
+})
 
 watch(
   () => visibleNavCount.value,
   async () => {
-    openActiveNavGroup();
-    await nextTick();
-    restoreNavScroll();
+    openActiveNavGroup()
+    await nextTick()
+    restoreNavScroll()
   },
-);
+)
 
-onBeforeUnmount(saveNavScroll);
+onBeforeUnmount(saveNavScroll)
 </script>
 
 <template>
@@ -208,16 +188,10 @@ onBeforeUnmount(saveNavScroll);
       <div class="sidebar-footer">
         <NotificationCenter />
         <div style="margin-top: 12px">
-          <b>{{
-            appUser?.display_name || firebaseUser?.displayName || appUser?.email
-          }}</b>
+          <b>{{ appUser?.display_name || firebaseUser?.displayName || appUser?.email }}</b>
         </div>
         <div>{{ appUser?.email }}</div>
-        <button
-          class="btn ghost"
-          style="margin-top: 12px"
-          @click="logout"
-        >
+        <button class="btn ghost" style="margin-top: 12px" @click="logout">
           Đăng xuất
         </button>
       </div>
