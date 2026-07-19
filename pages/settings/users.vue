@@ -28,6 +28,7 @@ import {
 import type { AppUser, RoleDoc } from "~/types/models";
 import { reportFirebaseError } from "~/utils/firebaseErrors";
 
+const PERMISSION_SCHEMA_VERSION = 2;
 const { db } = useFirebaseServices();
 const { hasPermission, firebaseUser, loadProfile } = useAuth();
 const { showToast } = useUi();
@@ -217,6 +218,7 @@ function userPermissionPatch(roleNames: string[], sourceRoles = roles.value) {
     role: roleNames[0] || "",
     is_admin: permissions.includes("*"),
     permissions_flat: permissions,
+    permission_schema_version: PERMISSION_SCHEMA_VERSION,
     updated_at: serverTimestamp(),
   };
 }
