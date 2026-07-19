@@ -1420,10 +1420,22 @@ service cloud.firestore {
           && orderIdentityUnchanged()
           && orderCanBeDeleted()
         )
+        // Dispatch relation summaries by the cheap module marker first. This
+        // prevents Firestore from evaluating all three expensive parent/child
+        // relation branches for every order update.
+        || (
+          request.resource.data.get('relation_last_module', '') == 'payments'
+          && orderPaymentSummaryUpdateAllowed(docId)
+        )
+        || (
+          request.resource.data.get('relation_last_module', '') == 'invoices'
+          && orderInvoiceSummaryUpdateAllowed(docId)
+        )
+        || (
+          request.resource.data.get('relation_last_module', '') == 'shipments'
+          && orderShipmentSummaryUpdateAllowed(docId)
+        )
         || orderPrintingSummaryUpdateAllowed(docId)
-        || orderPaymentSummaryUpdateAllowed(docId)
-        || orderInvoiceSummaryUpdateAllowed(docId)
-        || orderShipmentSummaryUpdateAllowed(docId)
         || orderWarehouseSummaryUpdateAllowed()
         || isAdmin()
         || (
