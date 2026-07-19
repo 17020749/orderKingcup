@@ -198,6 +198,71 @@ export interface ExportRequestDoc {
   warehouse_note?: string
   payload_json?: string
   request_timeline_json?: string
+  lifecycle_status?: string
+  release_sequence?: number
+  active_export_order_id?: string
+  warehouse_export_id?: string
+  warehouse_export_order_id?: string
+  export_order_id?: string
+  last_released_export_order_id?: string
+  last_released_export_code?: string
+  last_cancelled_export_order_id?: string
+  last_cancelled_export_code?: string
+  last_cancel_reason?: string
+  cancel_count?: number
+  actual_export_summary_json?: string
+  stock_movement_ids?: string[]
+  revision?: number
+}
+
+export interface ExportOrderDoc {
+  id: string
+  code?: string
+  export_code?: string
+  export_date?: string
+  destination_type?: string
+  source_order_code?: string
+  source_request_id?: string
+  sync_source?: string
+  source?: string
+  lifecycle_status?: string
+  release_sequence?: number
+  source_request_revision?: number
+  request_operation_id?: string
+  customer_name?: string
+  destination_name?: string
+  to_warehouse_id?: string
+  to_warehouse_name?: string
+  note?: string
+  status?: string
+  active?: boolean
+  deleted?: boolean
+  created_by?: string
+  revision?: number
+}
+
+export interface ExportOrderItemDoc {
+  id: string
+  export_order_id: string
+  product_id?: string
+  product_code?: string
+  product_name?: string
+  from_warehouse_id?: string
+  from_warehouse_name?: string
+  to_warehouse_id?: string
+  to_warehouse_name?: string
+  destination_name?: string
+  logo?: string
+  source_logo?: string
+  target_logo?: string
+  quantity: number
+  unit?: string
+  note?: string
+  status?: string
+  active?: boolean
+  deleted?: boolean
+  created_by?: string
+  revision?: number
 }
 
 export interface ShipmentDoc {
