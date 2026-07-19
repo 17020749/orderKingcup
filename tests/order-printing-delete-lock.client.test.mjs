@@ -99,9 +99,11 @@ test('luồng in cập nhật khóa parent khi tạo, xóa và có đối soát 
 
 test('Rules ưu tiên nhánh rẻ để không vượt giới hạn biểu thức', () => {
   const rules = readFileSync('firestore.rules', 'utf8')
-  assert.match(rules, /allow update: if orderPrintingSummaryUpdateAllowed\(docId\)\s+\|\| orderWarehouseSummaryUpdateAllowed\(\)/)
+  assert.match(rules, /Soft-delete is evaluated first/)
+  assert.match(rules, /allow update: if \(\s*softDeleteOnly\(\)[\s\S]*?\|\| orderPrintingSummaryUpdateAllowed\(docId\)/)
   assert.match(rules, /Normal edits are evaluated before the more expensive atomic delete path/)
   assert.match(rules, /Normal item edits are evaluated before the atomic soft-delete path/)
+  assert.match(rules, /allow update: if exportSoftDeleteAllowed\(\)\s*\|\| exportOwnerEditAllowed\(\)/)
 })
 
 test('regression xóa order dùng fixture không có tiến độ in', () => {
@@ -109,4 +111,11 @@ test('regression xóa order dùng fixture không có tiến độ in', () => {
   assert.match(ruleTests, /orders', 'order-delete'/)
   assert.match(ruleTests, /order-a'[\s\S]*printing_progress_count: 1/)
   assert.match(ruleTests, /print-a/)
+})
+
+test('full rules tests cập nhật parent lock khi tạo và xóa tiến độ', () => {
+  const ruleTests = readFileSync('tests/firestore.rules.test.mjs', 'utf8')
+  assert.match(ruleTests, /printing_last_action: 'create'[\s\S]*printing_last_print_order_id: 'print-new'/)
+  assert.match(ruleTests, /printing_last_action: 'delete'[\s\S]*printing_last_print_order_id: 'print-a'/)
+  assert.match(ruleTests, /Chủ đơn có orders\.delete được đọc tiến độ liên quan/)
 })
