@@ -22,6 +22,8 @@ jobs:
           ref: agent/step-7-atomic-finance-shipping
           fetch-depth: 0
           show-progress: false
+      - name: Fix patcher
+        run: python3 scripts/fix-step7-patcher.py
       - name: Apply patches
         id: patch
         continue-on-error: true
@@ -40,7 +42,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm scripts/apply-step7-relations.py .github/workflows/apply-step7-relations.yml
+          git rm scripts/apply-step7-relations.py scripts/fix-step7-patcher.py .github/workflows/apply-step7-relations.yml
           rm -f step7-patch-error.txt
           git add firestore.rules pages/orders.vue types/models.ts
           git commit -m "feat(step7): enforce atomic order relation consistency"
