@@ -1,0 +1,31 @@
+name: Fix Step 6 Full Regressions
+
+on:
+  push:
+    branches:
+      - agent/step-6-printing-delete-lock
+    paths:
+      - .github/workflows/fix-step6-full-regressions.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/step-6-printing-delete-lock
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+      - run: node scripts/fix-step6-full-regressions.mjs
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(step6): resolve remaining full-suite regressions"
+          git push origin HEAD:agent/step-6-printing-delete-lock
