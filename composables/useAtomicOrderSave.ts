@@ -153,8 +153,6 @@ export function useAtomicOrderSave() {
           active: false,
           status: 'deleted',
           deleted_at: serverTimestamp(),
-          order_revision: revision,
-          last_operation_id: operationId,
           updated_at: serverTimestamp(),
         })
       })
