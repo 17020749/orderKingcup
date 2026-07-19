@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { collection, getDocs, limit, orderBy, query } from 'firebase/firestore'
 import { normalizeText } from '~/utils/format'
+import { isDateInRange, matchesKeyword, uniqueOptions } from '~/utils/listFilters'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
 const { db } = useFirebaseServices()
@@ -16,32 +17,35 @@ const dateTo = ref('')
 const showDetailModal = ref(false)
 const selectedDetail = ref<any>(null)
 
-function uniqueOptions(values: any[]) {
-  return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)))
-    .sort((a, b) => a.localeCompare(b, 'vi'))
-}
+const moduleOptions = computed(() => uniqueOptions(rows.value, 'module'))
+const actionOptions = computed(() => uniqueOptions(rows.value, 'action'))
+const actorOptions = computed(() => uniqueOptions(rows.value, 'changed_by'))
+const filterValues = computed(() => ({ module: moduleFilter.value, action: actionFilter.value, actor: actorFilter.value, from: dateFrom.value, to: dateTo.value }))
+const toolbarFilters = computed(() => [
+  { key: 'module', allLabel: 'Tất cả module', width: '200px', options: moduleOptions.value.map(module => ({ label: module, value: normalizeText(module) })) },
+  { key: 'action', allLabel: 'Tất cả hành động', width: '180px', options: actionOptions.value.map(action => ({ label: action, value: normalizeText(action) })) },
+  { key: 'actor', allLabel: 'Tất cả người đổi', width: '240px', options: actorOptions.value.map(actor => ({ label: actor, value: normalizeText(actor) })) },
+  { key: 'from', type: 'date' as const, label: 'Từ ngày' },
+  { key: 'to', type: 'date' as const, label: 'Đến ngày' },
+])
 
-function dateKey(value: any) {
-  const date = value?.toDate ? value.toDate() : value ? new Date(value) : null
-  if (!date || Number.isNaN(date.getTime())) return ''
-  return date.toISOString().slice(0, 10)
+function updateFilter(key: string, value: string) {
+  if (key === 'module') moduleFilter.value = value
+  if (key === 'action') actionFilter.value = value
+  if (key === 'actor') actorFilter.value = value
+  if (key === 'from') dateFrom.value = value
+  if (key === 'to') dateTo.value = value
 }
-
-const moduleOptions = computed(() => uniqueOptions(rows.value.map(row => row.module)))
-const actionOptions = computed(() => uniqueOptions(rows.value.map(row => row.action)))
-const actorOptions = computed(() => uniqueOptions(rows.value.map(row => row.changed_by)))
 
 const filtered = computed(() => {
   const keyword = normalizeText(search.value)
   return rows.value.filter(row => {
-    const rowDate = dateKey(row.created_at)
-    const matchedText = !keyword || normalizeText(`${row.module} ${row.action} ${row.item_code} ${row.item_name} ${row.changed_by}`).includes(keyword)
+    const matchedText = matchesKeyword([row.module, row.action, row.item_code, row.item_name, row.changed_by], keyword)
     const matchedModule = !moduleFilter.value || normalizeText(row.module) === moduleFilter.value
     const matchedAction = !actionFilter.value || normalizeText(row.action) === actionFilter.value
     const matchedActor = !actorFilter.value || normalizeText(row.changed_by) === actorFilter.value
-    const matchedFrom = !dateFrom.value || (rowDate && rowDate >= dateFrom.value)
-    const matchedTo = !dateTo.value || (rowDate && rowDate <= dateTo.value)
-    return matchedText && matchedModule && matchedAction && matchedActor && matchedFrom && matchedTo
+    const matchedDate = isDateInRange(row.created_at, dateFrom.value, dateTo.value)
+    return matchedText && matchedModule && matchedAction && matchedActor && matchedDate
   })
 })
 
@@ -81,24 +85,19 @@ onMounted(loadRows)
     </PageHeader>
 
     <div class="card" style="margin: 24px;">
-      <div class="toolbar">
-        <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm log..." />
-        <select v-model="moduleFilter" class="select" style="max-width: 200px">
-          <option value="">Tất cả module</option>
-          <option v-for="module in moduleOptions" :key="module" :value="normalizeText(module)">{{ module }}</option>
-        </select>
-        <select v-model="actionFilter" class="select" style="max-width: 180px">
-          <option value="">Tất cả hành động</option>
-          <option v-for="action in actionOptions" :key="action" :value="normalizeText(action)">{{ action }}</option>
-        </select>
-        <select v-model="actorFilter" class="select" style="max-width: 240px">
-          <option value="">Tất cả người đổi</option>
-          <option v-for="actor in actorOptions" :key="actor" :value="normalizeText(actor)">{{ actor }}</option>
-        </select>
-        <input v-model="dateFrom" class="input" type="date" style="max-width: 170px" />
-        <input v-model="dateTo" class="input" type="date" style="max-width: 170px" />
-        <button class="btn" @click="resetFilters">Xóa lọc</button>
-      </div>
+      <FilterToolbar
+        v-model:search="search"
+        search-width="480px"
+        search-placeholder="Tìm log..."
+        :filters="toolbarFilters"
+        :values="filterValues"
+        :result-count="filtered.length"
+        :loading="loading"
+        show-refresh
+        @update:filter="updateFilter"
+        @reset="resetFilters"
+        @refresh="loadRows"
+      />
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
         <table>

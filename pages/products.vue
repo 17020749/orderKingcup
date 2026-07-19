@@ -3,6 +3,7 @@ import { deleteField } from 'firebase/firestore'
 import type { ProductDoc } from '~/types/models'
 import { formatDateTime, makeId, normalizeText, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { matchesKeyword, uniqueOptions } from '~/utils/listFilters'
 
 const { appUser, hasPermission } = useAuth()
 const { loadProducts } = useScopedQueries()
@@ -55,18 +56,28 @@ function stockValue(row: ProductDoc, field: string, aliases: string[] = []) {
   return toNumber(raw)
 }
 
-function uniqueOptions(values: any[]) {
-  return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)))
-    .sort((a, b) => a.localeCompare(b, 'vi'))
-}
+const categoryOptions = computed(() => uniqueOptions(rows.value, 'category'))
+const unitOptions = computed(() => uniqueOptions(rows.value, 'unit'))
+const filterValues = computed(() => ({ status: statusFilter.value, category: categoryFilter.value, unit: unitFilter.value }))
+const toolbarFilters = computed(() => [
+  { key: 'status', allLabel: 'Tất cả trạng thái', width: '180px', options: [
+    { label: 'Đang bán', value: 'active' },
+    { label: 'Ngừng bán', value: 'inactive' },
+  ] },
+  { key: 'category', allLabel: 'Tất cả nhóm', width: '220px', options: categoryOptions.value.map(category => ({ label: category, value: normalizeText(category) })) },
+  { key: 'unit', allLabel: 'Tất cả đơn vị', width: '180px', options: unitOptions.value.map(unit => ({ label: unit, value: normalizeText(unit) })) },
+])
 
-const categoryOptions = computed(() => uniqueOptions(rows.value.map(row => row.category)))
-const unitOptions = computed(() => uniqueOptions(rows.value.map(row => row.unit)))
+function updateFilter(key: string, value: string) {
+  if (key === 'status') statusFilter.value = value
+  if (key === 'category') categoryFilter.value = value
+  if (key === 'unit') unitFilter.value = value
+}
 
 const filtered = computed(() => {
   const keyword = normalizeText(search.value)
   return rows.value.filter(row => {
-    const matchedText = !keyword || normalizeText(`${row.product_code} ${row.product_name} ${row.unit} ${row.category}`).includes(keyword)
+    const matchedText = matchesKeyword([row.product_code, row.product_name, row.unit, row.category], keyword)
     const matchedStatus = !statusFilter.value || productStatus(row) === statusFilter.value
     const matchedCategory = !categoryFilter.value || normalizeText(row.category) === categoryFilter.value
     const matchedUnit = !unitFilter.value || normalizeText(row.unit) === unitFilter.value
@@ -218,23 +229,17 @@ onMounted(() => loadRows())
     </PageHeader>
 
     <div class="card" style="margin: 24px;">
-      <div class="toolbar">
-        <input v-model="search" class="input" style="max-width: 680px" placeholder="Tìm mã hoặc tên sản phẩm..." />
-        <select v-model="statusFilter" class="select" style="max-width: 180px">
-          <option value="">Tất cả trạng thái</option>
-          <option value="active">Đang bán</option>
-          <option value="inactive">Ngừng bán</option>
-        </select>
-        <select v-model="categoryFilter" class="select" style="max-width: 220px">
-          <option value="">Tất cả nhóm</option>
-          <option v-for="category in categoryOptions" :key="category" :value="normalizeText(category)">{{ category }}</option>
-        </select>
-        <select v-model="unitFilter" class="select" style="max-width: 180px">
-          <option value="">Tất cả đơn vị</option>
-          <option v-for="unit in unitOptions" :key="unit" :value="normalizeText(unit)">{{ unit }}</option>
-        </select>
-        <button class="btn" @click="resetFilters">Xóa lọc</button>
-      </div>
+      <FilterToolbar
+        v-model:search="search"
+        search-width="680px"
+        search-placeholder="Tìm mã hoặc tên sản phẩm..."
+        :filters="toolbarFilters"
+        :values="filterValues"
+        :result-count="filtered.length"
+        :loading="loading"
+        @update:filter="updateFilter"
+        @reset="resetFilters"
+      />
 
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
