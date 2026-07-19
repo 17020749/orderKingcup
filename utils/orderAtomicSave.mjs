@@ -1,3 +1,4 @@
+// Pure helpers used by both the Nuxt client flow and Node business-flow tests.
 export const FIRESTORE_WRITE_LIMIT = 500
 
 function text(value) {
