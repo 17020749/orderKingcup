@@ -85,6 +85,10 @@ test('trang đơn tải print_orders theo order_id và kiểm tra lại ngay tr�
   assert.match(page, /printing_lock_version: 1/)
   assert.match(loader, /where\('order_id', 'in', orderIds\)/)
   assert.match(loader, /where\('print_order_id', 'in', ids\)/)
+  const activeParentFilter = loader.indexOf("(await loadPrintingProgressForOrders(orders)).filter(isActive)")
+  const childIds = loader.indexOf('const printOrderIds = printOrders.map')
+  assert.ok(activeParentFilter >= 0, 'phải lọc tiến độ in đã xóa trước khi tải item con')
+  assert.ok(activeParentFilter < childIds, 'phải lọc parent trước khi tạo query print_order_items')
 })
 
 test('luồng in cập nhật khóa parent khi tạo, xóa và có đối soát admin', () => {

@@ -1,5 +1,6 @@
 import { collection, getDocs, query, where } from 'firebase/firestore'
 import type { OrderDoc, PrintOrderDoc, PrintOrderItemDoc } from '~/types/models'
+import { isActive } from '~/utils/format'
 
 function cleanIds(orders: OrderDoc[]) {
   return Array.from(new Set(
@@ -48,7 +49,10 @@ export function useOrderPrintingDeleteGuard() {
   }
 
   async function loadPrintingDependenciesForOrders(orders: OrderDoc[]) {
-    const printOrders = await loadPrintingProgressForOrders(orders)
+    // Child Rules intentionally deny items whose parent progress was deleted.
+    // Excluding inactive parents before building the `in` query keeps one
+    // historical soft-delete from rejecting the entire order-list load.
+    const printOrders = (await loadPrintingProgressForOrders(orders)).filter(isActive)
     const printOrderIds = printOrders.map(row => row.id).filter(Boolean)
     if (!printOrderIds.length) return { printOrders, printItems: [] as PrintOrderItemDoc[] }
 
