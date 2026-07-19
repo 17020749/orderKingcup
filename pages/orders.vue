@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { collection, doc, getDoc, serverTimestamp, writeBatch } from 'firebase/firestore'
 import { INVOICE_STATUS_OPTIONS, ORDER_CLASSIFICATION_OPTIONS, ORDER_STATUS_OPTIONS, VAT_RATE_OPTIONS } from '~/constants/permissions'
-import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, PrintOrderDoc, ProductDoc } from '~/types/models'
+import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, PrintOrderDoc, PrintOrderItemDoc, ProductDoc } from '~/types/models'
 import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
 import { customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, userCodeValidationError } from '~/utils/orderCode'
 import { generateCustomerCode } from '~/utils/customerCode'
@@ -10,6 +10,8 @@ import { reportFirebaseError } from '~/utils/firebaseErrors'
 import { printingDeleteBlocker } from '~/utils/orderPrintingDeleteLock.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { orderRelationDeleteBlocker } from '~/utils/orderRelationState.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { validateOrderItemEdit } from '~/utils/orderItemDependencies.mjs'
 
 const { db } = useFirebaseServices()
 const { appUser, hasPermission, isAdmin } = useAuth()
@@ -19,7 +21,7 @@ const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
 const { loadScopedOrders, loadScopedOrderItems, loadScopedPayments, loadScopedExportRequests, loadScopedCustomers, loadProducts } = useScopedQueries()
 const { saveOrderAtomic } = useAtomicOrderSave()
 const { reconcileOrderRelationLocks } = useAtomicOrderRelations()
-const { loadPrintingProgressForOrders, loadPrintingProgressForOrder } = useOrderPrintingDeleteGuard()
+const { loadPrintingDependenciesForOrders, loadPrintingProgressForOrder } = useOrderPrintingDeleteGuard()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const { buildFulfillmentRows, orderSummary, requestLineProgress } = useWarehouseLogic()
@@ -34,6 +36,7 @@ const itemsByOrder = ref<Record<string, OrderItemDoc[]>>({})
 const paymentsByOrder = ref<Record<string, PaymentDoc[]>>({})
 const exportRequests = ref<any[]>([])
 const printingProgress = ref<PrintOrderDoc[]>([])
+const printingProgressItems = ref<PrintOrderItemDoc[]>([])
 const showModal = ref(false)
 const showDetailModal = ref(false)
 const selectedDetail = ref<OrderDoc | null>(null)
@@ -166,11 +169,11 @@ async function loadRows(force = false) {
     customers.value = loadedCustomers.filter(isActive)
     products.value = loadedProducts.filter(isActive)
 
-    const [loadedItems, loadedPayments, loadedRequests, loadedPrintingProgress] = await Promise.all([
+    const [loadedItems, loadedPayments, loadedRequests, loadedPrintingDependencies] = await Promise.all([
       loadScopedOrderItems(allOrders, force),
       loadScopedPayments(allOrders, force),
       loadScopedExportRequests(allOrders, force),
-      loadPrintingProgressForOrders(allOrders)
+      loadPrintingDependenciesForOrders(allOrders)
     ])
 
     const itemMap: Record<string, OrderItemDoc[]> = {}
@@ -187,7 +190,8 @@ async function loadRows(force = false) {
     })
     paymentsByOrder.value = payMap
     exportRequests.value = loadedRequests
-    printingProgress.value = loadedPrintingProgress
+    printingProgress.value = loadedPrintingDependencies.printOrders
+    printingProgressItems.value = loadedPrintingDependencies.printItems
 
     rows.value = allOrders.map(order => {
       const orderRequests = loadedRequests.filter(request => request.order_id === order.id && isActive(request))
@@ -350,7 +354,7 @@ function itemLineTotal(item: any) {
 }
 
 function canEditRow(row: OrderDoc) {
-  return canEditOrders.value && (String(row.warehouse_fulfillment_status || '') !== 'da_xuat_du' || hasPermission('orders.edit_fulfilled'))
+  return canEditOrders.value && String(row.warehouse_fulfillment_status || '') !== 'da_xuat_du'
 }
 
 function itemQuantityMap(items: any[]) {
@@ -547,8 +551,34 @@ async function saveOrder() {
     }
 
     const saveItems = buildSaveItems()
-    const exportError = validateNotBelowExported(saveItems)
-    if (exportError) throw new Error(exportError)
+    if (editing.value) {
+      const [latestRequests, latestPrinting] = await Promise.all([
+        loadScopedExportRequests([editing.value], true),
+        loadPrintingDependenciesForOrders([editing.value]),
+      ])
+      exportRequests.value = [
+        ...exportRequests.value.filter(request => request.order_id !== editing.value?.id),
+        ...latestRequests.filter(request => request.order_id === editing.value?.id),
+      ]
+      printingProgress.value = [
+        ...printingProgress.value.filter(progress => progress.order_id !== editing.value?.id),
+        ...latestPrinting.printOrders,
+      ]
+      const latestPrintOrderIds = new Set(latestPrinting.printOrders.map(progress => progress.id))
+      printingProgressItems.value = [
+        ...printingProgressItems.value.filter(item => !latestPrintOrderIds.has(item.print_order_id)),
+        ...latestPrinting.printItems,
+      ]
+      const dependencyError = validateOrderItemEdit({
+        order: editing.value,
+        previousItems: itemsByOrder.value[editing.value.id] || [],
+        nextItems: saveItems,
+        exportRequests: exportRequests.value.filter(request => request.order_id === editing.value?.id),
+        printOrders: printingProgress.value.filter(progress => progress.order_id === editing.value?.id),
+        printItems: printingProgressItems.value,
+      })
+      if (dependencyError) throw new Error(dependencyError)
+    }
     const totals = calcItems(saveItems, form)
     if (!totals.items.length) throw new Error('Thiếu sản phẩm hợp lệ')
 

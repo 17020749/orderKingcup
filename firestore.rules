@@ -408,6 +408,20 @@ service cloud.firestore {
         );
     }
 
+    function orderContentEditableById(orderId) {
+      let path = orderPath(orderId);
+      return orderId is string
+        && exists(path)
+        && get(path).data.get('warehouse_fulfillment_status', 'chua_xuat') != 'da_xuat_du';
+    }
+
+    function orderContentEditableAfterById(orderId) {
+      let path = orderPath(orderId);
+      return orderId is string
+        && existsAfter(path)
+        && getAfter(path).data.get('warehouse_fulfillment_status', 'chua_xuat') != 'da_xuat_du';
+    }
+
     // Payment/export/shipment/invoice documents duplicate parent ownership
     // using order_* fields for scoped queries. These fields must be copied
     // from owner_email/created_by/sale_email on the real parent order.
@@ -957,7 +971,7 @@ service cloud.firestore {
           && ownsPrintOrderData(data)
         )
         || (
-          hasPerm('orders.delete')
+          hasAnyPerm(['orders.edit', 'orders.delete'])
           && data.get('order_id', '') is string
           && ownsOrderById(data.get('order_id', ''))
         );
@@ -1164,12 +1178,50 @@ service cloud.firestore {
     function generatedExportItemCreateAllowed() {
       let exportOrderId = request.resource.data.get('export_order_id', '');
       let path = exportOrderPath(exportOrderId);
+      let exportData = getAfter(path).data;
+      let requestPath = exportRequestPath(exportData.get('source_request_id', ''));
+      let sourceItemId = request.resource.data.get('source_order_item_id', '');
+      let sourceItemPath = /databases/$(database)/documents/order_items/$(sourceItemId);
+      let requestData = getAfter(requestPath).data;
+      let sourceItem = get(sourceItemPath).data;
       return exportOrderId is string
         && exportOrderId != ''
         && existsAfter(path)
-        && generatedExportOrderData(getAfter(path).data)
-        && getAfter(path).data.get('deleted', false) != true
-        && getAfter(path).data.get('active', true) != false;
+        && generatedExportOrderData(exportData)
+        && exportData.get('deleted', false) != true
+        && exportData.get('active', true) != false
+        && existsAfter(requestPath)
+        && sourceItemId is string
+        && sourceItemId != ''
+        && exists(sourceItemPath)
+        && sourceItem.get('deleted', false) != true
+        && sourceItem.get('active', true) != false
+        && request.resource.data.get('source_order_id', '') == requestData.get('order_id', '')
+        && sourceItem.get('order_id', '') == request.resource.data.get('source_order_id', '')
+        && sourceItem.get('product_id', '') == request.resource.data.get('product_id', '')
+        && sourceItem.get('product_code', '') == request.resource.data.get('product_code', '')
+        && sourceItem.get('quantity', 0) is number
+        && request.resource.data.get('quantity', 0) <= sourceItem.get('quantity', 0);
+    }
+
+    function printItemSourceMatches(data) {
+      let printOrderId = data.get('print_order_id', '');
+      let printPath = printOrderPath(printOrderId);
+      let sourceItemId = data.get('source_order_item_id', '');
+      let sourceItemPath = /databases/$(database)/documents/order_items/$(sourceItemId);
+      let printData = getAfter(printPath).data;
+      let sourceItem = get(sourceItemPath).data;
+      return printOrderId is string
+        && printOrderId != ''
+        && existsAfter(printPath)
+        && sourceItemId is string
+        && sourceItemId != ''
+        && exists(sourceItemPath)
+        && sourceItem.get('deleted', false) != true
+        && sourceItem.get('active', true) != false
+        && sourceItem.get('order_id', '') == printData.get('order_id', '')
+        && sourceItem.get('product_id', '') == data.get('product_id', '')
+        && sourceItem.get('product_code', '') == data.get('product_code', '');
     }
 
     function generatedExportItemCancelAllowed() {
@@ -1558,17 +1610,17 @@ service cloud.firestore {
           && orderShipmentSummaryUpdateAllowed(docId)
         )
         || orderPrintingSummaryUpdateAllowed(docId)
-        || isAdmin()
+        || (
+          isAdmin()
+          && fulfillmentStatus() != 'da_xuat_du'
+        )
         || (
           // Normal business edit by an owner.
           hasPerm('orders.edit')
           && ownsOrderData(resource.data)
           && orderIdentityUnchanged()
           && normalOrderEditKeepsSystemFields()
-          && (
-            fulfillmentStatus() != 'da_xuat_du'
-            || hasPerm('orders.edit_fulfilled')
-          )
+          && fulfillmentStatus() != 'da_xuat_du'
         )
         ;
 
@@ -1610,6 +1662,7 @@ service cloud.firestore {
 
       allow create: if hasAnyPerm(['orders.create', 'orders.edit'])
         && request.resource.data.order_id is string
+        && orderContentEditableAfterById(request.resource.data.order_id)
         && canMutateOrderAfterById(request.resource.data.order_id)
         && requestMatchesOrderItemAfter(request.resource.data.order_id);
 
@@ -1617,26 +1670,37 @@ service cloud.firestore {
           softDeleteOnly()
           && hasAnyPerm(['orders.edit', 'orders.delete'])
           && resource.data.order_id is string
+          && orderContentEditableById(resource.data.order_id)
           && canMutateOrderById(resource.data.order_id)
           && request.resource.data.order_id == resource.data.order_id
           && orderItemIdentityUnchanged()
           && orderItemOwnershipSafe(resource.data.order_id)
         )
-        || isAdmin()
+        || (
+          isAdmin()
+          && resource.data.order_id is string
+          && orderContentEditableById(resource.data.order_id)
+        )
         || (
           hasPerm('orders.edit')
           && unchanged(['deleted', 'active', 'status', 'deleted_at'])
           && resource.data.order_id is string
+          && orderContentEditableById(resource.data.order_id)
           && canMutateOrderById(resource.data.order_id)
           && request.resource.data.order_id == resource.data.order_id
           && orderItemIdentityUnchanged()
           && orderItemOwnershipSafe(resource.data.order_id)
         );
 
-      allow delete: if isAdmin()
+      allow delete: if (
+          isAdmin()
+          && resource.data.order_id is string
+          && orderContentEditableById(resource.data.order_id)
+        )
         || (
           hasPerm('orders.delete')
           && resource.data.order_id is string
+          && orderContentEditableById(resource.data.order_id)
           && canMutateOrderById(resource.data.order_id)
         );
     }
@@ -1705,7 +1769,7 @@ service cloud.firestore {
         ])
         || hasPerm('export_requests.view_all')
         || (
-          hasAnyPerm(['export_requests.view', 'orders.warehouse_export'])
+          hasAnyPerm(['export_requests.view', 'orders.warehouse_export', 'orders.edit'])
           && (
             ownsOrderChildData(resource.data)
             || (
@@ -1794,6 +1858,7 @@ service cloud.firestore {
         && printingCanOperateProgressAfterById(request.resource.data.print_order_id)
         && request.resource.data.get('product_id', '') is string
         && request.resource.data.get('product_id', '') != ''
+        && printItemSourceMatches(request.resource.data)
         && printQuantitiesAreValid(request.resource.data)
         && ownEmailField(request.resource.data, 'created_by');
 

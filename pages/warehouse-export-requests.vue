@@ -3,6 +3,8 @@ import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore
 import type { OrderDoc, OrderItemDoc, ProductDoc, WarehouseDoc } from '~/types/models'
 import { formatDateTime, isActive, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { resolveOrderItemReference } from '~/utils/orderItemDependencies.mjs'
 // @ts-ignore Shared lifecycle helper is also executed by Node client tests.
 import { canCancelExportRequestRelease, canReleaseExportRequest } from '~/utils/exportLifecycle.mjs'
 import {
@@ -396,6 +398,14 @@ async function submitRelease(row: any) {
     .filter((line: any) => toNumber(line.requested_qty) > 0)
   if (!lines.length) return showToast('Yêu cầu xuất kho chưa có dòng hàng hợp lệ.', 'error')
 
+  const sourceItems = itemsByOrder.value[row.order_id] || []
+  const resolvedLines = lines.map((line: any) => ({
+    releaseLine: line,
+    source: resolveOrderItemReference(sourceItems, line),
+  }))
+  const invalidSource = resolvedLines.find(entry => !entry.source.line)
+  if (invalidSource) return showToast(invalidSource.source.error, 'error')
+
   const missing = lines.filter((line: any) => !findProductByCode(line.product_code))
   if (missing.length) {
     return showToast(`Chưa tìm thấy sản phẩm cho mã: ${missing.map((line: any) => line.product_code).join(', ')}. Kiểm tra quyền truy cập và mã sản phẩm.`, 'error')
@@ -424,10 +434,12 @@ async function submitRelease(row: any) {
     timeline: timeline(row),
     orderSummaryPatch: orderPatchAfter(row, 'da_xuat', { warehouse_export_code: 'pending_firestore' }),
     expected_revision: toNumber(row.revision),
-    lines: lines.map((line: any) => {
+    lines: resolvedLines.map(({ releaseLine: line, source }: any) => {
       const warehouseId = releaseWarehouseId(line, line.__release_index)
       const fromWarehouse = findWarehouse(warehouseId)
       return {
+        source_order_id: row.order_id,
+        source_order_item_id: source.line.order_item_id,
         product: findProductByCode(line.product_code),
         fromWarehouse,
         warehouse: fromWarehouse,

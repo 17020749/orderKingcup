@@ -318,6 +318,8 @@ async function saveRequest() {
     const order = selectedOrder.value!;
     const now = new Date().toISOString();
     const items = chosen.map((line) => ({
+      order_item_id: line.order_item_id,
+      product_id: line.product_id,
       product_code: line.product_code,
       product_name: line.product_name,
       logo: line.logo,
