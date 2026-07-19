@@ -1,4 +1,4 @@
-import { APP_ROUTE_PERMISSIONS } from '~/constants/appRoutes'
+import { appRoutePermission } from '~/constants/appRoutes'
 import { permissionDebug } from '~/utils/permissionDebug'
 
 export default defineNuxtRouteMiddleware(async (to) => {
@@ -9,18 +9,28 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (!isLoggedIn.value) return navigateTo('/login')
   if (!hasAccess.value) return navigateTo('/login?denied=1')
   if (to.path === '/forbidden') return
-  const adminOnlyRoute = to.path.startsWith('/settings/users')
-    || to.path.startsWith('/settings/permission-audit')
-  if (adminOnlyRoute && !isAdmin.value) return navigateTo('/forbidden', { replace: true })
 
-  const required = APP_ROUTE_PERMISSIONS.find(route => (
-    to.path === route.path || to.path.startsWith(`${route.path}/`)
-  ))?.permission
-  if (required && !hasPermission(required)) {
-    permissionDebug({
-      module: 'route', action: 'navigate', stage: 'denied', documentId: to.path,
-      checks: [{ name: 'Quyền mở route', required, actual: 'missing', passed: false }]
-    })
-    return navigateTo('/forbidden', { replace: true })
-  }
+  const accessRule = appRoutePermission(to.path)
+  if (!accessRule) return
+
+  const denied = accessRule.adminOnly
+    ? !isAdmin.value
+    : Boolean(accessRule.permission && !hasPermission(accessRule.permission))
+  if (!denied) return
+
+  permissionDebug({
+    module: 'route',
+    action: 'navigate',
+    stage: 'denied',
+    documentId: to.path,
+    checks: [{
+      name: 'Quyền mở route',
+      required: accessRule.adminOnly ? 'admin.only' : accessRule.permission,
+      actual: 'missing',
+      passed: false,
+    }],
+    payload: { access_module: accessRule.key },
+    note: 'Route và sidebar cùng đọc constants/accessMatrix.mjs.',
+  })
+  return navigateTo('/forbidden', { replace: true })
 })
