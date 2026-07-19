@@ -3,6 +3,8 @@ export type PermissionItem = {
   group: string
   name: string
   emphasis?: 'primary' | 'scope'
+  assignable?: boolean
+  note?: string
 }
 
 export const PERMISSION_CATALOG: PermissionItem[] = [
@@ -104,10 +106,34 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
     { key: `${module}.edit`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Sửa dữ liệu' },
     { key: `${module}.delete`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Xóa dữ liệu' }
   ]),
-  { key: 'users.view', group: 'Cài đặt', name: 'Xem người dùng' },
-  { key: 'users.manage', group: 'Cài đặt', name: 'Thêm/sửa/xóa người dùng' },
-  { key: 'roles.view', group: 'Cài đặt', name: 'Xem vai trò và quyền' },
-  { key: 'roles.manage', group: 'Cài đặt', name: 'Thêm/sửa/xóa vai trò và quyền' },
+  {
+    key: 'users.view',
+    group: 'Cài đặt',
+    name: 'Xem người dùng',
+    assignable: false,
+    note: 'Chỉ admin tuyệt đối được mở và đọc danh sách người dùng.'
+  },
+  {
+    key: 'users.manage',
+    group: 'Cài đặt',
+    name: 'Thêm/sửa/xóa người dùng',
+    assignable: false,
+    note: 'Không cấp riêng cho role thường để tránh tự nâng quyền.'
+  },
+  {
+    key: 'roles.view',
+    group: 'Cài đặt',
+    name: 'Xem vai trò và quyền',
+    assignable: false,
+    note: 'Chỉ admin tuyệt đối được mở danh sách vai trò.'
+  },
+  {
+    key: 'roles.manage',
+    group: 'Cài đặt',
+    name: 'Thêm/sửa/xóa vai trò và quyền',
+    assignable: false,
+    note: 'Không cấp riêng cho role thường để tránh tự nâng quyền.'
+  },
   { key: 'settings.view', group: 'Cài đặt', name: 'Xem cài đặt' },
   { key: 'settings.manage', group: 'Cài đặt', name: 'Sửa cài đặt' },
   { key: 'activity_logs.view', group: 'Nhật ký', name: 'Xem nhật ký hoạt động' }
