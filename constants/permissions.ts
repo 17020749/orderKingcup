@@ -1,4 +1,9 @@
-export type PermissionItem = { key: string; group: string; name: string }
+export type PermissionItem = {
+  key: string
+  group: string
+  name: string
+  emphasis?: 'primary' | 'scope'
+}
 
 export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: '*', group: 'Quản trị', name: 'Toàn quyền hệ thống' },
@@ -14,7 +19,7 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'page.customers', group: 'Khách hàng', name: 'Xem tab Khách hàng' },
   { key: 'page.products', group: 'Sản phẩm', name: 'Xem tab Sản phẩm' },
   { key: 'page.payments', group: 'Thanh toán', name: 'Xem tab Thanh toán' },
-  { key: 'page.printing', group: 'Tiến độ in ấn', name: 'Xem tab Tiến độ in ấn' },
+  { key: 'page.printing', group: 'Tiến độ in ấn', name: 'Xem tab Tiến độ in ấn', emphasis: 'primary' },
   { key: 'page.shipments', group: 'Vận chuyển', name: 'Xem tab Vận chuyển' },
   { key: 'page.invoices', group: 'Hóa đơn', name: 'Xem tab Hóa đơn' },
   { key: 'page.settings', group: 'Cài đặt', name: 'Xem tab Cài đặt' },
@@ -85,11 +90,14 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'payments.edit', group: 'Thanh toán', name: 'Sửa phiếu thanh toán của mình' },
   { key: 'payments.delete', group: 'Thanh toán', name: 'Xóa phiếu thanh toán' },
   { key: 'payments.export', group: 'Thanh toán', name: 'Xuất Excel thanh toán' },
-  { key: 'printing.view', group: 'Tiến độ in ấn', name: 'Xem tiến độ in ấn của mình' },
-  { key: 'printing.view_all', group: 'Tiến độ in ấn', name: 'Xem tất cả tiến độ in ấn' },
-  { key: 'printing.create', group: 'Tiến độ in ấn', name: 'Thêm tiến độ in ấn' },
-  { key: 'printing.edit', group: 'Tiến độ in ấn', name: 'Sửa tiến độ in ấn của mình' },
-  { key: 'printing.delete', group: 'Tiến độ in ấn', name: 'Xóa tiến độ in ấn của mình' },
+
+  { key: 'printing.view', group: 'Tiến độ in ấn', name: 'Xem tiến độ do mình lập', emphasis: 'primary' },
+  { key: 'printing.create', group: 'Tiến độ in ấn', name: 'Thêm tiến độ in ấn', emphasis: 'primary' },
+  { key: 'printing.edit', group: 'Tiến độ in ấn', name: 'Sửa tiến độ in ấn', emphasis: 'primary' },
+  { key: 'printing.delete', group: 'Tiến độ in ấn', name: 'Xóa tiến độ in ấn', emphasis: 'primary' },
+  { key: 'printing.orders_view', group: 'Tiến độ in ấn', name: 'Người tạo đơn xem tiến độ đơn của mình', emphasis: 'scope' },
+  { key: 'printing.view_all', group: 'Tiến độ in ấn', name: 'Xem tất cả tiến độ in ấn', emphasis: 'scope' },
+
   ...['shipments', 'invoices'].flatMap(module => [
     { key: `${module}.view`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Xem dữ liệu' },
     { key: `${module}.create`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Thêm dữ liệu' },
@@ -114,7 +122,6 @@ export const PAYMENT_STATUSES = ['Chưa nhận', 'Đã nhận', 'Giao dịch l�
 export const INVOICE_STATUS_OPTIONS = ['Không xuất', 'Khách lẻ', 'Yêu cầu xuất', 'HĐ nháp', 'Đã xuất']
 export const VAT_RATE_OPTIONS = [0, 8]
 export const EXPORT_REQUEST_STATUSES = ['cho_xu_ly', 'dang_xu_ly', 'da_tiep_nhan', 'cho_xuat_kho', 'da_xuat', 'tu_choi', 'loi']
-
 
 export const WAREHOUSE_EXPORT_ORDER_DESTINATIONS = ['customer', 'warehouse']
 export const WAREHOUSE_ORDER_STATUSES = ['draft', 'completed', 'cancelled', 'deleted']

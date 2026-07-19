@@ -45,9 +45,8 @@ const {
   loadPrintOrderItems,
   loadPrintingSourceOrders,
   loadPrintingSourceOrderItems,
-  loadProducts,
-  loadSuppliers,
-} = useScopedQueries()
+} = usePrintingScopedQueries()
+const { loadProducts, loadSuppliers } = useScopedQueries()
 const { savePrintOrder, deletePrintOrder } = usePrintingProgress()
 const { appUser, authReady, isAdmin, permissions, hasPermission } = useAuth()
 const { showToast } = useUi()
@@ -87,22 +86,50 @@ const form = reactive<{
 })
 
 const canViewAll = computed(() => hasPermission('printing.view_all') || hasPermission('*'))
+const canViewOwnOrders = computed(() => hasPermission('printing.orders_view') || hasPermission('*'))
+const canViewOwnRecords = computed(() => hasPermission('printing.view') || hasPermission('*'))
 const canCreate = computed(() => hasPermission('printing.create') || hasPermission('*'))
 const canEdit = computed(() => hasPermission('printing.edit') || hasPermission('*'))
 const canDelete = computed(() => hasPermission('printing.delete') || hasPermission('*'))
 const currentEmail = computed(() => String(appUser.value?.email || '').trim().toLowerCase())
 
-function ownsPrintOrder(order: PrintOrderDoc | null | undefined) {
+function sourceOrderForProgress(order: PrintOrderDoc | null | undefined) {
+  if (!order) return undefined
+  return sourceOrders.value.find(source => source.id === order.order_id)
+    || sourceOrders.value.find(source => source.order_code === order.order_code)
+}
+
+function ownsSourceOrder(order: PrintOrderDoc | null | undefined) {
+  const source = sourceOrderForProgress(order)
+  if (!source || !currentEmail.value) return false
+  return [source.owner_email, source.created_by, source.sale_email]
+    .some(value => String(value || '').trim().toLowerCase() === currentEmail.value)
+}
+
+function ownsProgressRecord(order: PrintOrderDoc | null | undefined) {
   return Boolean(order && String(order.created_by || '').trim().toLowerCase() === currentEmail.value)
 }
 
 function canEditOrder(order: PrintOrderDoc | null | undefined) {
-  return isAdmin.value || (canEdit.value && ownsPrintOrder(order))
+  return isAdmin.value || (canEdit.value && (
+    canViewAll.value || ownsSourceOrder(order) || ownsProgressRecord(order)
+  ))
 }
 
 function canDeleteOrder(order: PrintOrderDoc | null | undefined) {
-  return isAdmin.value || (canDelete.value && ownsPrintOrder(order))
+  return isAdmin.value || (canDelete.value && (
+    canViewAll.value || ownsSourceOrder(order) || ownsProgressRecord(order)
+  ))
 }
+
+const pageSubtitle = computed(() => {
+  if (canViewAll.value) return 'Theo dõi tất cả tiến độ in theo sản phẩm hoặc logo'
+  if (canViewOwnOrders.value && canViewOwnRecords.value) {
+    return 'Hiển thị tiến độ thuộc đơn hàng của bạn và tiến độ do bạn lập'
+  }
+  if (canViewOwnOrders.value) return 'Chỉ hiển thị tiến độ thuộc các đơn hàng do bạn tạo'
+  return 'Chỉ hiển thị tiến độ do bạn lập'
+})
 
 function sourceLogoLines(item: OrderItemDoc) {
   const logos = safeJsonParse(item.logo_json, [])
@@ -178,11 +205,7 @@ function quantityText(value: any) {
   return toNumber(value).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
 }
 
-const visibleRows = computed(() => canViewAll.value
-  ? rows.value
-  : rows.value.filter(order => ownsPrintOrder(order)))
-
-const enrichedRows = computed(() => visibleRows.value.map(order => {
+const enrichedRows = computed(() => rows.value.map(order => {
   const detailItems = itemsForOrder(order)
   const unfinishedDueDates = detailItems
     .filter(item => !isCompleted(item.is_completed))
@@ -200,16 +223,16 @@ const enrichedRows = computed(() => visibleRows.value.map(order => {
 }))
 
 const filtered = computed(() => {
-  const query = normalizeText(search.value)
+  const queryText = normalizeText(search.value)
   return enrichedRows.value.filter(row => {
     if (statusFilter.value && row.print_status !== statusFilter.value) return false
-    if (!query) return true
+    if (!queryText) return true
     const itemText = row.detailItems.map(item =>
       `${item.product_code || ''} ${item.product_name || ''} ${item.logo || ''} ${item.logo_color || ''}`,
     ).join(' ')
     return normalizeText(
       `${row.order_code} ${row.am_code || ''} ${row.supplier_name || ''} ${row.note || ''} ${row.created_by || ''} ${itemText}`,
-    ).includes(query)
+    ).includes(queryText)
   })
 })
 
@@ -338,7 +361,7 @@ function openCreateModal() {
 }
 
 function openEditModal(order: PrintOrderDoc) {
-  if (!canEditOrder(order)) return showToast('Bạn chỉ được sửa tiến độ in ấn do mình tạo.', 'error')
+  if (!canEditOrder(order)) return showToast('Bạn không có quyền sửa tiến độ in ấn này.', 'error')
   resetForm(order)
   showFormModal.value = true
 }
@@ -404,7 +427,7 @@ function collectItems(): PrintItemInput[] {
 async function submitForm() {
   if (editing.value ? !canEditOrder(editing.value) : !canCreate.value) {
     return showToast(editing.value
-      ? 'Bạn chỉ được sửa tiến độ in ấn do mình tạo.'
+      ? 'Bạn không có quyền sửa tiến độ in ấn này.'
       : 'Bạn không có quyền tạo tiến độ in ấn.', 'error')
   }
   if (!form.order_id || !form.order_code) {
@@ -446,7 +469,7 @@ async function submitForm() {
 }
 
 async function removeOrder(order: PrintOrderDoc) {
-  if (!canDeleteOrder(order)) return showToast('Bạn chỉ được xóa tiến độ in ấn do mình tạo.', 'error')
+  if (!canDeleteOrder(order)) return showToast('Bạn không có quyền xóa tiến độ in ấn này.', 'error')
   const confirmed = await askConfirm({
     title: 'Xóa tiến độ in ấn',
     message: `Bạn chắc chắn muốn xóa đơn in ${order.order_code}? Đơn và toàn bộ dòng tiến độ sẽ được xóa mềm.`,
@@ -511,7 +534,7 @@ onBeforeUnmount(() => {
 
 <template>
   <AppShell>
-    <PageHeader title="Tiến độ in ấn" :subtitle="canViewAll ? 'Theo dõi tất cả tiến độ in theo sản phẩm hoặc logo' : 'Chỉ hiển thị tiến độ in do bạn tạo'">
+    <PageHeader title="Tiến độ in ấn" :subtitle="pageSubtitle">
       <button v-if="canCreate" class="btn primary" @click="openCreateModal">+ Thêm đơn in</button>
       <button class="btn" @click="loadRows(true)">Làm mới</button>
     </PageHeader>
@@ -673,7 +696,7 @@ onBeforeUnmount(() => {
         <div class="detail-item"><label>Mã đơn hàng</label><strong>{{ selected.order_code }}</strong></div>
         <div class="detail-item"><label>Mã AM</label><strong>{{ selected.am_code || '-' }}</strong></div>
         <div class="detail-item"><label>Nhà cung cấp</label><strong>{{ selected.supplier_name || '-' }}</strong></div>
-        <div class="detail-item"><label>Người tạo</label><strong>{{ selected.created_by || '-' }}</strong></div>
+        <div class="detail-item"><label>Người lập tiến độ</label><strong>{{ selected.created_by || '-' }}</strong></div>
         <div class="detail-item"><label>Ngày tạo</label><strong>{{ formatDateTime(selected.created_at) || '-' }}</strong></div>
         <div class="detail-item"><label>Ghi chú</label><strong>{{ selected.note || '-' }}</strong></div>
       </div>

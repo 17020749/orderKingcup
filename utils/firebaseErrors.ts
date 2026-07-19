@@ -11,7 +11,9 @@ export function firebaseErrorMessage(error: any, fallback = 'Có lỗi xảy ra,
     'deadline-exceeded': 'Yêu cầu mất quá nhiều thời gian, vui lòng thử lại.',
     'resource-exhausted': 'Đã vượt giới hạn tài nguyên, vui lòng thử lại sau.'
   }
-  return messages[code] || fallback
+  if (messages[code]) return messages[code]
+  const message = String(error?.message || '').trim()
+  return message || fallback
 }
 
 export function reportFirebaseError(error: any, fallback?: string) {
