@@ -21,11 +21,9 @@ jobs:
         with:
           ref: agent/step-7-atomic-finance-shipping
           fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+          show-progress: false
       - name: Apply patches
-        run: python scripts/apply-step7-relations.py
+        run: python3 scripts/apply-step7-relations.py
       - name: Commit patched source
         run: |
           git config user.name "github-actions[bot]"
