@@ -22,6 +22,7 @@ type PrintStatus = 'Đang in' | 'Cảnh báo' | 'Quá hạn' | 'Hoàn thành'
 
 type PrintLineForm = {
   id?: string
+  source_order_item_id: string
   logo: string
   logo_color: string
   print_quantity: number
@@ -253,6 +254,7 @@ const selectedItems = computed(() => selected.value ? itemsForOrder(selected.val
 function blankLine(item?: Partial<PrintOrderItemDoc>): PrintLineForm {
   return {
     id: item?.id,
+    source_order_item_id: String(item?.source_order_item_id || ''),
     logo: String(item?.logo || ''),
     logo_color: String(item?.logo_color || ''),
     print_quantity: toNumber(item?.print_quantity),
@@ -284,7 +286,7 @@ function groupsFromItems(orderItems: PrintOrderItemDoc[]) {
       result.push(blankProductGroup(item))
       return
     }
-    const productKey = item.product_id || item.product_code || item.id
+    const productKey = item.source_order_item_id || item.product_id || item.product_code || item.id
     let group = logoGroups.get(productKey)
     if (!group) {
       group = blankProductGroup(item)
@@ -315,6 +317,7 @@ function groupsFromSourceOrder(orderId: string) {
   return orderItems.map(item => {
     const logos = sourceLogoLines(item)
     const group = blankProductGroup({
+      source_order_item_id: item.id,
       product_id: item.product_id,
       product_code: item.product_code,
       product_name: item.product_name,
@@ -322,6 +325,7 @@ function groupsFromSourceOrder(orderId: string) {
     group.use_logo = true
     group.print_quantity = 0
     group.logo_lines = logos.map((line: any) => blankLine({
+      source_order_item_id: item.id,
       logo: String(line.logo || ''),
       logo_color: String(line.logo_color || line.color || ''),
       print_quantity: toNumber(line.quantity ?? line.qty),
@@ -396,6 +400,7 @@ function collectItems(): PrintItemInput[] {
       }
       result.push({
         id: line.id,
+        source_order_item_id: line.source_order_item_id || group.source_order_item_id,
         product,
         logo,
         logo_color: line.logo_color,

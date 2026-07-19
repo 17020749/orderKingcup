@@ -314,6 +314,7 @@ export interface PrintOrderDoc {
 export interface PrintOrderItemDoc {
   id: string
   print_order_id: string
+  source_order_item_id?: string
   product_id?: string
   product_code?: string
   product_name?: string

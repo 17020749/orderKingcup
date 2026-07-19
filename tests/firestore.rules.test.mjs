@@ -140,7 +140,11 @@ async function seed() {
       }),
       setDoc(doc(db, 'orders', 'order-legacy'), order(LEGACY, 'order-legacy')),
       setDoc(doc(db, 'orders', 'order-editor'), order(EDITOR, 'order-editor')),
-      setDoc(doc(db, 'order_items', 'item-a'), { order_id: 'order-a', created_by: A, owner_email: A, sale_email: A, active: true, deleted: false, status: 'active' }),
+      setDoc(doc(db, 'order_items', 'item-a'), {
+        id: 'item-a', order_id: 'order-a', product_id: 'product-existing', product_code: 'SP001',
+        product_name: 'Sản phẩm cũ', quantity: 100,
+        created_by: A, owner_email: A, sale_email: A, active: true, deleted: false, status: 'active'
+      }),
       setDoc(doc(db, 'order_items', 'item-delete'), { order_id: 'order-delete', created_by: A, owner_email: A, sale_email: A, active: true, deleted: false, status: 'active' }),
       setDoc(doc(db, 'order_items', 'item-b'), { order_id: 'order-b', created_by: B, owner_email: B, sale_email: B, active: true }),
       setDoc(doc(db, 'payments', 'payment-b'), { order_id: 'order-b', created_by: B, ...ownership(B), amount: 100, active: true }),
@@ -250,7 +254,7 @@ async function seed() {
         created_by: PRINTING, active: true, deleted: false, status: 'active', source: 'test'
       }),
       setDoc(doc(db, 'print_order_items', 'print-item-a'), {
-        id: 'print-item-a', print_order_id: 'print-a', product_id: 'product-existing',
+        id: 'print-item-a', print_order_id: 'print-a', source_order_item_id: 'item-a', product_id: 'product-existing',
         product_code: 'SP001', product_name: 'Sản phẩm cũ', logo: '', print_quantity: 10,
         actual_print_quantity: 4, is_completed: false, created_by: PRINTING,
         active: true, deleted: false, status: 'active', source: 'test'
@@ -564,7 +568,10 @@ test('Quyền cho xuất được tạo phiếu xuất thật và cập nhật r
   batch.set(doc(db, 'export_order_items', `${exportId}__1`), {
     id: `${exportId}__1`,
     export_order_id: exportId,
+    source_order_id: 'order-a',
+    source_order_item_id: 'item-a',
     product_id: 'product-existing',
+    product_code: 'SP001',
     from_warehouse_id: 'wh-a',
     quantity: 2,
     created_by: WAREHOUSE_RELEASE,
@@ -592,7 +599,7 @@ test('Quyền cho xuất được tạo phiếu xuất thật và cập nhật r
     warehouse_note: '',
     exported_at: 'now',
     actual_exported_at: 'now',
-    actual_export_summary_json: '[{"product_id":"product-existing","warehouse_id":"wh-a","quantity":2}]',
+    actual_export_summary_json: '[{"source_order_id":"order-a","source_order_item_id":"item-a","product_id":"product-existing","warehouse_id":"wh-a","quantity":2}]',
     stock_movement_ids: ['move-release'],
     request_timeline_json: '[]',
     operation_id: operationId,
@@ -1322,7 +1329,7 @@ test('Tiến độ in: tạo đơn và dòng sản phẩm hợp lệ trong cùng
     active: true, deleted: false, status: 'active', source: 'nuxt'
   })
   batch.set(doc(db, 'print_order_items', 'print-item-new'), {
-    id: 'print-item-new', print_order_id: 'print-new', product_id: 'product-existing',
+    id: 'print-item-new', print_order_id: 'print-new', source_order_item_id: 'item-a', product_id: 'product-existing',
     product_code: 'SP001', product_name: 'Sản phẩm cũ', logo: 'Logo A',
     print_quantity: 20, actual_print_quantity: 0, is_completed: false,
     created_by: PRINTING, created_at: 'now', updated_at: 'now',

@@ -25,8 +25,12 @@ import {
   nextExportReleaseSequence,
   requestExportOrderId,
 } from '~/utils/exportLifecycle.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { validateWarehouseReleaseSources } from '~/utils/orderItemDependencies.mjs'
 
 type WarehouseLineInput = {
+  source_order_id?: string
+  source_order_item_id?: string
   product: ProductDoc | any
   warehouse?: WarehouseDoc | any
   warehouse_id?: string
@@ -2133,7 +2137,7 @@ export function useWarehouseTransactions() {
     operation_id?: string
     expected_revision?: number
     warehouse?: WarehouseDoc | any
-    lines: Array<{ product: ProductDoc | any; warehouse?: WarehouseDoc | any; fromWarehouse?: WarehouseDoc | any; from_warehouse_id?: string; warehouse_id?: string; logo?: string; quantity: number; unit?: string; note?: string }>
+    lines: Array<{ source_order_id?: string; source_order_item_id?: string; product: ProductDoc | any; warehouse?: WarehouseDoc | any; fromWarehouse?: WarehouseDoc | any; from_warehouse_id?: string; warehouse_id?: string; logo?: string; quantity: number; unit?: string; note?: string }>
   }) {
     const createdBy = email()
     if (!createdBy) throw new Error('Bạn chưa đăng nhập.')
@@ -2161,7 +2165,7 @@ export function useWarehouseTransactions() {
     const rawLines = input.lines.filter(line => toNumber(line.quantity) > 0)
     if (!rawLines.length) throw new Error('Yêu cầu xuất kho chưa có dòng hàng hợp lệ.')
 
-    const preparedLines = [] as Array<{ product: any; fromWarehouse: any; logo: string; unit?: string; note?: string; quantity: number; itemId: string; outMovementId: string }>
+    const preparedLines = [] as Array<{ sourceOrderId: string; sourceOrderItemId: string; product: any; fromWarehouse: any; logo: string; unit?: string; note?: string; quantity: number; itemId: string; outMovementId: string }>
     rawLines.forEach((line, index) => {
       const product = ensureProduct(line.product)
       const fromWarehouse = ensureWarehouse(
@@ -2170,6 +2174,8 @@ export function useWarehouseTransactions() {
       )
       const quantity = ensurePositiveQuantity(line.quantity)
       preparedLines.push({
+        sourceOrderId: String(line.source_order_id || request.order_id || '').trim(),
+        sourceOrderItemId: String(line.source_order_item_id || '').trim(),
         product,
         fromWarehouse,
         logo: lineTargetLogo(line),
@@ -2197,6 +2203,8 @@ export function useWarehouseTransactions() {
 
     const stockMovementIds = preparedLines.map(line => line.outMovementId)
     const actualSummary = preparedLines.map(line => ({
+      source_order_id: line.sourceOrderId,
+      source_order_item_id: line.sourceOrderItemId,
       product_id: line.product?.id || '',
       product_code: productCode(line.product),
       product_name: productName(line.product),
@@ -2295,6 +2303,33 @@ export function useWarehouseTransactions() {
         }
         if (exportSnap.exists()) throw new Error('ID phiếu xuất của vòng đời này đã tồn tại.')
 
+        const sourceOrderId = String(currentRequest.order_id || '').trim()
+        if (!sourceOrderId || preparedLines.some(line => (
+          !line.sourceOrderItemId || line.sourceOrderId !== sourceOrderId
+        ))) {
+          throw new Error('Phiếu xuất thiếu tham chiếu chính xác tới dòng đơn hàng nguồn.')
+        }
+        const sourceOrderSnap = await tx.get(doc(db, 'orders', sourceOrderId))
+        const sourceItemSnaps = new Map<string, any>()
+        for (const sourceItemId of new Set(preparedLines.map(line => line.sourceOrderItemId))) {
+          sourceItemSnaps.set(sourceItemId, await tx.get(doc(db, 'order_items', sourceItemId)))
+        }
+        const sourceValidationError = validateWarehouseReleaseSources({
+          request: currentRequest,
+          order: sourceOrderSnap.exists() ? { ...sourceOrderSnap.data(), id: sourceOrderSnap.id } : {},
+          orderItems: Array.from(sourceItemSnaps.values())
+            .filter(snapshot => snapshot.exists())
+            .map(snapshot => ({ ...snapshot.data(), id: snapshot.id })),
+          releaseLines: preparedLines.map(line => ({
+            source_order_id: line.sourceOrderId,
+            source_order_item_id: line.sourceOrderItemId,
+            product: line.product,
+            logo: line.logo,
+            quantity: line.quantity,
+          })),
+        })
+        if (sourceValidationError) throw new Error(sourceValidationError)
+
         const balanceSnaps = new Map<string, any>()
         for (const delta of balanceDeltas.values()) {
           balanceSnaps.set(delta.id, await tx.get(doc(db, 'inventory_balances', delta.id)))
@@ -2313,6 +2348,8 @@ export function useWarehouseTransactions() {
           tx.set(doc(db, 'export_order_items', line.itemId), {
             id: line.itemId,
             export_order_id: orderId,
+            source_order_id: line.sourceOrderId,
+            source_order_item_id: line.sourceOrderItemId,
             product_id: line.product.id,
             product_code: productCode(line.product),
             product_name: productName(line.product),

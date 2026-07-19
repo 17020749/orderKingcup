@@ -24,8 +24,12 @@ import {
   type LotAllocation,
   type WarehouseIssueStrategy,
 } from '~/utils/warehouseLotAllocation'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { validateWarehouseReleaseSources } from '~/utils/orderItemDependencies.mjs'
 
 type PricedWarehouseLineInput = {
+  source_order_id?: string
+  source_order_item_id?: string
   product: ProductDoc | any
   warehouse?: WarehouseDoc | any
   warehouse_id?: string
@@ -1307,7 +1311,6 @@ export function useWarehouseCostTransactions() {
         const operationSnap = await tx.get(doc(db, 'warehouse_operations', operationId))
         const orderRef = doc(db, 'export_orders', orderId)
         const orderSnap = await tx.get(orderRef)
-        const states = await readBalanceStates(tx, refs, exportDate)
         if (!operationSnap.exists() || operationSnap.data()?.status !== 'processing') throw new Error('Operation sửa phiếu xuất không hợp lệ.')
         if (!orderSnap.exists()) throw new Error('Phiếu xuất không còn tồn tại.')
         const current = orderSnap.data() || {}
@@ -1633,7 +1636,6 @@ export function useWarehouseCostTransactions() {
         const requestSnap = await tx.get(requestRef)
         const exportRef = doc(db, 'export_orders', orderId)
         const exportSnap = await tx.get(exportRef)
-        const states = await readBalanceStates(tx, refs, exportDate)
         if (!operationSnap.exists() || operationSnap.data()?.status !== 'processing') throw new Error('Operation cho xuất kho không hợp lệ.')
         if (!requestSnap.exists()) throw new Error('Yêu cầu xuất kho không còn tồn tại.')
         const currentRequest = requestSnap.data() || {}
@@ -1643,6 +1645,33 @@ export function useWarehouseCostTransactions() {
           completeOperationTx(tx, operationId, code, 1)
           return
         }
+
+        const sourceOrderId = String(currentRequest.order_id || '').trim()
+        if (!sourceOrderId || lines.some((line: any) => (
+          !String(line.source_order_item_id || '').trim()
+          || String(line.source_order_id || '').trim() !== sourceOrderId
+        ))) throw new Error('Phiếu xuất thiếu tham chiếu chính xác tới dòng đơn hàng nguồn.')
+        const sourceOrderSnap = await tx.get(doc(db, 'orders', sourceOrderId))
+        const sourceItemSnaps = new Map<string, any>()
+        for (const sourceItemId of new Set(lines.map((line: any) => String(line.source_order_item_id || '').trim()))) {
+          sourceItemSnaps.set(sourceItemId, await tx.get(doc(db, 'order_items', sourceItemId)))
+        }
+        const sourceValidationError = validateWarehouseReleaseSources({
+          request: currentRequest,
+          order: sourceOrderSnap.exists() ? { ...sourceOrderSnap.data(), id: sourceOrderSnap.id } : {},
+          orderItems: Array.from(sourceItemSnaps.values())
+            .filter(snapshot => snapshot.exists())
+            .map(snapshot => ({ ...snapshot.data(), id: snapshot.id })),
+          releaseLines: lines.map((line: any) => ({
+            source_order_id: line.source_order_id,
+            source_order_item_id: line.source_order_item_id,
+            product: line.product,
+            logo: line.targetLogo,
+            quantity: line.quantity,
+          })),
+        })
+        if (sourceValidationError) throw new Error(sourceValidationError)
+        const states = await readBalanceStates(tx, refs, exportDate)
 
         const orderPayload = {
           id: orderId,
@@ -1678,6 +1707,8 @@ export function useWarehouseCostTransactions() {
           tx.set(doc(db, 'export_order_items', line.itemId), {
             id: line.itemId,
             export_order_id: orderId,
+            source_order_id: line.source_order_id,
+            source_order_item_id: line.source_order_item_id,
             product_id: line.product.id,
             product_code: productCode(line.product),
             product_name: productName(line.product),
@@ -1727,6 +1758,8 @@ export function useWarehouseCostTransactions() {
           }))
           stockMovementIds.push(line.outMovementId)
           exportedSummary.push({
+            source_order_id: line.source_order_id,
+            source_order_item_id: line.source_order_item_id,
             product_id: line.product.id,
             product_code: productCode(line.product),
             product_name: productName(line.product),

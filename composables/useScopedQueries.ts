@@ -436,7 +436,7 @@ export function useScopedQueries() {
         'requested_at'
       )
     }
-    if (!hasPermission('export_requests.view') && !hasPermission('orders.warehouse_export')) return []
+    if (!hasPermission('export_requests.view') && !hasPermission('orders.warehouse_export') && !hasPermission('orders.edit')) return []
 
     const currentEmail = email()
     const ownedOrderIds = new Set(orders.map(order => order.id).filter(Boolean))
@@ -503,7 +503,7 @@ export function useScopedQueries() {
         onError,
       )
     }
-    if (!hasPermission('export_requests.view') && !hasPermission('orders.warehouse_export')) {
+    if (!hasPermission('export_requests.view') && !hasPermission('orders.warehouse_export') && !hasPermission('orders.edit')) {
       onRows([])
       return () => {}
     }

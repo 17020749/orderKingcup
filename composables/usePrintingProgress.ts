@@ -17,6 +17,7 @@ import {
 
 export type PrintItemInput = {
   id?: string
+  source_order_item_id?: string
   product: ProductDoc
   logo?: string
   logo_color?: string
@@ -121,6 +122,7 @@ export function usePrintingProgress() {
     return {
       id: input.id || makeId('pri'),
       print_order_id: orderId,
+      source_order_item_id: text(input.source_order_item_id || existing?.source_order_item_id),
       product_id: text(input.product.id),
       product_code: productCode(input.product),
       product_name: productName(input.product),

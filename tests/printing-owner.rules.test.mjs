@@ -72,6 +72,9 @@ function printItem(id, printOrderId, createdBy) {
   return {
     id,
     print_order_id: printOrderId,
+    source_order_item_id: printOrderId === 'print-order-b' || printOrderId === 'print-self'
+      ? 'source-item-b'
+      : 'source-item-a',
     product_id: 'product-a',
     product_code: 'SP-A',
     product_name: 'Sản phẩm A',
@@ -108,6 +111,14 @@ async function seed() {
       setDoc(doc(db, 'users', SELF_OPERATOR), user(SELF_OPERATOR, ['page.printing', 'printing.view', 'printing.create', 'printing.edit', 'printing.delete'])),
       setDoc(doc(db, 'orders', 'source-order-a'), sourceOrder('source-order-a', 'DH-A', SALE_OWNER, 1)),
       setDoc(doc(db, 'orders', 'source-order-b'), sourceOrder('source-order-b', 'DH-B', OTHER_SALE, 2)),
+      setDoc(doc(db, 'order_items', 'source-item-a'), {
+        id: 'source-item-a', order_id: 'source-order-a', product_id: 'product-a', product_code: 'SP-A',
+        product_name: 'Sản phẩm A', quantity: 20, active: true, deleted: false, status: 'active',
+      }),
+      setDoc(doc(db, 'order_items', 'source-item-b'), {
+        id: 'source-item-b', order_id: 'source-order-b', product_id: 'product-a', product_code: 'SP-A',
+        product_name: 'Sản phẩm A', quantity: 20, active: true, deleted: false, status: 'active',
+      }),
       setDoc(doc(db, 'products', 'product-a'), {
         id: 'product-a',
         product_code: 'SP-A',

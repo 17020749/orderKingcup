@@ -1,5 +1,6 @@
 import { collection, getDocs, query, where } from 'firebase/firestore'
-import type { OrderDoc, PrintOrderDoc } from '~/types/models'
+import type { OrderDoc, PrintOrderDoc, PrintOrderItemDoc } from '~/types/models'
+import { isActive } from '~/utils/format'
 
 function cleanIds(orders: OrderDoc[]) {
   return Array.from(new Set(
@@ -47,8 +48,33 @@ export function useOrderPrintingDeleteGuard() {
     return fetchGroup([id])
   }
 
+  async function loadPrintingDependenciesForOrders(orders: OrderDoc[]) {
+    // Child Rules intentionally deny items whose parent progress was deleted.
+    // Excluding inactive parents before building the `in` query keeps one
+    // historical soft-delete from rejecting the entire order-list load.
+    const printOrders = (await loadPrintingProgressForOrders(orders)).filter(isActive)
+    const printOrderIds = printOrders.map(row => row.id).filter(Boolean)
+    if (!printOrderIds.length) return { printOrders, printItems: [] as PrintOrderItemDoc[] }
+
+    const groups = await Promise.all(chunks(printOrderIds).map(async ids => {
+      const snapshot = await getDocs(query(
+        collection(db, 'print_order_items'),
+        where('print_order_id', 'in', ids),
+      ))
+      return snapshot.docs.map(item => ({
+        ...item.data(),
+        id: item.id,
+        firestore_id: item.id,
+      } as PrintOrderItemDoc))
+    }))
+    const unique = new Map<string, PrintOrderItemDoc>()
+    groups.flat().forEach(row => unique.set(row.id, row))
+    return { printOrders, printItems: Array.from(unique.values()) }
+  }
+
   return {
     loadPrintingProgressForOrders,
     loadPrintingProgressForOrder,
+    loadPrintingDependenciesForOrders,
   }
 }
