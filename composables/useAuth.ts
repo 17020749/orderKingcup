@@ -1,35 +1,44 @@
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth'
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
+import { doc, getDoc, onSnapshot, type Unsubscribe } from 'firebase/firestore'
 import type { AppUser, RoleDoc } from '~/types/models'
 import { normalizeEmail, isActive } from '~/utils/format'
 import { permissionDebug } from '~/utils/permissionDebug'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import {
+  authorizationCacheToken,
+  authorizationFingerprint,
+  effectivePermissionsFromUser,
+  isAdminFromPermissions,
+} from '~/utils/authorizationState.mjs'
 
-function roleNamesFromUser(userDoc: any): string[] {
-  const raw = userDoc?.roles || userDoc?.role_names || userDoc?.role || []
-  if (Array.isArray(raw)) return raw.map(String).filter(Boolean)
-  return String(raw || '').split(',').map(s => s.trim()).filter(Boolean)
-}
+let profileUnsubscribe: Unsubscribe | null = null
+let profileListenerEmail = ''
 
-function roleMatches(role: any, name: string) {
-  return String(role.id || '').toLowerCase() === name.toLowerCase()
-    || String(role.name || '').toLowerCase() === name.toLowerCase()
-    || String(role.role || '').toLowerCase() === name.toLowerCase()
+function stopProfileListener() {
+  profileUnsubscribe?.()
+  profileUnsubscribe = null
+  profileListenerEmail = ''
 }
 
 export function useAuth() {
   const firebaseUser = useState<User | null>('auth.firebaseUser', () => null)
   const appUser = useState<AppUser | null>('auth.appUser', () => null)
+  // Giữ state roles để không phá vỡ API composable cũ. Quyền thực thi không
+  // còn được cộng trực tiếp từ collection roles ở phía client.
   const roles = useState<RoleDoc[]>('auth.roles', () => [])
   const permissions = useState<string[]>('auth.permissions', () => [])
   const authReady = useState<boolean>('auth.ready', () => false)
   const authLoading = useState<boolean>('auth.loading', () => false)
   const authError = useState<string>('auth.error', () => '')
+  const authorizationFingerprintState = useState<string>('auth.authorizationFingerprint', () => '')
+  const authorizationCacheKey = useState<string>('auth.authorizationCacheKey', () => 'anonymous')
+  const authorizationRevision = useState<number>('auth.authorizationRevision', () => 0)
 
   const { auth, db, googleProvider } = useFirebaseServices()
 
   const isLoggedIn = computed(() => !!firebaseUser.value)
   const hasAccess = computed(() => !!appUser.value && isActive(appUser.value))
-  const isAdmin = computed(() => appUser.value?.is_admin === true || permissions.value.includes('*'))
+  const isAdmin = computed(() => isAdminFromPermissions(permissions.value))
 
   function hasPermission(key: string) {
     return permissions.value.includes('*') || permissions.value.includes(key)
@@ -39,61 +48,143 @@ export function useAuth() {
     return keys.some(key => hasPermission(key))
   }
 
-  async function loadProfile(user: User | null) {
-    appUser.value = null
+  async function clearAuthorizationCaches() {
+    if (import.meta.server) return
+    try {
+      const { invalidateScopedCache } = await import('~/composables/useScopedQueries')
+      invalidateScopedCache()
+    } catch {
+      // Cache cleanup is defensive. The authorization cache token also ensures
+      // old scoped entries are never reused after permissions change.
+    }
+  }
+
+  async function applyProfileData(email: string, rawData: any | null, source: string) {
+    const normalizedEmail = normalizeEmail(email)
+    const profile = rawData
+      ? ({ ...rawData, id: normalizedEmail, email: normalizedEmail } as AppUser)
+      : null
+    const fingerprintSource = profile || {
+      email: normalizedEmail,
+      active: false,
+      status: rawData === null ? 'missing' : 'inactive',
+      permissions_flat: [],
+      permission_schema_version: 0,
+    }
+    const nextFingerprint = authorizationFingerprint(fingerprintSource)
+    const previousFingerprint = authorizationFingerprintState.value
+    const changed = previousFingerprint !== nextFingerprint
+
+    authorizationFingerprintState.value = nextFingerprint
+    authorizationCacheKey.value = authorizationCacheToken(fingerprintSource)
+    if (changed) authorizationRevision.value += 1
+
     roles.value = []
     permissions.value = []
     authError.value = ''
-    if (!user?.email) return
+
+    if (!profile) {
+      appUser.value = null
+      authError.value = normalizedEmail
+        ? `Tài khoản ${normalizedEmail} chưa được cấp quyền trong hệ thống.`
+        : ''
+    } else if (!isActive(profile)) {
+      appUser.value = null
+      authError.value = `Tài khoản ${normalizedEmail} đã bị khóa hoặc chưa hoạt động.`
+    } else {
+      const effectivePermissions = effectivePermissionsFromUser(profile)
+      const canonicalAdmin = isAdminFromPermissions(effectivePermissions)
+      permissions.value = effectivePermissions
+      // Một số module cũ vẫn đọc appUser.is_admin. Chuẩn hóa field này từ
+      // permissions_flat để chúng không thể cấp quyền qua cờ legacy bị lệch.
+      appUser.value = {
+        ...profile,
+        is_admin: canonicalAdmin,
+      }
+    }
+
+    permissionDebug({
+      module: 'auth',
+      action: 'load_profile',
+      stage: appUser.value ? 'ready' : 'denied',
+      userEmail: normalizedEmail,
+      checks: permissions.value.map(permission => ({
+        name: permission,
+        actual: 'granted_from_permissions_flat',
+        passed: true,
+      })),
+      payload: {
+        source,
+        roles_in_user: Array.isArray((profile as any)?.roles)
+          ? (profile as any).roles
+          : (profile as any)?.role || [],
+        stored_is_admin: (profile as any)?.is_admin === true,
+        effective_is_admin: isAdminFromPermissions(permissions.value),
+        permissions_flat_in_user: (profile as any)?.permissions_flat || [],
+        effective_client_permissions: permissions.value,
+        permission_schema_version: (profile as any)?.permission_schema_version || 0,
+        authorization_cache_key: authorizationCacheKey.value,
+      },
+      note: 'Client dùng users.permissions_flat; role và is_admin lưu cũ chỉ là dữ liệu quản trị, không trực tiếp cấp quyền.',
+    })
+
+    if (changed && previousFingerprint) await clearAuthorizationCaches()
+  }
+
+  async function loadProfile(user: User | null) {
+    if (!user?.email) {
+      await applyProfileData('', null, 'auth_state')
+      return
+    }
 
     const email = normalizeEmail(user.email)
     const userSnap = await getDoc(doc(db, 'users', email))
-    if (!userSnap.exists()) {
-      authError.value = `Tài khoản ${email} chưa được cấp quyền trong hệ thống.`
+    await applyProfileData(email, userSnap.exists() ? userSnap.data() : null, 'getDoc')
+  }
+
+  function startProfileListener(user: User | null) {
+    const email = normalizeEmail(user?.email || '')
+    if (!email) {
+      stopProfileListener()
       return
     }
+    if (profileUnsubscribe && profileListenerEmail === email) return
 
-    const data = { id: userSnap.id, email, ...userSnap.data() } as AppUser
-    if (!isActive(data)) {
-      authError.value = `Tài khoản ${email} đã bị khóa hoặc chưa hoạt động.`
-      return
-    }
-
-    appUser.value = data
-
-    const wantedNames = roleNamesFromUser(data)
-    const roleListSnap = await getDocs(collection(db, 'roles'))
-    const allRoles = roleListSnap.docs.map(d => ({ ...d.data(), id: d.id })) as RoleDoc[]
-    const matchedRoles = wantedNames.length
-      ? allRoles.filter(role => wantedNames.some(name => roleMatches(role, name)))
-      : []
-
-    roles.value = matchedRoles
-    const rolePerms = matchedRoles.flatMap((r: any) => Array.isArray(r.permissions) ? r.permissions : [])
-    const flattened = Array.from(new Set([...(data.permissions_flat || []), ...rolePerms]))
-    permissions.value = flattened
-    permissionDebug({
-      module: 'auth', action: 'load_profile', stage: 'ready', userEmail: email,
-      checks: flattened.map(permission => ({ name: permission, actual: 'granted', passed: true })),
-      payload: {
-        roles_in_user: wantedNames,
-        matched_roles: matchedRoles.map(role => role.id || role.name),
-        permissions_flat_in_user: data.permissions_flat || [],
-        permissions_from_roles: rolePerms,
-        effective_client_permissions: flattened
+    stopProfileListener()
+    profileListenerEmail = email
+    profileUnsubscribe = onSnapshot(
+      doc(db, 'users', email),
+      snapshot => {
+        void applyProfileData(email, snapshot.exists() ? snapshot.data() : null, 'onSnapshot')
       },
-      note: 'Firestore Rules chỉ đọc permissions_flat_in_user; effective_client_permissions là quyền phía client.'
-    })
+      error => {
+        authError.value = `Không theo dõi được thay đổi quyền của ${email}: ${String(error?.message || error)}`
+        permissionDebug({
+          module: 'auth',
+          action: 'profile_listener',
+          stage: 'listener_error',
+          userEmail: email,
+          error,
+          note: 'Giữ quyền hiện tại khi listener tạm thời mất kết nối; Firestore Rules vẫn là lớp bảo vệ cuối cùng.',
+        })
+      },
+    )
   }
 
   async function initAuth() {
-    if (authReady.value || authLoading.value) return
+    if (authReady.value) {
+      startProfileListener(firebaseUser.value)
+      return
+    }
+    if (authLoading.value) return
+
     authLoading.value = true
     await new Promise<void>((resolve) => {
       const unsub = onAuthStateChanged(auth, async (user) => {
         firebaseUser.value = user
         try {
           await loadProfile(user)
+          startProfileListener(user)
         } finally {
           authReady.value = true
           authLoading.value = false
@@ -111,6 +202,7 @@ export function useAuth() {
       const result = await signInWithPopup(auth, googleProvider)
       firebaseUser.value = result.user
       await loadProfile(result.user)
+      startProfileListener(result.user)
       return result.user
     } finally {
       authReady.value = true
@@ -119,12 +211,17 @@ export function useAuth() {
   }
 
   async function logout() {
+    stopProfileListener()
     await signOut(auth)
     firebaseUser.value = null
     appUser.value = null
     roles.value = []
     permissions.value = []
     authError.value = ''
+    authorizationFingerprintState.value = ''
+    authorizationCacheKey.value = 'anonymous'
+    authorizationRevision.value += 1
+    await clearAuthorizationCaches()
     await navigateTo('/login')
   }
 
@@ -136,6 +233,8 @@ export function useAuth() {
     authReady,
     authLoading,
     authError,
+    authorizationCacheKey,
+    authorizationRevision,
     isLoggedIn,
     hasAccess,
     isAdmin,
@@ -144,6 +243,6 @@ export function useAuth() {
     initAuth,
     loginWithGoogle,
     logout,
-    loadProfile
+    loadProfile,
   }
 }
