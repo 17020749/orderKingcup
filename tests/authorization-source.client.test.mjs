@@ -85,11 +85,13 @@ test('khóa hoặc xóa user làm thay đổi trạng thái phân quyền', () =
   assert.equal(authorizationChanged(active, { ...active, deleted: true }), true)
 })
 
-test('useAuth không còn đọc collection roles để sinh quyền thực thi', () => {
+test('useAuth không còn đọc collection roles hoặc cờ is_admin để sinh quyền', () => {
   const source = readFileSync('composables/useAuth.ts', 'utf8')
   assert.doesNotMatch(source, /getDocs\s*\(\s*collection\s*\(\s*db\s*,\s*['"]roles['"]\s*\)/)
   assert.doesNotMatch(source, /rolePerms/)
   assert.match(source, /effectivePermissionsFromUser\(profile\)/)
+  assert.match(source, /const canonicalAdmin = isAdminFromPermissions\(effectivePermissions\)/)
+  assert.match(source, /is_admin: canonicalAdmin/)
   assert.match(source, /onSnapshot\(/)
   assert.match(source, /invalidateScopedCache\(\)/)
 })
