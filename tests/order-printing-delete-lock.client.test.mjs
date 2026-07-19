@@ -94,3 +94,10 @@ test('luồng in cập nhật khóa parent khi tạo, xóa và có đối soát 
   assert.match(progress, /reconcilePrintingLocks/)
   assert.match(printingPage, /Đồng bộ khóa xóa đơn/)
 })
+
+test('Rules ưu tiên nhánh rẻ để không vượt giới hạn biểu thức', () => {
+  const rules = readFileSync('firestore.rules', 'utf8')
+  assert.match(rules, /allow update: if orderPrintingSummaryUpdateAllowed\(docId\)\s+\|\| orderWarehouseSummaryUpdateAllowed\(\)/)
+  assert.match(rules, /Normal edits are evaluated before the more expensive atomic delete path/)
+  assert.match(rules, /Normal item edits are evaluated before the atomic soft-delete path/)
+})
