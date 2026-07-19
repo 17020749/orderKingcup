@@ -40,7 +40,7 @@ replace_nth(old_release_function, new_release_function, 2)
 
 # Use a regex patch for expected_revision. The exact text replacement can be
 # affected by Python triple-quoted indentation after earlier source rewrites.
-old_revision_block = """replace_once(
+old_revision_block = '''replace_once(
     'pages/warehouse-export-requests.vue',
     """      orderSummaryPatch: orderPatchAfter(row, 'da_xuat', { warehouse_export_code: 'pending_firestore' }),
 """,
@@ -48,13 +48,13 @@ old_revision_block = """replace_once(
       expected_revision: toNumber(row.revision),
 """,
 )
-"""
-new_revision_block = """regex_once(
+'''
+new_revision_block = '''regex_once(
     'pages/warehouse-export-requests.vue',
     r"(      orderSummaryPatch: orderPatchAfter\\(row, 'da_xuat', \\{ warehouse_export_code: 'pending_firestore' \\}\\),\\n)",
     r"\\1      expected_revision: toNumber(row.revision),\\n",
 )
-"""
+'''
 replace_once(old_revision_block, new_revision_block)
 
 replacements = [
