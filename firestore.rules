@@ -396,6 +396,18 @@ service cloud.firestore {
         );
     }
 
+    function canMutateOrderAfterById(orderId) {
+      let path = orderPath(orderId);
+      let order = getAfter(path).data;
+      return orderId is string
+        && existsAfter(path)
+        && orderDataIsActive(order)
+        && (
+          isAdmin()
+          || ownsOrderData(order)
+        );
+    }
+
     // Payment/export/shipment/invoice documents duplicate parent ownership
     // using order_* fields for scoped queries. These fields must be copied
     // from owner_email/created_by/sale_email on the real parent order.
@@ -452,6 +464,17 @@ service cloud.firestore {
         && sameEmailField(request.resource.data, order, 'sale_email');
     }
 
+    function requestMatchesOrderItemAfter(orderId) {
+      let path = orderPath(orderId);
+      let order = getAfter(path).data;
+      return orderId is string
+        && existsAfter(path)
+        && orderDataIsActive(order)
+        && sameEmailField(request.resource.data, order, 'owner_email')
+        && sameEmailField(request.resource.data, order, 'created_by')
+        && sameEmailField(request.resource.data, order, 'sale_email');
+    }
+
     // Existing legacy child documents may not have every duplicated field yet.
     // An update may keep them unchanged, or replace all of them with values
     // copied from the real parent order. They can never be client-invented.
@@ -491,6 +514,13 @@ service cloud.firestore {
       return unchanged([
         'order_id',
         'created_by',
+        'created_at'
+      ]);
+    }
+
+    function orderItemIdentityUnchanged() {
+      return unchanged([
+        'order_id',
         'created_at'
       ]);
     }
@@ -1124,17 +1154,17 @@ service cloud.firestore {
           )
         );
 
-      allow create: if hasPerm('orders.create')
+      allow create: if hasAnyPerm(['orders.create', 'orders.edit'])
         && request.resource.data.order_id is string
-        && canMutateOrderById(request.resource.data.order_id)
-        && requestMatchesOrderItem(request.resource.data.order_id);
+        && canMutateOrderAfterById(request.resource.data.order_id)
+        && requestMatchesOrderItemAfter(request.resource.data.order_id);
 
       allow update: if isAdmin()
         || (
           resource.data.order_id is string
           && canMutateOrderById(resource.data.order_id)
           && request.resource.data.order_id == resource.data.order_id
-          && childIdentityUnchanged()
+          && orderItemIdentityUnchanged()
           && orderItemOwnershipSafe(resource.data.order_id)
           && (
             (
@@ -1142,7 +1172,7 @@ service cloud.firestore {
               && unchanged(['deleted', 'active', 'status', 'deleted_at'])
             )
             || (
-              hasPerm('orders.delete')
+              hasAnyPerm(['orders.edit', 'orders.delete'])
               && softDeleteOnly()
             )
           )

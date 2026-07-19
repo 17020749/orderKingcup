@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { collection, doc, runTransaction, serverTimestamp, writeBatch } from 'firebase/firestore'
+import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore'
 import { INVOICE_STATUS_OPTIONS, ORDER_CLASSIFICATION_OPTIONS, ORDER_STATUS_OPTIONS, VAT_RATE_OPTIONS } from '~/constants/permissions'
 import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, ProductDoc } from '~/types/models'
 import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
-import { buildOrderCode, customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, ORDER_SEQUENCE_START, userCodeValidationError } from '~/utils/orderCode'
+import { customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, userCodeValidationError } from '~/utils/orderCode'
 import { generateCustomerCode } from '~/utils/customerCode'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
@@ -13,6 +13,7 @@ const { calcItems, computePaymentStatus, parseLogoLines } = useOrderLogic()
 const { invalidateScopedCache } = useRepo()
 const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
 const { loadScopedOrders, loadScopedOrderItems, loadScopedPayments, loadScopedExportRequests, loadScopedCustomers, loadProducts } = useScopedQueries()
+const { saveOrderAtomic } = useAtomicOrderSave()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const { buildFulfillmentRows, orderSummary, requestLineProgress } = useWarehouseLogic()
@@ -495,14 +496,6 @@ function closePrint() {
   selectedPrintOrder.value = null
 }
 
-async function commitWriteChunks(writes: Array<(batch: ReturnType<typeof writeBatch>) => void>, size = 8) {
-  for (let index = 0; index < writes.length; index += size) {
-    const batch = writeBatch(db)
-    writes.slice(index, index + size).forEach(write => write(batch))
-    await batch.commit()
-  }
-}
-
 async function saveOrder() {
   if (editing.value && !canEditRow(editing.value)) return showToast('Bạn không có quyền sửa đơn hàng này', 'error')
   if (!editing.value && !hasPermission('orders.create')) return showToast('Bạn không có quyền tạo đơn hàng', 'error')
@@ -524,9 +517,20 @@ async function saveOrder() {
       customers.value = customers.value.map(customer => customer.id === selectedCustomer?.id ? selectedCustomer as CustomerDoc : customer)
       form.customer_code = selectedCustomer.customer_code || ''
     }
+
     const customerCode = normalizeCustomerCode(form.customer_code || selectedCustomer?.customer_code)
     const customerCodeError = customerCodeValidationError(customerCode)
-    if (!editing.value && customerCodeError) throw new Error(customerCodeError)
+    if (customerCodeError) throw new Error(customerCodeError)
+    const userCode = normalizeUserCode(
+      editing.value
+        ? (form.user_code || String(form.order_code || '').split('-')[0])
+        : appUser.value?.user_code,
+    )
+    const userCodeError = userCodeValidationError(userCode)
+    if (userCodeError) {
+      throw new Error(`${userCodeError} Vui lòng nhờ quản trị viên cập nhật tài khoản.`)
+    }
+
     const saveItems = buildSaveItems()
     const exportError = validateNotBelowExported(saveItems)
     if (exportError) throw new Error(exportError)
@@ -548,142 +552,74 @@ async function saveOrder() {
     const paymentSummary = editing.value
       ? {}
       : computePaymentStatus(baseOrder, paymentsByOrder.value[form.id] || [])
-
-    const orderRef = doc(db, 'orders', form.id)
-    const activityRef = doc(collection(db, 'activity_logs'))
-    const makeOrderPayload = () => ({
+    const existingItems = itemsByOrder.value[form.id] || []
+    const orderPayload = {
       ...baseOrder,
       ...paymentSummary,
-      order_code: form.order_code,
+      order_code: form.order_code || '',
       ...(form.order_sequence ? { order_sequence: toNumber(form.order_sequence) } : {}),
-      ...(form.user_code ? { user_code: normalizeUserCode(form.user_code) } : {}),
-      ...(form.customer_code ? { customer_code: normalizeCustomerCode(form.customer_code) } : {}),
+      user_code: userCode,
+      customer_code: customerCode,
       vat_rate: toNumber(form.vat_rate),
       owner_email: ownerEmail,
       sale_email: saleEmail,
       created_by: createdBy,
       items_count: totals.items.length,
-      search_text: normalizeText(`${form.order_code} ${form.customer_name} ${form.phone}`),
-      updated_at: serverTimestamp(),
+      search_text: normalizeText(`${form.order_code || ''} ${form.customer_name} ${form.phone}`),
       ...(editing.value ? {} : {
         invoice_status: form.invoice_status || 'Không xuất',
         warehouse_fulfillment_status: form.warehouse_fulfillment_status || 'chua_xuat',
         warehouse_request_status: form.warehouse_request_status || '',
         created_at: serverTimestamp(),
         active: true,
-        deleted: false
-      })
-    })
-    const makeActivityPayload = () => ({
-      module: 'orders',
-      action: editing.value ? 'update' : 'create',
-      item_code: form.order_code,
-      item_name: form.customer_name || form.order_code,
-      changed_by: appUser.value?.email || '',
-      after_json: JSON.stringify({
-        ...baseOrder,
-        ...paymentSummary,
-        order_code: form.order_code,
-        order_sequence: form.order_sequence,
-        user_code: form.user_code,
-        owner_email: ownerEmail,
-        sale_email: saleEmail,
-        created_by: createdBy
-      }),
-      created_at: serverTimestamp(),
-      active: true,
-      deleted: false
-    })
-
-    if (editing.value) {
-      const orderBatch = writeBatch(db)
-      orderBatch.set(orderRef, makeOrderPayload(), { merge: true })
-      orderBatch.set(activityRef, makeActivityPayload())
-      await orderBatch.commit()
-    } else {
-      const userCode = normalizeUserCode(appUser.value?.user_code)
-      const userCodeError = userCodeValidationError(userCode)
-      if (userCodeError) {
-        throw new Error(`${userCodeError} Vui lòng nhờ quản trị viên cập nhật tài khoản.`)
-      }
-
-      const sequenceRef = doc(db, 'order_sequences', form.customer_id)
-
-      await runTransaction(db, async transaction => {
-        const sequenceSnapshot = await transaction.get(sequenceRef)
-        const nextNumber = sequenceSnapshot.exists()
-          ? Math.max(ORDER_SEQUENCE_START - 1, toNumber(sequenceSnapshot.data().last_number)) + 1
-          : ORDER_SEQUENCE_START
-        const orderCode = buildOrderCode(userCode, customerCode, nextNumber)
-
-        form.order_code = orderCode
-        form.order_sequence = nextNumber
-        form.user_code = userCode
-        form.customer_code = customerCode
-        baseOrder.order_code = orderCode
-        baseOrder.order_sequence = nextNumber
-        baseOrder.user_code = userCode
-        baseOrder.customer_code = customerCode
-
-        transaction.set(sequenceRef, {
-          customer_id: form.customer_id,
-          customer_code: customerCode,
-          last_number: nextNumber,
-          updated_by: createdBy,
-          updated_at: serverTimestamp(),
-          ...(sequenceSnapshot.exists() ? {} : { created_at: serverTimestamp() })
-        }, { merge: true })
-        transaction.set(orderRef, makeOrderPayload())
-        transaction.set(activityRef, makeActivityPayload())
+        deleted: false,
+        status: form.status || 'active'
       })
     }
 
-    const existingItemIds = new Set((itemsByOrder.value[form.id] || []).map(item => item.id))
-    const nextIds = new Set(totals.items.map((item: any) => item.id))
-    const itemWrites: Array<(batch: ReturnType<typeof writeBatch>) => void> = []
-    ;(itemsByOrder.value[form.id] || []).forEach(item => {
-      if (!nextIds.has(item.id)) {
-        itemWrites.push(batch => batch.update(doc(db, 'order_items', item.id), {
-          deleted: true,
-          active: false,
-          status: 'deleted',
-          updated_at: serverTimestamp()
-        }))
-      }
+    const result = await saveOrderAtomic({
+      mode: editing.value ? 'edit' : 'create',
+      orderId: form.id,
+      customerId: form.customer_id,
+      customerCode,
+      userCode,
+      expectedRevision: toNumber(editing.value?.revision),
+      ownerEmail,
+      saleEmail,
+      createdBy,
+      changedBy: appUser.value?.email || '',
+      orderPayload,
+      nextItems: totals.items,
+      existingItems,
+      activityAction: editing.value ? 'update' : 'create',
+      activityItemName: form.customer_name || form.order_code,
+      activityBefore: editing.value
+        ? { ...editing.value, items: existingItems }
+        : null,
     })
 
-    totals.items.forEach((item: any) => {
-      const isNewItem = !existingItemIds.has(item.id)
-      itemWrites.push(batch => batch.set(doc(db, 'order_items', item.id), {
-        ...item,
-        order_id: form.id,
-        order_code: form.order_code,
-        owner_email: ownerEmail,
-        sale_email: saleEmail,
-        created_by: createdBy,
-        updated_at: serverTimestamp(),
-        ...(isNewItem ? {
-          status: 'active',
-          active: true,
-          deleted: false,
-          created_at: serverTimestamp()
-        } : {})
-      }, { merge: true }))
-    })
-
-    await commitWriteChunks(itemWrites)
+    form.order_code = result.orderCode
+    form.order_sequence = result.orderSequence
+    form.user_code = userCode
+    form.customer_code = customerCode
+    form.revision = result.revision
+    form.last_operation_id = result.operationId
 
     const now = new Date().toISOString()
+    const previousItems = new Map(existingItems.map(item => [item.id, item]))
     const localItems = totals.items.map((item: any) => ({
       ...item,
       order_id: form.id,
-      order_code: form.order_code,
+      order_code: result.orderCode,
       owner_email: ownerEmail,
       sale_email: saleEmail,
       created_by: createdBy,
+      order_revision: result.revision,
+      last_operation_id: result.operationId,
       status: 'active',
       active: true,
       deleted: false,
+      created_at: previousItems.get(item.id)?.created_at || now,
       updated_at: now
     })) as OrderItemDoc[]
     itemsByOrder.value[form.id] = localItems
@@ -693,15 +629,22 @@ async function saveOrder() {
       ...baseOrder,
       ...paymentSummary,
       id: form.id,
+      order_code: result.orderCode,
+      order_sequence: result.orderSequence,
+      user_code: userCode,
+      customer_code: customerCode,
       owner_email: ownerEmail,
       sale_email: saleEmail,
       created_by: createdBy,
+      revision: result.revision,
+      last_operation_id: result.operationId,
       invoice_status: editing.value && !canManageInvoiceStatus.value
         ? (editing.value.invoice_status || 'Không xuất')
         : (form.invoice_status || 'Không xuất'),
       items_count: localItems.length,
       active: true,
       deleted: false,
+      created_at: editing.value?.created_at || now,
       updated_at: now
     } as OrderDoc
     const orderRequests = exportRequests.value.filter(request => request.order_id === form.id && isActive(request))
@@ -715,7 +658,12 @@ async function saveOrder() {
     invalidateScopedCache('activity_logs')
     showModal.value = false
     showToast(editing.value ? 'Đã cập nhật đơn hàng' : 'Đã thêm đơn hàng', 'success')
-  }).catch(error => showToast((error as any)?.code ? reportFirebaseError(error, 'Lưu đơn thất bại.') : ((error as any)?.message || 'Lưu đơn thất bại.'), 'error')).finally(() => {
+  }).catch(error => showToast(
+    (error as any)?.code
+      ? reportFirebaseError(error, 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.')
+      : ((error as any)?.message || 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.'),
+    'error',
+  )).finally(() => {
     saving.value = false
   })
 }
