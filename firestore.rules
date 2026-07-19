@@ -686,65 +686,62 @@ service cloud.firestore {
       ]);
     }
 
-    function orderPrintingCreateSummaryAllowed(orderId) {
-      let printOrderId = request.resource.data.get('printing_last_print_order_id', '');
-      let path = printOrderPath(printOrderId);
-      return hasPerm('printing.create')
-        && printingLockReadyData(resource.data)
-        && onlyPrintingLockChanged()
-        && request.resource.data.get('printing_lock_version', 0) == 1
-        && request.resource.data.get('printing_progress_count', -1) == resource.data.get('printing_progress_count', -1) + 1
-        && request.resource.data.get('printing_last_action', '') == 'create'
-        && printOrderId is string
-        && printOrderId != ''
-        && ownEmailField(request.resource.data, 'printing_lock_updated_by')
-        && !exists(path)
-        && existsAfter(path)
-        && getAfter(path).data.get('order_id', '') == orderId
-        && getAfter(path).data.get('deleted', false) != true
-        && getAfter(path).data.get('active', true) != false;
-    }
-
-    function orderPrintingDeleteSummaryAllowed(orderId) {
-      let printOrderId = request.resource.data.get('printing_last_print_order_id', '');
-      let path = printOrderPath(printOrderId);
-      return hasPerm('printing.delete')
-        && printingLockReadyData(resource.data)
-        && resource.data.get('printing_progress_count', 0) > 0
-        && onlyPrintingLockChanged()
-        && request.resource.data.get('printing_lock_version', 0) == 1
-        && request.resource.data.get('printing_progress_count', -1) == resource.data.get('printing_progress_count', -1) - 1
-        && request.resource.data.get('printing_last_action', '') == 'delete'
-        && printOrderId is string
-        && printOrderId != ''
-        && ownEmailField(request.resource.data, 'printing_lock_updated_by')
-        && exists(path)
-        && get(path).data.get('order_id', '') == orderId
-        && get(path).data.get('deleted', false) != true
-        && existsAfter(path)
-        && getAfter(path).data.get('order_id', '') == orderId
-        && getAfter(path).data.get('deleted', false) == true
-        && getAfter(path).data.get('active', true) == false;
-    }
-
     function orderPrintingSummaryUpdateAllowed(orderId) {
-      return orderPrintingCreateSummaryAllowed(orderId)
-        || orderPrintingDeleteSummaryAllowed(orderId);
+      let action = request.resource.data.get('printing_last_action', '');
+      let printOrderId = request.resource.data.get('printing_last_print_order_id', '');
+      let path = printOrderPath(printOrderId);
+      let currentCount = resource.data.get('printing_progress_count', -1);
+      let nextCount = request.resource.data.get('printing_progress_count', -1);
+      return onlyPrintingLockChanged()
+        && printingLockReadyData(resource.data)
+        && request.resource.data.get('printing_lock_version', 0) == 1
+        && printOrderId is string
+        && printOrderId != ''
+        && ownEmailField(request.resource.data, 'printing_lock_updated_by')
+        && (
+          (
+            action == 'create'
+            && hasPerm('printing.create')
+            && nextCount == currentCount + 1
+            && !exists(path)
+            && existsAfter(path)
+            && getAfter(path).data.get('order_id', '') == orderId
+            && getAfter(path).data.get('deleted', false) != true
+            && getAfter(path).data.get('active', true) != false
+          )
+          || (
+            action == 'delete'
+            && hasPerm('printing.delete')
+            && currentCount > 0
+            && nextCount == currentCount - 1
+            && exists(path)
+            && get(path).data.get('order_id', '') == orderId
+            && get(path).data.get('deleted', false) != true
+            && existsAfter(path)
+            && getAfter(path).data.get('order_id', '') == orderId
+            && getAfter(path).data.get('deleted', false) == true
+            && getAfter(path).data.get('active', true) == false
+          )
+        );
     }
 
     function printCreateHasParentLock(printOrderId, data) {
       let orderId = data.get('order_id', '');
       let path = orderPath(orderId);
+      let before = get(path).data;
+      let after = getAfter(path).data;
       return orderId is string
         && orderId != ''
         && exists(path)
         && existsAfter(path)
-        && printingLockReadyData(get(path).data)
-        && printingLockReadyData(getAfter(path).data)
-        && getAfter(path).data.get('printing_progress_count', -1) == get(path).data.get('printing_progress_count', -1) + 1
-        && getAfter(path).data.get('printing_last_action', '') == 'create'
-        && getAfter(path).data.get('printing_last_print_order_id', '') == printOrderId
-        && emailFieldEquals(getAfter(path).data, 'printing_lock_updated_by', email());
+        && orderDataIsActive(before)
+        && data.get('order_code', '') == before.get('order_code', '')
+        && printingLockReadyData(before)
+        && printingLockReadyData(after)
+        && after.get('printing_progress_count', -1) == before.get('printing_progress_count', -1) + 1
+        && after.get('printing_last_action', '') == 'create'
+        && after.get('printing_last_print_order_id', '') == printOrderId
+        && emailFieldEquals(after, 'printing_lock_updated_by', email());
     }
 
     function printDeleteHasParentLock(printOrderId, orderId) {
@@ -1190,8 +1187,8 @@ service cloud.firestore {
         && printingLockReadyData(request.resource.data)
         && request.resource.data.get('printing_progress_count', -1) == 0;
 
-      allow update: if orderWarehouseSummaryUpdateAllowed()
-        || orderPrintingSummaryUpdateAllowed(docId)
+      allow update: if orderPrintingSummaryUpdateAllowed(docId)
+        || orderWarehouseSummaryUpdateAllowed()
         || isAdmin()
         || (
           // Normal business edit by an owner.
@@ -1403,24 +1400,11 @@ service cloud.firestore {
       allow create: if hasPerm('printing.create')
         && request.resource.data.get('order_code', '') is string
         && request.resource.data.get('order_code', '') != ''
-        && printOrderSourceMatches(request.resource.data)
         && printCreateHasParentLock(docId, request.resource.data)
         && ownEmailField(request.resource.data, 'created_by');
 
-      // Check the soft-delete shape first so users with both edit and delete
-      // permissions do not exhaust the Rules expression budget on the edit path.
+      // Normal edits are evaluated before the more expensive atomic delete path.
       allow update: if isAdmin()
-        || (
-          warehouseSoftDeleteOnly()
-          && hasPerm('printing.delete')
-          && unchanged(['order_id', 'order_code'])
-          && printDeleteHasParentLock(docId, resource.data.get('order_id', ''))
-          && (
-            hasPerm('printing.view_all')
-            || ownsPrintOrderData(resource.data)
-          )
-          && warehouseDocIdentitySafe()
-        )
         || (
           unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
           && unchanged(['order_id', 'order_code'])
@@ -1433,6 +1417,17 @@ service cloud.firestore {
           && request.resource.data.get('order_code', '') is string
           && request.resource.data.get('order_code', '') != ''
           && printOrderSourceMatches(request.resource.data)
+        )
+        || (
+          warehouseSoftDeleteOnly()
+          && hasPerm('printing.delete')
+          && unchanged(['order_id', 'order_code'])
+          && (
+            hasPerm('printing.view_all')
+            || ownsPrintOrderData(resource.data)
+          )
+          && warehouseDocIdentitySafe()
+          && printDeleteHasParentLock(docId, resource.data.get('order_id', ''))
         );
 
       allow delete: if isAdmin();
@@ -1450,15 +1445,8 @@ service cloud.firestore {
         && printQuantitiesAreValid(request.resource.data)
         && ownEmailField(request.resource.data, 'created_by');
 
-      // As with print_orders, evaluate the delete shape before the edit path.
+      // Normal item edits are evaluated before the atomic soft-delete path.
       allow update: if isAdmin()
-        || (
-          warehouseSoftDeleteOnly()
-          && hasPerm('printing.delete')
-          && resource.data.print_order_id is string
-          && printingCanDeleteProgressAfterById(resource.data.print_order_id)
-          && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
-        )
         || (
           unchanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
           && hasPerm('printing.edit')
@@ -1466,6 +1454,13 @@ service cloud.firestore {
           && printingCanOperateProgressAfterById(resource.data.print_order_id)
           && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
           && printQuantitiesAreValid(request.resource.data)
+        )
+        || (
+          warehouseSoftDeleteOnly()
+          && hasPerm('printing.delete')
+          && resource.data.print_order_id is string
+          && unchanged(['id', 'print_order_id', 'created_at', 'created_by', 'source'])
+          && printingCanDeleteProgressAfterById(resource.data.print_order_id)
         );
 
       allow delete: if isAdmin();

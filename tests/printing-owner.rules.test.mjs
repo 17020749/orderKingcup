@@ -34,13 +34,19 @@ function user(email, permissions) {
   }
 }
 
-function sourceOrder(id, code, owner) {
+function sourceOrder(id, code, owner, printingCount = 0) {
   return {
     id,
     order_code: code,
     owner_email: owner,
     created_by: owner,
     sale_email: owner,
+    printing_progress_count: printingCount,
+    printing_lock_version: 1,
+    printing_last_action: 'reconcile',
+    printing_last_print_order_id: '',
+    printing_lock_updated_by: owner,
+    printing_lock_updated_at: 'now',
     active: true,
     deleted: false,
   }
@@ -100,8 +106,8 @@ async function seed() {
       setDoc(doc(db, 'users', OPERATOR_A), user(OPERATOR_A, operatorPermissions)),
       setDoc(doc(db, 'users', OPERATOR_B), user(OPERATOR_B, operatorPermissions)),
       setDoc(doc(db, 'users', SELF_OPERATOR), user(SELF_OPERATOR, ['page.printing', 'printing.view', 'printing.create', 'printing.edit', 'printing.delete'])),
-      setDoc(doc(db, 'orders', 'source-order-a'), sourceOrder('source-order-a', 'DH-A', SALE_OWNER)),
-      setDoc(doc(db, 'orders', 'source-order-b'), sourceOrder('source-order-b', 'DH-B', OTHER_SALE)),
+      setDoc(doc(db, 'orders', 'source-order-a'), sourceOrder('source-order-a', 'DH-A', SALE_OWNER, 1)),
+      setDoc(doc(db, 'orders', 'source-order-b'), sourceOrder('source-order-b', 'DH-B', OTHER_SALE, 2)),
       setDoc(doc(db, 'products', 'product-a'), {
         id: 'product-a',
         product_code: 'SP-A',
@@ -203,7 +209,16 @@ test('vận hành có view_all và edit/delete thao tác được tiến độ d
     updated_by: OPERATOR_A,
     updated_at: 'later',
   }))
-  await assertSucceeds(updateDoc(doc(db, 'print_orders', 'print-order-a'), {
+  const deleteBatch = writeBatch(db)
+  deleteBatch.update(doc(db, 'orders', 'source-order-a'), {
+    printing_progress_count: 0,
+    printing_lock_version: 1,
+    printing_last_action: 'delete',
+    printing_last_print_order_id: 'print-order-a',
+    printing_lock_updated_by: OPERATOR_A,
+    printing_lock_updated_at: 'later',
+  })
+  deleteBatch.update(doc(db, 'print_orders', 'print-order-a'), {
     deleted: true,
     active: false,
     status: 'deleted',
@@ -211,7 +226,17 @@ test('vận hành có view_all và edit/delete thao tác được tiến độ d
     deleted_by: OPERATOR_A,
     updated_by: OPERATOR_A,
     updated_at: 'later',
-  }))
+  })
+  deleteBatch.update(doc(db, 'print_order_items', 'item-order-a'), {
+    deleted: true,
+    active: false,
+    status: 'deleted',
+    deleted_at: 'later',
+    deleted_by: OPERATOR_A,
+    updated_by: OPERATOR_A,
+    updated_at: 'later',
+  })
+  await assertSucceeds(deleteBatch.commit())
 })
 
 test('printing.view vẫn chỉ đọc tiến độ do chính người đó lập', async () => {
@@ -226,6 +251,14 @@ test('printing.view vẫn chỉ đọc tiến độ do chính người đó lậ
 test('vận hành tạo đơn in và dòng in trong cùng batch vẫn hợp lệ', async () => {
   const db = env.authenticatedContext(OPERATOR_A, { email: OPERATOR_A }).firestore()
   const batch = writeBatch(db)
+  batch.update(doc(db, 'orders', 'source-order-a'), {
+    printing_progress_count: 2,
+    printing_lock_version: 1,
+    printing_last_action: 'create',
+    printing_last_print_order_id: 'print-new',
+    printing_lock_updated_by: OPERATOR_A,
+    printing_lock_updated_at: 'later',
+  })
   batch.set(
     doc(db, 'print_orders', 'print-new'),
     printOrder('print-new', OPERATOR_A, 'source-order-a', 'DH-A'),
