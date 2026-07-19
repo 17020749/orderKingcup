@@ -3,7 +3,7 @@ import type { OrderDoc, ShipmentDoc } from '~/types/models'
 import { formatDateTime, isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
-const { saveDoc, softDeleteDoc } = useRepo()
+const { mutateOrderRelation } = useAtomicOrderRelations()
 const { loadScopedOrders, loadScopedShipments } = useScopedQueries()
 const { appUser, hasPermission } = useAuth()
 const { showToast, withLoading } = useUi()
@@ -24,6 +24,7 @@ const filtered = computed(() => rows.value.filter(row =>
   normalizeText(`${row.order_code} ${row.carrier} ${row.tracking_code} ${row.shipping_status}`)
     .includes(normalizeText(search.value))
 ))
+const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id))
 
 async function loadRows(force = false) {
   loading.value = true
@@ -42,7 +43,7 @@ async function loadRows(force = false) {
 }
 
 function chooseOrder() {
-  const order = orders.value.find(row => row.id === form.order_id)
+  const order = selectedOrder.value
   if (!order) return
   form.order_code = order.order_code
   form.receiver_name ||= order.customer_name
@@ -55,6 +56,7 @@ function openDetail(row: ShipmentDoc) {
 }
 
 function openModal(row?: ShipmentDoc) {
+  if (row && !hasPermission('shipments.edit') && !hasPermission('*')) return showToast('Bạn không có quyền sửa vận chuyển.', 'error')
   editing.value = row || null
   Object.assign(form, row ? { ...row } : {
     id: makeId('shp'),
@@ -77,33 +79,44 @@ function openModal(row?: ShipmentDoc) {
 }
 
 async function save() {
+  if (editing.value && !hasPermission('shipments.edit') && !hasPermission('*')) return showToast('Bạn không có quyền sửa vận chuyển.', 'error')
+  if (!editing.value && !hasPermission('shipments.create') && !hasPermission('*')) return showToast('Bạn không có quyền tạo vận chuyển.', 'error')
   if (!form.order_id) return showToast('Vui lòng chọn đơn hàng.', 'error')
+  const order = selectedOrder.value
+  if (!order) return showToast('Không tìm thấy đơn hàng.', 'error')
+
   saving.value = true
   await withLoading(async () => {
     chooseOrder()
-    const order = orders.value.find(row => row.id === form.order_id)
-    if (!order) throw new Error('Không tìm thấy đơn hàng')
+    const result = await mutateOrderRelation({
+      module: 'shipments',
+      mode: editing.value ? 'update' : 'create',
+      order,
+      record: {
+        ...form,
+        shipping_fee: toNumber(form.shipping_fee),
+        cod_amount: toNumber(form.cod_amount),
+        created_by: editing.value?.created_by || appUser.value?.email || '',
+      },
+      existingRecords: rows.value.filter(row => row.order_id === order.id),
+      actor: appUser.value?.email || '',
+    })
 
-    const record = await saveDoc('shipments', {
-      ...form,
-      shipping_fee: toNumber(form.shipping_fee),
-      cod_amount: toNumber(form.cod_amount),
-      created_by: editing.value?.created_by || appUser.value?.email || '',
-      order_owner_email: order.owner_email || '',
-      order_created_by: order.created_by || '',
-      order_sale_email: order.sale_email || ''
-    }, form.id, { isCreate: !editing.value }) as ShipmentDoc
-
+    const record = result.record as ShipmentDoc
     const index = rows.value.findIndex(row => row.id === record.id)
     if (index >= 0) rows.value[index] = { ...rows.value[index], ...record }
     else rows.value.unshift(record)
+    Object.assign(order, result.orderPatch)
     showModal.value = false
-    showToast(editing.value ? 'Đã cập nhật vận chuyển.' : 'Đã thêm vận chuyển.', 'success')
-  }).catch(error => showToast(reportFirebaseError(error, 'Không lưu được vận chuyển.'), 'error'))
+    showToast(editing.value ? 'Đã cập nhật vận chuyển và tổng hợp đơn hàng.' : 'Đã thêm vận chuyển và cập nhật đơn hàng.', 'success')
+  }).catch(error => showToast(reportFirebaseError(error, 'Không lưu được vận chuyển. Toàn bộ thay đổi đã hoàn tác.'), 'error'))
     .finally(() => { saving.value = false })
 }
 
 async function remove(row: ShipmentDoc) {
+  if (!hasPermission('shipments.delete') && !hasPermission('*')) return showToast('Bạn không có quyền xóa vận chuyển.', 'error')
+  const order = orders.value.find(item => item.id === row.order_id)
+  if (!order) return showToast('Không tìm thấy đơn hàng cha của vận chuyển.', 'error')
   const confirmed = await askConfirm({
     title: 'Xóa vận chuyển',
     message: `Bạn chắc chắn muốn xóa vận chuyển của đơn ${row.order_code}?`,
@@ -111,10 +124,18 @@ async function remove(row: ShipmentDoc) {
   })
   if (!confirmed) return
   await withLoading(async () => {
-    await softDeleteDoc('shipments', row.id, row.order_code || row.id)
+    const result = await mutateOrderRelation({
+      module: 'shipments',
+      mode: 'delete',
+      order,
+      record: row,
+      existingRecords: rows.value.filter(item => item.order_id === order.id),
+      actor: appUser.value?.email || '',
+    })
     rows.value = rows.value.filter(item => item.id !== row.id)
-    showToast('Đã xóa vận chuyển.', 'success')
-  }).catch(error => showToast(reportFirebaseError(error, 'Không xóa được vận chuyển.'), 'error'))
+    Object.assign(order, result.orderPatch)
+    showToast('Đã xóa vận chuyển và cập nhật lại tổng hợp đơn hàng.', 'success')
+  }).catch(error => showToast(reportFirebaseError(error, 'Không xóa được vận chuyển. Toàn bộ thay đổi đã hoàn tác.'), 'error'))
 }
 
 onMounted(() => loadRows())
@@ -147,7 +168,7 @@ onMounted(() => loadRows())
 
     <BaseModal v-if="showModal" :title="editing ? 'Sửa vận chuyển' : 'Thêm vận chuyển'" size="lg" :loading="saving" @close="showModal=false" @save="save">
       <div class="form-grid">
-        <div class="form-group"><label>Đơn hàng</label><select v-model="form.order_id" class="select" @change="chooseOrder"><option value="">Chọn đơn</option><option v-for="order in orders" :key="order.id" :value="order.id">{{ order.order_code }} - {{ order.customer_name }}</option></select></div>
+        <div class="form-group"><label>Đơn hàng</label><select v-model="form.order_id" class="select" :disabled="!!editing" @change="chooseOrder"><option value="">Chọn đơn</option><option v-for="order in orders" :key="order.id" :value="order.id">{{ order.order_code }} - {{ order.customer_name }}</option></select></div>
         <div class="form-group"><label>Nhà vận chuyển</label><input v-model="form.carrier" class="input" /></div>
         <div class="form-group"><label>Mã vận đơn</label><input v-model="form.tracking_code" class="input" /></div>
         <div class="form-group"><label>Ngày giao</label><input v-model="form.shipped_date" class="input" type="date" /></div>
@@ -165,15 +186,11 @@ onMounted(() => loadRows())
       v-if="showDetailModal && selectedDetail"
       title="Chi tiết vận chuyển"
       :record="selectedDetail"
-      :field-order="['id','order_id','order_code','carrier','tracking_code','shipping_status','shipped_date','delivered_date','shipping_fee','cod_amount','receiver_name','receiver_phone','receiver_address','note','created_by','created_at','updated_at','order_owner_email','order_created_by','order_sale_email','status','active','deleted']"
+      :field-order="['id','order_id','order_code','carrier','tracking_code','shipping_status','shipped_date','delivered_date','shipping_fee','cod_amount','receiver_name','receiver_phone','receiver_address','note','created_by','created_at','updated_at','order_owner_email','order_created_by','order_sale_email','relation_revision','last_operation_id','status','active','deleted']"
       :money-fields="['shipping_fee','cod_amount']"
       @close="showDetailModal = false"
     />
 
-    <ConfirmModal
-      v-bind="confirmState"
-      @cancel="resolveConfirm(false)"
-      @confirm="resolveConfirm(true)"
-    />
+    <ConfirmModal v-bind="confirmState" @cancel="resolveConfirm(false)" @confirm="resolveConfirm(true)" />
   </AppShell>
 </template>
