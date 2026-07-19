@@ -1,0 +1,38 @@
+name: Finalize Step 5 Tests
+
+on:
+  push:
+    branches:
+      - agent/step-5-atomic-order-save
+    paths:
+      - scripts/finalize-step5-tests.mjs
+      - .github/workflows/finalize-step5-tests.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/step-5-atomic-order-save
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+
+      - name: Apply final test fixes
+        run: node scripts/finalize-step5-tests.mjs
+
+      - name: Commit final files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/order-atomic-save.rules.test.mjs package.json .github/workflows/diagnose-step5-pr.yml scripts/finalize-step5-tests.mjs .github/workflows/finalize-step5-tests.yml
+          git commit -m "test(orders): verify atomic log without granting sale log access"
+          git push origin HEAD:agent/step-5-atomic-order-save
