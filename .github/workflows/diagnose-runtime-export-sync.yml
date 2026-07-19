@@ -1,0 +1,52 @@
+name: Diagnose Runtime Export Sync
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'fix/runtime-export-and-sync-locks'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/runtime-export-and-sync-locks
+          fetch-depth: 0
+          show-progress: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '9.15.9'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: pnpm install --no-frozen-lockfile --ignore-scripts
+      - name: Run isolated tests
+        id: tests
+        continue-on-error: true
+        run: |
+          pnpm exec firebase emulators:exec --only firestore "node --test --test-concurrency=1 tests/runtime-export-sync.client.test.mjs tests/order-relation-reconcile.rules.test.mjs" > runtime-export-sync-full.log 2>&1
+      - name: Persist concise result
+        run: |
+          {
+            grep -n -B 4 -A 24 "not ok" runtime-export-sync-full.log || true
+            echo "--- SUMMARY ---"
+            tail -n 40 runtime-export-sync-full.log
+          } > runtime-export-sync-diagnose.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add runtime-export-sync-diagnose.txt
+          git commit -m "chore(fix): record isolated test result" || true
+          git push origin HEAD:fix/runtime-export-and-sync-locks
