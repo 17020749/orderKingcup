@@ -14,6 +14,11 @@ const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
+const paymentTypeFilter = ref('')
+const methodFilter = ref('')
+const paymentStatusFilter = ref('')
+const dateFrom = ref('')
+const dateTo = ref('')
 const rows = ref<PaymentDoc[]>([])
 const orders = ref<OrderDoc[]>([])
 const showModal = ref(false)
@@ -22,10 +27,33 @@ const selectedDetail = ref<PaymentDoc | null>(null)
 const editing = ref<PaymentDoc | null>(null)
 const form = reactive<any>({})
 
-const filtered = computed(() => rows.value.filter(row =>
-  normalizeText(`${row.order_code} ${row.payment_type} ${row.method} ${row.payment_status} ${row.created_by}`)
-    .includes(normalizeText(search.value))
-))
+function dateKey(value: any) {
+  return String(value || '').slice(0, 10)
+}
+
+const filtered = computed(() => {
+  const keyword = normalizeText(search.value)
+  return rows.value.filter(row => {
+    const matchedText = !keyword || normalizeText(`${row.order_code} ${row.payment_type} ${row.method} ${row.payment_status} ${row.created_by}`).includes(keyword)
+    const rowDate = dateKey(row.payment_date || row.created_at)
+    return matchedText
+      && (!paymentTypeFilter.value || row.payment_type === paymentTypeFilter.value)
+      && (!methodFilter.value || row.method === methodFilter.value)
+      && (!paymentStatusFilter.value || row.payment_status === paymentStatusFilter.value)
+      && (!dateFrom.value || (!!rowDate && rowDate >= dateFrom.value))
+      && (!dateTo.value || (!!rowDate && rowDate <= dateTo.value))
+  })
+})
+
+function resetFilters() {
+  search.value = ''
+  paymentTypeFilter.value = ''
+  methodFilter.value = ''
+  paymentStatusFilter.value = ''
+  dateFrom.value = ''
+  dateTo.value = ''
+}
+
 const canEditPayments = computed(() => hasPermission('*') || hasPermission('payments.edit'))
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id || order.order_code === form.order_code))
 
@@ -159,6 +187,12 @@ onMounted(() => loadRows())
     <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm mã đơn, loại thanh toán..." />
+        <select v-model="paymentTypeFilter" class="select"><option value="">Tất cả loại</option><option v-for="value in PAYMENT_TYPES" :key="value" :value="value">{{ value }}</option></select>
+        <select v-model="methodFilter" class="select"><option value="">Tất cả phương thức</option><option v-for="value in PAYMENT_METHODS" :key="value" :value="value">{{ value }}</option></select>
+        <select v-model="paymentStatusFilter" class="select"><option value="">Tất cả trạng thái</option><option v-for="value in PAYMENT_STATUSES" :key="value" :value="value">{{ value }}</option></select>
+        <input v-model="dateFrom" class="input" type="date" aria-label="Từ ngày" />
+        <input v-model="dateTo" class="input" type="date" aria-label="Đến ngày" />
+        <button class="btn" @click="resetFilters">Xóa lọc</button>
         <button class="btn" @click="loadRows(true)">Làm mới</button>
       </div>
       <LoadingState v-if="loading" />

@@ -29,6 +29,13 @@ const { buildFulfillmentRows, orderSummary, requestLineProgress } = useWarehouse
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
+const orderStatusFilter = ref('')
+const paymentStatusFilter = ref('')
+const invoiceStatusFilter = ref('')
+const classificationFilter = ref('')
+const dateFrom = ref('')
+const dateTo = ref('')
+const ownerFilter = ref('')
 const rows = ref<OrderDoc[]>([])
 const customers = ref<CustomerDoc[]>([])
 const products = ref<ProductDoc[]>([])
@@ -48,9 +55,39 @@ const form = reactive<any>({})
 const formItems = ref<any[]>([])
 const customerForm = reactive<any>({})
 
-const filtered = computed(() => rows.value.filter(row =>
-  normalizeText(`${row.order_code} ${row.customer_name} ${row.phone} ${row.order_classification} ${row.order_status} ${row.payment_status} ${row.invoice_status}`).includes(normalizeText(search.value))
-))
+function dateKey(value: any) {
+  return String(value || '').slice(0, 10)
+}
+
+const ownerOptions = computed(() => Array.from(new Set(rows.value.flatMap(row => [row.owner_email, row.sale_email, row.created_by]).map(value => String(value || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')))
+
+const filtered = computed(() => {
+  const keyword = normalizeText(search.value)
+  return rows.value.filter(row => {
+    const matchedText = !keyword || normalizeText(`${row.order_code} ${row.customer_name} ${row.phone} ${row.order_classification} ${row.order_status} ${row.payment_status} ${row.invoice_status} ${row.owner_email} ${row.sale_email} ${row.created_by}`).includes(keyword)
+    const matchedOrderStatus = !orderStatusFilter.value || row.order_status === orderStatusFilter.value
+    const matchedPaymentStatus = !paymentStatusFilter.value || row.payment_status === paymentStatusFilter.value
+    const matchedInvoiceStatus = !invoiceStatusFilter.value || row.invoice_status === invoiceStatusFilter.value
+    const matchedClassification = !classificationFilter.value || row.order_classification === classificationFilter.value
+    const rowDate = dateKey(row.order_date || row.created_at)
+    const matchedDateFrom = !dateFrom.value || (!!rowDate && rowDate >= dateFrom.value)
+    const matchedDateTo = !dateTo.value || (!!rowDate && rowDate <= dateTo.value)
+    const matchedOwner = !ownerFilter.value || [row.owner_email, row.sale_email, row.created_by].includes(ownerFilter.value)
+    return matchedText && matchedOrderStatus && matchedPaymentStatus && matchedInvoiceStatus && matchedClassification && matchedDateFrom && matchedDateTo && matchedOwner
+  })
+})
+
+function resetFilters() {
+  search.value = ''
+  orderStatusFilter.value = ''
+  paymentStatusFilter.value = ''
+  invoiceStatusFilter.value = ''
+  classificationFilter.value = ''
+  dateFrom.value = ''
+  dateTo.value = ''
+  ownerFilter.value = ''
+}
+
 const canEditOrders = computed(() => hasPermission('orders.edit'))
 const canManageInvoiceStatus = computed(() => !editing.value && hasPermission('invoices.create'))
 const itemCount = computed(() => `${formItems.value.length} dòng`)
@@ -855,6 +892,14 @@ onMounted(loadRows)
     <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm mã đơn, khách hàng, SĐT..." />
+        <select v-model="orderStatusFilter" class="select"><option value="">Tất cả trạng thái đơn</option><option v-for="value in ORDER_STATUS_OPTIONS" :key="value" :value="value">{{ value }}</option></select>
+        <select v-model="paymentStatusFilter" class="select"><option value="">Tất cả thanh toán</option><option value="Chưa thanh toán">Chưa thanh toán</option><option value="Thanh toán một phần">Thanh toán một phần</option><option value="Đã thanh toán">Đã thanh toán</option></select>
+        <select v-model="invoiceStatusFilter" class="select"><option value="">Tất cả hóa đơn</option><option v-for="value in INVOICE_STATUS_OPTIONS" :key="value" :value="value">{{ value }}</option></select>
+        <select v-model="classificationFilter" class="select"><option value="">Tất cả phân loại</option><option v-for="value in ORDER_CLASSIFICATION_OPTIONS" :key="value" :value="value">{{ value }}</option></select>
+        <input v-model="dateFrom" class="input" type="date" aria-label="Từ ngày" />
+        <input v-model="dateTo" class="input" type="date" aria-label="Đến ngày" />
+        <select v-model="ownerFilter" class="select"><option value="">Tất cả phụ trách</option><option v-for="value in ownerOptions" :key="value" :value="value">{{ value }}</option></select>
+        <button class="btn" @click="resetFilters">Xóa lọc</button>
         <button class="btn" @click="loadRows(true)">Làm mới</button>
       </div>
       <LoadingState v-if="loading" />

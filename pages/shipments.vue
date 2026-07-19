@@ -14,16 +14,43 @@ const orders = ref<OrderDoc[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
+const shippingStatusFilter = ref('')
+const carrierFilter = ref('')
+const dateFrom = ref('')
+const dateTo = ref('')
 const showModal = ref(false)
 const showDetailModal = ref(false)
 const selectedDetail = ref<ShipmentDoc | null>(null)
 const editing = ref<ShipmentDoc | null>(null)
 const form = reactive<any>({})
 
-const filtered = computed(() => rows.value.filter(row =>
-  normalizeText(`${row.order_code} ${row.carrier} ${row.tracking_code} ${row.shipping_status}`)
-    .includes(normalizeText(search.value))
-))
+function dateKey(value: any) {
+  return String(value || '').slice(0, 10)
+}
+
+const carrierOptions = computed(() => Array.from(new Set(rows.value.map(row => String(row.carrier || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')))
+
+const filtered = computed(() => {
+  const keyword = normalizeText(search.value)
+  return rows.value.filter(row => {
+    const matchedText = !keyword || normalizeText(`${row.order_code} ${row.carrier} ${row.tracking_code} ${row.shipping_status}`).includes(keyword)
+    const rowDate = dateKey(row.shipped_date || row.delivered_date || row.created_at)
+    return matchedText
+      && (!shippingStatusFilter.value || row.shipping_status === shippingStatusFilter.value)
+      && (!carrierFilter.value || row.carrier === carrierFilter.value)
+      && (!dateFrom.value || (!!rowDate && rowDate >= dateFrom.value))
+      && (!dateTo.value || (!!rowDate && rowDate <= dateTo.value))
+  })
+})
+
+function resetFilters() {
+  search.value = ''
+  shippingStatusFilter.value = ''
+  carrierFilter.value = ''
+  dateFrom.value = ''
+  dateTo.value = ''
+}
+
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id))
 
 async function loadRows(force = false) {
@@ -149,6 +176,11 @@ onMounted(() => loadRows())
     <div class="card" style="margin: 24px;">
       <div class="toolbar">
         <input v-model="search" class="input" placeholder="Tìm đơn, nhà vận chuyển, mã vận đơn..." />
+        <select v-model="shippingStatusFilter" class="select"><option value="">Tất cả trạng thái</option><option>Chờ giao</option><option>Đang giao</option><option>Đã giao</option><option>Giao thất bại</option><option>Hoàn hàng</option></select>
+        <select v-model="carrierFilter" class="select"><option value="">Tất cả nhà vận chuyển</option><option v-for="value in carrierOptions" :key="value" :value="value">{{ value }}</option></select>
+        <input v-model="dateFrom" class="input" type="date" aria-label="Từ ngày" />
+        <input v-model="dateTo" class="input" type="date" aria-label="Đến ngày" />
+        <button class="btn" @click="resetFilters">Xóa lọc</button>
         <button class="btn" @click="loadRows(true)">Làm mới</button>
       </div>
       <LoadingState v-if="loading" />
