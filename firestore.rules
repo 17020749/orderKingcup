@@ -754,6 +754,26 @@ service cloud.firestore {
         );
     }
 
+    function orderRelationReconcileAllowed() {
+      return isAdmin()
+        && request.resource.data.get('relation_last_module', '') == 'all'
+        && request.resource.data.get('relation_last_action', '') == 'reconcile'
+        && request.resource.data.get('relation_last_document_id', '') == ''
+        && ownEmailField(request.resource.data, 'relation_updated_by')
+        && orderIdentityUnchanged()
+        && relationLockReadyData(request.resource.data)
+        && onlyChanged([
+          'relation_lock_version',
+          'payment_record_count', 'invoice_record_count', 'shipment_record_count',
+          'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
+          'payment_count', 'deposit_count', 'collect_count',
+          'invoice_status', 'shipment_status', 'shipping_fee_total', 'cod_amount_total',
+          'payment_relation_revision', 'invoice_relation_revision', 'shipment_relation_revision',
+          'relation_last_module', 'relation_last_action', 'relation_last_document_id',
+          'relation_updated_by', 'relation_updated_at', 'updated_at'
+        ]);
+    }
+
     function onlyWarehouseSummaryChanged() {
       return onlyChanged([
         'warehouse_fulfillment_status',
@@ -1594,6 +1614,10 @@ service cloud.firestore {
           && orderCanBeDeleted()
         )
         || orderWarehouseSummaryUpdateAllowed()
+        || (
+          request.resource.data.get('relation_last_module', '') == 'all'
+          && orderRelationReconcileAllowed()
+        )
         // Dispatch relation summaries by the cheap module marker first. This
         // prevents Firestore from evaluating all three expensive parent/child
         // relation branches for every order update.
