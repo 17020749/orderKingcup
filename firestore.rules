@@ -917,8 +917,8 @@ service cloud.firestore {
     }
 
     function exportSoftDeleteAllowed() {
-      return exportRequestCanBeDeleted()
-        && softDeleteOnly()
+      return softDeleteOnly()
+        && exportRequestCanBeDeleted()
         && hasAnyPerm(['export_requests.delete', 'orders.delete'])
         && ownsOrderChildData(resource.data);
     }
@@ -1187,7 +1187,16 @@ service cloud.firestore {
         && ownsOrderData(request.resource.data)
         && validOrderNumberCreate();
 
-      allow update: if orderPrintingSummaryUpdateAllowed(docId)
+      // Soft-delete is evaluated first so the order cascade stays below the
+      // Firestore Rules expression budget.
+      allow update: if (
+          softDeleteOnly()
+          && hasPerm('orders.delete')
+          && ownsOrderData(resource.data)
+          && orderIdentityUnchanged()
+          && orderCanBeDeleted()
+        )
+        || orderPrintingSummaryUpdateAllowed(docId)
         || orderWarehouseSummaryUpdateAllowed()
         || isAdmin()
         || (
@@ -1207,14 +1216,6 @@ service cloud.firestore {
           && ownsOrderData(resource.data)
           && orderIdentityUnchanged()
           && onlyPaymentSummaryChanged()
-        )
-        || (
-          // Owner soft-delete before any warehouse fulfillment.
-          hasPerm('orders.delete')
-          && ownsOrderData(resource.data)
-          && orderIdentityUnchanged()
-          && orderCanBeDeleted()
-          && softDeleteOnly()
         )
         || (
           // Invoice module updates only invoice status.
@@ -1265,23 +1266,24 @@ service cloud.firestore {
         && canMutateOrderAfterById(request.resource.data.order_id)
         && requestMatchesOrderItemAfter(request.resource.data.order_id);
 
-      allow update: if isAdmin()
-        || (
-          resource.data.order_id is string
+      allow update: if (
+          softDeleteOnly()
+          && hasAnyPerm(['orders.edit', 'orders.delete'])
+          && resource.data.order_id is string
           && canMutateOrderById(resource.data.order_id)
           && request.resource.data.order_id == resource.data.order_id
           && orderItemIdentityUnchanged()
           && orderItemOwnershipSafe(resource.data.order_id)
-          && (
-            (
-              hasPerm('orders.edit')
-              && unchanged(['deleted', 'active', 'status', 'deleted_at'])
-            )
-            || (
-              hasAnyPerm(['orders.edit', 'orders.delete'])
-              && softDeleteOnly()
-            )
-          )
+        )
+        || isAdmin()
+        || (
+          hasPerm('orders.edit')
+          && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+          && resource.data.order_id is string
+          && canMutateOrderById(resource.data.order_id)
+          && request.resource.data.order_id == resource.data.order_id
+          && orderItemIdentityUnchanged()
+          && orderItemOwnershipSafe(resource.data.order_id)
         );
 
       allow delete: if isAdmin()
@@ -1376,8 +1378,8 @@ service cloud.firestore {
 
       // Evaluate cheap operation-shape checks first. This avoids exhausting
       // Firestore's 1000-expression limit on the page's three-write batch.
-      allow update: if exportOwnerEditAllowed()
-        || exportSoftDeleteAllowed()
+      allow update: if exportSoftDeleteAllowed()
+        || exportOwnerEditAllowed()
         || exportWarehouseProcessAllowed()
         || isAdmin();
 
