@@ -3,6 +3,8 @@ import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore
 import type { OrderDoc, OrderItemDoc, ProductDoc, WarehouseDoc } from '~/types/models'
 import { formatDateTime, isActive, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+// @ts-ignore Shared lifecycle helper is also executed by Node client tests.
+import { canCancelExportRequestRelease, canReleaseExportRequest } from '~/utils/exportLifecycle.mjs'
 import {
   buildNotificationPayload,
   resolveSaleNotificationRecipients,
@@ -18,7 +20,7 @@ const {
   listenWarehouseExportRequests,
 } = useScopedQueries()
 const { buildFulfillmentRows, orderSummary, requestLineProgress } = useWarehouseLogic()
-const { processExportRequestToExportOrder } = useWarehouseTransactions()
+const { processExportRequestToExportOrder, cancelExportRequestRelease } = useWarehouseTransactions()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const { invalidateScopedCache } = useRepo()
@@ -36,7 +38,7 @@ const warehouses = ref<WarehouseDoc[]>([])
 const itemsByOrder = ref<Record<string, OrderItemDoc[]>>({})
 const selectedRequest = ref<any>(null)
 const actionRequest = ref<any>(null)
-const actionType = ref<'accept' | 'reject' | 'release' | ''>('')
+const actionType = ref<'accept' | 'reject' | 'release' | 'cancel_release' | ''>('')
 const showDetailModal = ref(false)
 const showActionModal = ref(false)
 const actionForm = reactive({ note: '', export_date: todayKey() })
@@ -180,14 +182,18 @@ function canRejectRequest(row: any) {
 }
 
 function canReleaseRequest(row: any) {
-  return canReleaseAction.value && !requestHasExported(row)
-    && ['da_tiep_nhan', 'cho_xuat_kho', 'loi'].includes(String(row.status || ''))
+  return canReleaseAction.value && canReleaseExportRequest(row) && !requestHasExported(row)
+}
+
+function canCancelReleasedRequest(row: any) {
+  return canReleaseAction.value && canCancelExportRequestRelease(row)
 }
 
 function actionStillValid(row: any) {
   if (actionType.value === 'accept') return canAcceptRequest(row)
   if (actionType.value === 'reject') return canRejectRequest(row)
   if (actionType.value === 'release') return canReleaseRequest(row)
+  if (actionType.value === 'cancel_release') return canCancelReleasedRequest(row)
   return false
 }
 
@@ -209,10 +215,11 @@ function openDetail(row: any) {
   showDetailModal.value = true
 }
 
-function openAction(row: any, type: 'accept' | 'reject' | 'release') {
+function openAction(row: any, type: 'accept' | 'reject' | 'release' | 'cancel_release') {
   if (type === 'accept' && !canAcceptRequest(row)) return showToast('Yêu cầu này không còn ở trạng thái có thể tiếp nhận.', 'error')
   if (type === 'reject' && !canRejectRequest(row)) return showToast('Yêu cầu này không thể từ chối.', 'error')
   if (type === 'release' && !canReleaseRequest(row)) return showToast('Yêu cầu phải được tiếp nhận trước khi cho xuất kho.', 'error')
+  if (type === 'cancel_release' && !canCancelReleasedRequest(row)) return showToast('Yêu cầu không có phiếu xuất đang hoạt động để hủy.', 'error')
   actionRequest.value = row
   actionType.value = type
   Object.assign(actionForm, {
@@ -233,6 +240,7 @@ const actionTitle = computed(() => {
   if (actionType.value === 'accept') return 'Tiếp nhận yêu cầu xuất kho'
   if (actionType.value === 'reject') return 'Từ chối yêu cầu xuất kho'
   if (actionType.value === 'release') return 'Cho xuất kho'
+  if (actionType.value === 'cancel_release') return 'Hủy xuất và hoàn tồn'
   return 'Xử lý yêu cầu xuất kho'
 })
 
@@ -240,6 +248,7 @@ const actionSaveLabel = computed(() => {
   if (actionType.value === 'accept') return 'Xác nhận tiếp nhận'
   if (actionType.value === 'reject') return 'Xác nhận từ chối'
   if (actionType.value === 'release') return 'Cho xuất kho'
+  if (actionType.value === 'cancel_release') return 'Hủy xuất và hoàn tồn'
   return 'Xác nhận'
 })
 
@@ -414,6 +423,7 @@ async function submitRelease(row: any) {
     note: actionForm.note,
     timeline: timeline(row),
     orderSummaryPatch: orderPatchAfter(row, 'da_xuat', { warehouse_export_code: 'pending_firestore' }),
+    expected_revision: toNumber(row.revision),
     lines: lines.map((line: any) => {
       const warehouseId = releaseWarehouseId(line, line.__release_index)
       const fromWarehouse = findWarehouse(warehouseId)
@@ -439,6 +449,36 @@ async function submitRelease(row: any) {
   }
 }
 
+async function submitCancelRelease(row: any) {
+  const reason = String(actionForm.note || '').trim()
+  if (!reason) return showToast('Vui lòng nhập lý do hủy xuất kho.', 'error')
+  const confirmed = await askConfirm({
+    title: 'Hủy xuất và hoàn tồn',
+    message: `Hủy phiếu ${row.warehouse_export_code || row.export_order_id || '-'} sẽ hoàn tồn và mở lại yêu cầu ${row.request_id || row.id}. Bạn chắc chắn?`,
+    confirmLabel: 'Hủy xuất và hoàn tồn'
+  })
+  if (!confirmed) return
+  const result = await cancelExportRequestRelease({
+    request: row,
+    reason,
+    timeline: timeline(row),
+    notification_recipients: saleNotificationRecipients(row),
+    orderSummaryPatch: orderPatchAfter(row, 'da_tiep_nhan', {
+      active_export_order_id: '',
+      export_order_id: '',
+      warehouse_export_order_id: '',
+    }),
+    operation_id: `export_request_cancel:${row.id}:${toNumber(row.revision)}`,
+    expected_request_revision: toNumber(row.revision),
+  })
+  showToast(
+    result.notificationCount
+      ? `Đã hủy phiếu ${result.code}, hoàn tồn và mở lại yêu cầu.`
+      : `Đã hủy phiếu ${result.code} và hoàn tồn, nhưng không xác định được Sale để gửi thông báo.`,
+    result.notificationCount ? 'success' : 'info',
+  )
+}
+
 async function submitAction() {
   const row = actionRequest.value
   if (!row || !actionType.value) return
@@ -447,6 +487,7 @@ async function submitAction() {
     if (actionType.value === 'accept') await submitAccept(row)
     if (actionType.value === 'reject') await submitReject(row)
     if (actionType.value === 'release') await submitRelease(row)
+    if (actionType.value === 'cancel_release') await submitCancelRelease(row)
     showActionModal.value = false
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không xử lý được yêu cầu xuất kho.'), 'error')
@@ -592,8 +633,9 @@ onBeforeUnmount(() => {
                   <button class="btn-sm" @click="openDetail(row)">Xem</button>
                   <button v-if="canAcceptRequest(row)" class="btn-sm btn-view" @click="openAction(row, 'accept')">Tiếp nhận</button>
                   <button v-if="canReleaseRequest(row)" class="btn-sm btn-view" @click="openAction(row, 'release')">Cho xuất kho</button>
+                  <button v-if="canCancelReleasedRequest(row)" class="btn-sm btn-delete" @click="openAction(row, 'cancel_release')">Hủy xuất/Hoàn tồn</button>
                   <button v-if="canRejectRequest(row)" class="btn-sm btn-delete" @click="openAction(row, 'reject')">Từ chối</button>
-                  <button v-if="!canAcceptRequest(row) && !canReleaseRequest(row) && !canRejectRequest(row)" class="btn-sm" disabled>Khóa</button>
+                  <button v-if="!canAcceptRequest(row) && !canReleaseRequest(row) && !canCancelReleasedRequest(row) && !canRejectRequest(row)" class="btn-sm" disabled>Khóa</button>
                 </div>
               </td>
             </tr>
@@ -613,6 +655,8 @@ onBeforeUnmount(() => {
         <div class="detail-item"><label>Ngày yêu cầu</label><strong>{{ formatDateTime(selectedRequest.requested_at || selectedRequest.created_at) }}</strong></div>
         <div class="detail-item"><label>Phiếu kho</label><strong>{{ selectedRequest.warehouse_export_code || '-' }}</strong></div>
         <div class="detail-item"><label>Ghi chú kho</label><strong>{{ selectedRequest.warehouse_note || '-' }}</strong></div>
+        <div class="detail-item"><label>Lần xuất</label><strong>{{ selectedRequest.release_sequence || (selectedRequest.export_order_id ? 1 : 0) }}</strong></div>
+        <div class="detail-item"><label>Phiếu đã hủy gần nhất</label><strong>{{ selectedRequest.last_cancelled_export_code || '-' }}</strong></div>
       </div>
 
       <h3>Sản phẩm yêu cầu</h3>
@@ -677,10 +721,11 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="form-group" style="margin-top:12px">
-        <label>{{ actionType === 'reject' ? 'Lý do từ chối' : 'Ghi chú kho' }}</label>
+        <label>{{ actionType === 'reject' ? 'Lý do từ chối' : actionType === 'cancel_release' ? 'Lý do hủy xuất' : 'Ghi chú kho' }}</label>
         <textarea v-model="actionForm.note" class="textarea" rows="3" />
       </div>
       <p v-if="actionType === 'release'" class="small subtle">Khi cho xuất kho, hệ thống sẽ check tồn, tạo export_orders/export_order_items, ghi stock_movements và trừ inventory_balances bằng transaction.</p>
+      <p v-if="actionType === 'cancel_release'" class="small subtle">Hệ thống sẽ hủy mềm phiếu xuất liên kết, hoàn inventory_balances, ghi stock_movements đảo và mở lại yêu cầu trong cùng transaction.</p>
     </BaseModal>
 
     <ConfirmModal
