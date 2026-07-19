@@ -142,7 +142,6 @@ async function atomicCreate(db, { invalidSecondItem = false } = {}) {
   const activityRef = doc(db, 'activity_logs', 'activity-create')
 
   await runTransaction(db, async transaction => {
-    await transaction.get(orderRef)
     const sequenceSnapshot = await transaction.get(sequenceRef)
     assert.equal(sequenceSnapshot.exists(), false)
 
