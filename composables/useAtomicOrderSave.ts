@@ -70,19 +70,20 @@ export function useAtomicOrderSave() {
 
     await runTransaction(db, async transaction => {
       // Firestore requires every read before the first write in a transaction.
-      const orderSnapshot = await transaction.get(orderRef)
+      // New orders do not read their missing order document because that read is
+      // intentionally not granted by ownership rules until the parent exists.
+      const orderSnapshot = input.mode === 'edit'
+        ? await transaction.get(orderRef)
+        : null
       const sequenceSnapshot = input.mode === 'create'
         ? await transaction.get(sequenceRef)
         : null
 
-      if (input.mode === 'create' && orderSnapshot.exists()) {
-        throw new Error('ID đơn hàng đã tồn tại. Hãy đóng biểu mẫu và tạo lại đơn.')
-      }
-      if (input.mode === 'edit' && !orderSnapshot.exists()) {
+      if (input.mode === 'edit' && !orderSnapshot?.exists()) {
         throw new Error('Đơn hàng không còn tồn tại. Hãy tải lại danh sách.')
       }
 
-      const existingOrder = orderSnapshot.exists() ? orderSnapshot.data() : {}
+      const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}
       const actualRevision = input.mode === 'edit'
         ? assertExpectedOrderRevision(input.expectedRevision, existingOrder.revision)
         : 0
