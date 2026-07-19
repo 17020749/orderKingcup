@@ -27,11 +27,13 @@ test('cost-aware release keeps the Step 8 lifecycle and lot summary fields', () 
 
 test('relation reconciliation remains an explicit admin maintenance action', () => {
   const relationSource = readFileSync('composables/useAtomicOrderRelations.ts', 'utf8')
+  const relationHelper = readFileSync('utils/orderRelationState.mjs', 'utf8')
   const orderPage = readFileSync('pages/orders.vue', 'utf8')
   const rules = readFileSync('firestore.rules', 'utf8')
 
   assert.match(relationSource, /if \(!isAdmin\.value\)/)
-  assert.match(relationSource, /relation_last_action: 'reconcile'/)
+  assert.match(relationSource, /buildReconciledOrderRelationPatch/)
+  assert.match(relationHelper, /relation_last_action: 'reconcile'/)
   assert.match(orderPage, /reconcileOrderRelationLocks/)
   assert.match(rules, /function orderRelationReconcileAllowed\(\)/)
   assert.match(rules, /relation_last_module', ''\) == 'all'/)
