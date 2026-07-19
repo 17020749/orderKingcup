@@ -62,7 +62,7 @@ export function useAuth() {
   async function applyProfileData(email: string, rawData: any | null, source: string) {
     const normalizedEmail = normalizeEmail(email)
     const profile = rawData
-      ? ({ id: normalizedEmail, email: normalizedEmail, ...rawData } as AppUser)
+      ? ({ ...rawData, id: normalizedEmail, email: normalizedEmail } as AppUser)
       : null
     const fingerprintSource = profile || {
       email: normalizedEmail,
@@ -92,8 +92,15 @@ export function useAuth() {
       appUser.value = null
       authError.value = `Tài khoản ${normalizedEmail} đã bị khóa hoặc chưa hoạt động.`
     } else {
-      appUser.value = profile
-      permissions.value = effectivePermissionsFromUser(profile)
+      const effectivePermissions = effectivePermissionsFromUser(profile)
+      const canonicalAdmin = isAdminFromPermissions(effectivePermissions)
+      permissions.value = effectivePermissions
+      // Một số module cũ vẫn đọc appUser.is_admin. Chuẩn hóa field này từ
+      // permissions_flat để chúng không thể cấp quyền qua cờ legacy bị lệch.
+      appUser.value = {
+        ...profile,
+        is_admin: canonicalAdmin,
+      }
     }
 
     permissionDebug({
@@ -111,12 +118,14 @@ export function useAuth() {
         roles_in_user: Array.isArray((profile as any)?.roles)
           ? (profile as any).roles
           : (profile as any)?.role || [],
+        stored_is_admin: (profile as any)?.is_admin === true,
+        effective_is_admin: isAdminFromPermissions(permissions.value),
         permissions_flat_in_user: (profile as any)?.permissions_flat || [],
         effective_client_permissions: permissions.value,
         permission_schema_version: (profile as any)?.permission_schema_version || 0,
         authorization_cache_key: authorizationCacheKey.value,
       },
-      note: 'Client và Firestore Rules cùng sử dụng users.permissions_flat; role chỉ là cấu hình để quản trị viên sinh permissions_flat.',
+      note: 'Client dùng users.permissions_flat; role và is_admin lưu cũ chỉ là dữ liệu quản trị, không trực tiếp cấp quyền.',
     })
 
     if (changed && previousFingerprint) await clearAuthorizationCaches()
