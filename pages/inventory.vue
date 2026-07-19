@@ -84,6 +84,21 @@ const importOrderById = computed(() => new Map(
   importOrders.value.map(order => [String(order.id || ''), order]),
 ))
 
+const activeImportOrderIds = computed(() => new Set(
+  importOrders.value
+    .filter(isActiveRecord)
+    .map(order => String(order.id || '').trim())
+    .filter(Boolean),
+))
+
+const activeImportItemIds = computed(() => new Set(
+  importItems.value
+    .filter(isActiveRecord)
+    .filter(item => activeImportOrderIds.value.has(String(item.import_order_id || '').trim()))
+    .map(item => String(item.id || '').trim())
+    .filter(Boolean),
+))
+
 function inventoryKey(row: any) {
   return [
     String(row?.warehouse_id || '').trim(),
@@ -100,13 +115,30 @@ function roundQuantity(value: any) {
   return Math.round(toNumber(value) * 1000) / 1000
 }
 
+function isActiveRecord(row: any) {
+  return row?.deleted !== true
+    && row?.active !== false
+    && !['deleted', 'cancelled', 'canceled'].includes(String(row?.status || '').trim().toLowerCase())
+}
+
+function lotHasValidInboundOrigin(lot: any) {
+  const source = String(lot?.source || '')
+  if (source === 'import_order') {
+    if (!importOrders.value.length && !importItems.value.length) return true
+
+    const orderId = String(lot?.import_order_id || '').trim()
+    const itemId = String(lot?.cost_item_id || lot?.import_order_item_id || '').trim()
+    return Boolean(
+      (orderId && activeImportOrderIds.value.has(orderId))
+      || (itemId && activeImportItemIds.value.has(itemId)),
+    )
+  }
+  return ['warehouse_transfer', 'legacy_opening'].includes(source)
+}
+
 function balanceHasInboundOrigin(row: any) {
   if (Array.isArray(row?.lots)) {
-    return row.lots.some((lot: any) => [
-      'import_order',
-      'warehouse_transfer',
-      'legacy_opening',
-    ].includes(String(lot?.source || '')))
+    return row.lots.some(lotHasValidInboundOrigin)
   }
 
   // Dữ liệu tồn cũ chưa có cấu trúc lots nhưng đang có số lượng được coi là
@@ -269,9 +301,17 @@ const auditRows = computed<InventoryAuditRow[]>(() => {
         || type.includes('transfer_in')
         || type.includes('reverse_destination')
       const isExportMovement = sourceCollection === 'export_orders' && !isImportMovement
+      const importOrderId = String(movement.source_doc_id || '').trim()
+      const importItemId = String(movement.source_item_id || '').trim()
+      const canValidateImportSource = importOrders.value.length > 0 || importItems.value.length > 0
+      const hasActiveImportSource = (sourceCollection === 'import_orders' || type === 'import')
+        && (
+          !canValidateImportSource
+          || (importOrderId && activeImportOrderIds.value.has(importOrderId))
+          || (importItemId && activeImportItemIds.value.has(importItemId))
+        )
       const qualifiesAsInboundHistory = quantity > 0 && (
-        sourceCollection === 'import_orders'
-        || type === 'import'
+        hasActiveImportSource
         || type.includes('transfer_in')
       )
 
@@ -504,11 +544,7 @@ async function loadRows(force = false) {
     rows.value = balanceRows
     movements.value = movementRows
     warehouses.value = warehouseRows
-    products.value = productRows.filter(row =>
-      row.deleted !== true
-      && row.active !== false
-      && String(row.status || '').trim().toLowerCase() !== 'deleted',
-    )
+    products.value = productRows.filter(isActiveRecord)
     importOrders.value = importOrderRows
     importItems.value = importItemRows
     exportOrders.value = exportOrderRows

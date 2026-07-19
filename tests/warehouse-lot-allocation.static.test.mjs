@@ -87,9 +87,19 @@ test('printing source order includes only products with valid logo lines', () =>
 test('inventory keeps zero stock after import or transfer-in history', () => {
   assert.match(inventoryPage, /has_inbound_history: boolean/)
   assert.match(inventoryPage, /qualifiesAsInboundHistory = quantity > 0/)
+  assert.match(inventoryPage, /hasActiveImportSource/)
+  assert.match(inventoryPage, /activeImportOrderIds\.value\.has\(importOrderId\)/)
+  assert.match(inventoryPage, /activeImportItemIds\.value\.has\(importItemId\)/)
   assert.match(inventoryPage, /type\.includes\('transfer_in'\)/)
   assert.match(inventoryPage, /\.filter\(row => row\.has_inbound_history\)/)
   assert.match(inventoryPage, />Hết hàng<\/span>/)
+})
+
+test('inventory ignores deleted or cancelled import sources when validating inbound history', () => {
+  assert.match(inventoryPage, /function isActiveRecord\(row: any\)/)
+  assert.match(inventoryPage, /\['deleted', 'cancelled', 'canceled'\]\.includes/)
+  assert.match(inventoryPage, /function lotHasValidInboundOrigin\(lot: any\)/)
+  assert.match(inventoryPage, /source === 'import_order'[\s\S]*activeImportOrderIds\.value\.has\(orderId\)/)
 })
 
 test('inventory does not show a movement-only outbound row', () => {
