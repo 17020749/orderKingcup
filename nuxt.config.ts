@@ -6,7 +6,8 @@ export default defineNuxtConfig({
   },
 
   modules: [
-    '~/modules/warehouse-cost'
+    '~/modules/warehouse-cost',
+    '~/modules/scoped-order-items'
   ],
 
   app: {
