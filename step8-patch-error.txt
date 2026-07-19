@@ -1,1 +1,1 @@
-Missing patch target in pages/warehouse-export-requests.vue: 'function canReleaseRequest(row: any) {\n  return canReleaseAction.value && canReleaseExportRequest(row) && !requestHasExported(row)\n}\n'
+Missing patch target in pages/warehouse-export-requests.vue: "      orderSummaryPatch: orderPatchAfter(row, 'da_xuat', { warehouse_export_code: 'pending_firestore' }),\n"
