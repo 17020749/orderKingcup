@@ -22,28 +22,25 @@ jobs:
           ref: agent/step-7-atomic-finance-shipping
           fetch-depth: 0
           show-progress: false
+      - name: Check patch state
+        id: state
+        run: |
+          if grep -q "function orderPaymentSummaryUpdateAllowed" firestore.rules; then
+            echo "applied=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "applied=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Fix patcher
+        if: steps.state.outputs.applied == 'false'
         run: python3 scripts/fix-step7-patcher.py
       - name: Apply patches
-        id: patch
-        continue-on-error: true
-        run: python3 scripts/apply-step7-relations.py > step7-patch-error.txt 2>&1
-      - name: Persist patch error
-        if: steps.patch.outcome == 'failure'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add step7-patch-error.txt
-          git commit -m "chore(step7): record patch failure" || true
-          git push origin HEAD:agent/step-7-atomic-finance-shipping
-          exit 1
+        if: steps.state.outputs.applied == 'false'
+        run: python3 scripts/apply-step7-relations.py
       - name: Commit patched source
-        if: steps.patch.outcome == 'success'
+        if: steps.state.outputs.applied == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm scripts/apply-step7-relations.py scripts/fix-step7-patcher.py .github/workflows/apply-step7-relations.yml
-          rm -f step7-patch-error.txt
           git add firestore.rules pages/orders.vue types/models.ts
           git commit -m "feat(step7): enforce atomic order relation consistency"
           git push origin HEAD:agent/step-7-atomic-finance-shipping
