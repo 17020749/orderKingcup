@@ -2041,20 +2041,12 @@ service cloud.firestore {
         && generatedExportItemCreateAllowed()
         || (
           request.resource.data.get('source', '') != 'kingcup_firestore'
+          && hasAnyPerm(['export.create', 'export.edit'])
           && request.resource.data.export_order_id is string
           && quantityIsNumber(request.resource.data)
           && request.resource.data.get('quantity', 0) > 0
           && ownEmailField(request.resource.data, 'created_by')
-          && (
-            (
-              hasPerm('export.create')
-              && manualExportOrderAfterById(request.resource.data.export_order_id)
-            )
-            || (
-              hasPerm('export.edit')
-              && manualExportOrderById(request.resource.data.export_order_id)
-            )
-          )
+          && manualExportOrderAfterById(request.resource.data.export_order_id)
         );
       allow update: if (
           resource.data.get('source', '') == 'kingcup_firestore'
