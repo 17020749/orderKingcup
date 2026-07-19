@@ -57,6 +57,12 @@ function order(email, code) {
     owner_email: email,
     created_by: email,
     sale_email: email,
+    printing_progress_count: 0,
+    printing_lock_version: 1,
+    printing_last_action: 'reconcile',
+    printing_last_print_order_id: '',
+    printing_lock_updated_by: email,
+    printing_lock_updated_at: 'now',
     active: true,
     deleted: false,
     warehouse_fulfillment_status: 'chua_xuat'
@@ -106,15 +112,23 @@ async function seed() {
       setDoc(doc(db, 'users', LEGACY), { email: LEGACY, status: 'Hoạt động', deleted: false, permissions_flat: ['orders.view'] }),
       setDoc(doc(db, 'users', ROLE_ADMIN), { email: ROLE_ADMIN, active: true, deleted: false, role: 'Admin' }),
       setDoc(doc(db, 'users', EDITOR), { email: EDITOR, active: true, deleted: false, permissions_flat: ['orders.view', 'orders.edit'] }),
-      setDoc(doc(db, 'orders', 'order-a'), order(A, 'order-a')),
+      setDoc(doc(db, 'orders', 'order-a'), {
+        ...order(A, 'order-a'),
+        printing_progress_count: 1,
+        printing_last_action: 'create',
+        printing_last_print_order_id: 'print-a'
+      }),
+      setDoc(doc(db, 'orders', 'order-delete'), order(A, 'order-delete')),
       setDoc(doc(db, 'orders', 'order-a-exported'), { ...order(A, 'order-a-exported'), warehouse_fulfillment_status: 'da_xuat_1_phan', warehouse_request_status: 'da_xuat' }),
       setDoc(doc(db, 'orders', 'order-b'), order(B, 'order-b')),
       setDoc(doc(db, 'orders', 'order-legacy'), order(LEGACY, 'order-legacy')),
       setDoc(doc(db, 'orders', 'order-editor'), order(EDITOR, 'order-editor')),
       setDoc(doc(db, 'order_items', 'item-a'), { order_id: 'order-a', created_by: A, owner_email: A, sale_email: A, active: true, deleted: false, status: 'active' }),
+      setDoc(doc(db, 'order_items', 'item-delete'), { order_id: 'order-delete', created_by: A, owner_email: A, sale_email: A, active: true, deleted: false, status: 'active' }),
       setDoc(doc(db, 'order_items', 'item-b'), { order_id: 'order-b', created_by: B, owner_email: B, sale_email: B, active: true }),
       setDoc(doc(db, 'payments', 'payment-b'), { order_id: 'order-b', created_by: B, ...ownership(B), amount: 100, active: true }),
       setDoc(doc(db, 'order_export_requests', 'export-a'), { order_id: 'order-a', requested_by: A, ...ownership(A), status: 'cho_xu_ly', payload_json: '{}', active: true, deleted: false }),
+      setDoc(doc(db, 'order_export_requests', 'export-delete'), { order_id: 'order-delete', requested_by: A, ...ownership(A), status: 'cho_xu_ly', payload_json: '{}', active: true, deleted: false }),
       setDoc(doc(db, 'order_export_requests', 'export-a-accepted'), { order_id: 'order-a', requested_by: A, ...ownership(A), status: 'da_tiep_nhan', payload_json: '{}', warehouse_export_code: '', warehouse_handled_by: WAREHOUSE, active: true, deleted: false }),
       setDoc(doc(db, 'order_export_requests', 'export-a-done'), { order_id: 'order-a-exported', requested_by: A, ...ownership(A), status: 'da_xuat', payload_json: '{}', active: true }),
       setDoc(doc(db, 'shipments', 'shipment-b'), { order_id: 'order-b', created_by: B, ...ownership(B), active: true }),
@@ -246,13 +260,13 @@ after(async () => env.cleanup())
 test('Xóa mềm order và order_items trong cùng batch là nguyên tử', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
   const batch = writeBatch(db)
-  batch.update(doc(db, 'orders', 'order-a'), {
+  batch.update(doc(db, 'orders', 'order-delete'), {
     deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now'
   })
-  batch.update(doc(db, 'order_items', 'item-a'), {
+  batch.update(doc(db, 'order_items', 'item-delete'), {
     deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now'
   })
-  batch.update(doc(db, 'order_export_requests', 'export-a'), {
+  batch.update(doc(db, 'order_export_requests', 'export-delete'), {
     deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now'
   })
 
@@ -261,8 +275,8 @@ test('Xóa mềm order và order_items trong cùng batch là nguyên tử', asyn
   await env.withSecurityRulesDisabled(async context => {
     const adminDb = context.firestore()
     const [orderSnap, itemSnap] = await Promise.all([
-      getDoc(doc(adminDb, 'orders', 'order-a')),
-      getDoc(doc(adminDb, 'order_items', 'item-a'))
+      getDoc(doc(adminDb, 'orders', 'order-delete')),
+      getDoc(doc(adminDb, 'order_items', 'item-delete'))
     ])
     if (orderSnap.data()?.deleted !== true || itemSnap.data()?.deleted !== true) {
       throw new Error('Batch phải xóa mềm đồng thời cả order và order_item')
@@ -1221,12 +1235,21 @@ test('Tiến độ in: người có printing.view đọc được đơn, chi ti�
   await assertSucceeds(getDoc(doc(viewerDb, 'order_items', 'item-a')))
   await assertSucceeds(getDocs(query(collection(viewerDb, 'orders'))))
   await assertSucceeds(getDocs(query(collection(viewerDb, 'order_items'))))
-  await assertFails(getDoc(doc(normalDb, 'print_orders', 'print-a')))
+  // Chủ đơn có orders.delete được đọc tiến độ liên quan để hiển thị lý do khóa xóa.
+  await assertSucceeds(getDoc(doc(normalDb, 'print_orders', 'print-a')))
 })
 
 test('Tiến độ in: tạo đơn và dòng sản phẩm hợp lệ trong cùng batch', async () => {
   const db = env.authenticatedContext(PRINTING, { email: PRINTING }).firestore()
   const batch = writeBatch(db)
+  batch.update(doc(db, 'orders', 'order-a'), {
+    printing_progress_count: 2,
+    printing_lock_version: 1,
+    printing_last_action: 'create',
+    printing_last_print_order_id: 'print-new',
+    printing_lock_updated_by: PRINTING,
+    printing_lock_updated_at: 'now'
+  })
   batch.set(doc(db, 'print_orders', 'print-new'), {
     id: 'print-new', order_id: 'order-a', order_code: 'order-a', am_code: 'AM-01',
     created_by: PRINTING, created_at: 'now', updated_at: 'now',
@@ -1282,6 +1305,14 @@ test('Tiến độ in: sửa và xóa mềm nguyên tử với đúng quyền', 
     deleted: true, active: false, status: 'deleted', deleted_at: 'now',
     deleted_by: PRINTING, updated_by: PRINTING, updated_at: 'now'
   }
+  deleteBatch.update(doc(db, 'orders', 'order-a'), {
+    printing_progress_count: 0,
+    printing_lock_version: 1,
+    printing_last_action: 'delete',
+    printing_last_print_order_id: 'print-a',
+    printing_lock_updated_by: PRINTING,
+    printing_lock_updated_at: 'now'
+  })
   deleteBatch.update(doc(db, 'print_orders', 'print-a'), deletedPatch)
   deleteBatch.update(doc(db, 'print_order_items', 'print-item-a'), deletedPatch)
   await assertSucceeds(deleteBatch.commit())
