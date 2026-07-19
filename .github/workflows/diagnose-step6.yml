@@ -1,0 +1,62 @@
+name: Diagnose Step 6 Rules
+
+on:
+  push:
+    branches:
+      - agent/step-6-printing-delete-lock
+    paths:
+      - .github/workflows/diagnose-step6.yml
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: agent/step-6-printing-delete-lock
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '9.15.9'
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
+
+      - name: Run full rules suite
+        shell: bash
+        run: |
+          set +e
+          pnpm run test:rules > step6-diagnostic.log 2>&1
+          echo "EXIT_CODE=$?" >> step6-diagnostic.log
+          exit 0
+
+      - name: Comment diagnostic tail
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '## Step 6 rules diagnostic'
+            echo
+            echo '```text'
+            tail -n 300 step6-diagnostic.log
+            echo '```'
+          } > comment.md
+          gh pr comment 29 --repo 17020749/orderKingcup --body-file comment.md
