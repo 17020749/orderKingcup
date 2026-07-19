@@ -1,0 +1,89 @@
+46-# [2026-07-19T09:41:26.666Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x3b039155 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+47-# evaluation error at L1969:24 for 'create' @ L1969, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1980, evaluation error at L2013:24 for 'create' @ L2013, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L2031, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1713, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1528, false for 'update' @ L1528, false for 'create' @ L2013, Null value error. for 'update' @ L1713
+48-# Subtest: release phải tạo export và cập nhật request trong cùng batch
+49:not ok 8 - release phải tạo export và cập nhật request trong cùng batch
+50-  ---
+51-  duration_ms: 6074.30308
+52-  location: '/home/runner/work/orderKingcup/orderKingcup/tests/export-lifecycle.rules.test.mjs:201:1'
+53-  failureType: 'testCodeFailure'
+54-  error: |-
+55-    7 PERMISSION_DENIED: 
+56-    evaluation error at L1969:24 for 'create' @ L1969, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1980, evaluation error at L2013:24 for 'create' @ L2013, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L2031, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1713, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1528, false for 'update' @ L1528, false for 'create' @ L2013, Null value error. for 'update' @ L1713
+57-  code: 'permission-denied'
+58-  name: 'FirebaseError'
+59-  ...
+60-# [2026-07-19T09:41:26.797Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x3b039157 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+61-# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1713, false for 'update' @ L1713
+62-# [2026-07-19T09:41:26.839Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x3b039158 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+63-# evaluation error at L1969:24 for 'create' @ L1969, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1980, false for 'create' @ L1969
+64-# Subtest: request release hoặc generated export ghi một phía đều bị chặn
+65-ok 9 - request release hoặc generated export ghi một phía đều bị chặn
+66-  ---
+67-  duration_ms: 168.317855
+68-  ...
+69-# [2026-07-19T09:41:26.982Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x3b03915a error. Code: 7 Message: 7 PERMISSION_DENIED: 
+70-# evaluation error at L1969:24 for 'create' @ L1969, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1980, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1713, Null value error. for 'update' @ L1713
+71-# Subtest: generated export giả liên kết sang request khác bị chặn
+--
+90-# [2026-07-19T09:41:27.473Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x3b039164 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+91-# evaluation error at L1969:24 for 'create' @ L1969, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1980, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1713, false for 'create' @ L1969, Null value error. for 'update' @ L1713
+92-# Subtest: sau hủy có thể release lần hai bằng export ID sequence mới
+93:not ok 13 - sau hủy có thể release lần hai bằng export ID sequence mới
+94-  ---
+95-  duration_ms: 122.767448
+96-  location: '/home/runner/work/orderKingcup/orderKingcup/tests/export-lifecycle.rules.test.mjs:359:1'
+97-  failureType: 'testCodeFailure'
+98-  error: |-
+99-    7 PERMISSION_DENIED: 
+100-    evaluation error at L1969:24 for 'create' @ L1969, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1980, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1713, false for 'create' @ L1969, Null value error. for 'update' @ L1713
+101-  code: 'permission-denied'
+102-  name: 'FirebaseError'
+103-  ...
+104-1..13
+105-# tests 13
+106-# suites 0
+107-# pass 11
+108-# fail 2
+109-# cancelled 0
+110-# skipped 0
+111-# todo 0
+112-# duration_ms 7181.323595
+113-[33m[1m⚠ [22m[39m Script exited unsuccessfully (code 1)
+114-[36m[1mi  emulators:[22m[39m Shutting down emulators.
+115-[36m[1mi  firestore:[22m[39m Stopping Firestore Emulator
+--- SUMMARY ---
+# Subtest: hủy chỉ request hoặc chỉ generated export đều bị chặn
+ok 12 - hủy chỉ request hoặc chỉ generated export đều bị chặn
+  ---
+  duration_ms: 139.996249
+  ...
+# [2026-07-19T09:41:27.473Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x3b039164 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L1969:24 for 'create' @ L1969, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1980, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1713, false for 'create' @ L1969, Null value error. for 'update' @ L1713
+# Subtest: sau hủy có thể release lần hai bằng export ID sequence mới
+not ok 13 - sau hủy có thể release lần hai bằng export ID sequence mới
+  ---
+  duration_ms: 122.767448
+  location: '/home/runner/work/orderKingcup/orderKingcup/tests/export-lifecycle.rules.test.mjs:359:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    7 PERMISSION_DENIED: 
+    evaluation error at L1969:24 for 'create' @ L1969, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1980, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1713, false for 'create' @ L1969, Null value error. for 'update' @ L1713
+  code: 'permission-denied'
+  name: 'FirebaseError'
+  ...
+1..13
+# tests 13
+# suites 0
+# pass 11
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 7181.323595
+[33m[1m⚠ [22m[39m Script exited unsuccessfully (code 1)
+[36m[1mi  emulators:[22m[39m Shutting down emulators.
+[36m[1mi  firestore:[22m[39m Stopping Firestore Emulator
+[36m[1mi  hub:[22m[39m Stopping emulator hub
+[36m[1mi  logging:[22m[39m Stopping Logging Emulator
+
+[1m[31mError:[39m[22m Script "[1mnode --test --test-concurrency=1 tests/export-lifecycle.client.test.mjs tests/export-lifecycle.rules.test.mjs[22m" exited with code 1
