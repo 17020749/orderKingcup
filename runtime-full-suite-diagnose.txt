@@ -1,0 +1,170 @@
+332-  ---
+333-  duration_ms: 155.483245
+334-  ...
+335-# Subtest: Query realtime Sale theo ownership và Kho theo toàn bộ phiếu được phép
+336:not ok 51 - Query realtime Sale theo ownership và Kho theo toàn bộ phiếu được phép
+337-  ---
+338-  duration_ms: 120.657768
+339-  location: '/home/runner/work/orderKingcup/orderKingcup/tests/firestore.rules.test.mjs:719:1'
+340-  failureType: 'testCodeFailure'
+341-  error: |-
+342-    
+343-    Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'list' @ L1584, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'list' @ L1584, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'list' @ L1584, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'list' @ L1584
+344-  code: 'permission-denied'
+345-  name: 'FirebaseError'
+346-  ...
+347-# Subtest: Admin đọc và sửa dữ liệu của mọi user
+348-ok 52 - Admin đọc và sửa dữ liệu của mọi user
+349-  ---
+350-  duration_ms: 128.027543
+351-  ...
+352-# [2026-07-19T12:16:44.962Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x2b5c43e4 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+353-# evaluation error at L1427:24 for 'create' @ L1427, evaluation error at L1429:24 for 'update' @ L1429, false for 'create' @ L1427
+354-# [2026-07-19T12:16:44.989Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x2b5c43e5 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+355-# evaluation error at L1427:24 for 'create' @ L1427, evaluation error at L1429:24 for 'update' @ L1429, false for 'create' @ L1427
+356-# Subtest: Mã người dùng mới phải được giữ chỗ và không được trùng
+357-ok 53 - Mã người dùng mới phải được giữ chỗ và không được trùng
+358-  ---
+359-  duration_ms: 141.196927
+360-  ...
+361-# [2026-07-19T12:16:45.123Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x2b5c43e7 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+362-# evaluation error at L1603:24 for 'create' @ L1603, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1610, false for 'create' @ L1603
+--
+412-  ---
+413-  duration_ms: 83.361544
+414-  ...
+415-# Subtest: Tương thích user status Hoạt động và role Admin cũ
+416:not ok 60 - Tương thích user status Hoạt động và role Admin cũ
+417-  ---
+418-  duration_ms: 90.07061
+419-  location: '/home/runner/work/orderKingcup/orderKingcup/tests/firestore.rules.test.mjs:889:1'
+420-  failureType: 'testCodeFailure'
+421-  error: |-
+422-    
+423-    Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'get' @ L1584, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'get' @ L1584
+424-  code: 'permission-denied'
+425-  name: 'FirebaseError'
+426-  ...
+427-# [2026-07-19T12:16:45.928Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x2b5c43fd error. Code: 7 Message: 7 PERMISSION_DENIED: 
+428-# evaluation error at L1688:24 for 'create' @ L1688, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1694, false for 'create' @ L1688
+429-# Subtest: Order item dùng owner_email/created_by/sale_email và đối chiếu parent thật
+430-ok 61 - Order item dùng owner_email/created_by/sale_email và đối chiếu parent thật
+431-  ---
+432-  duration_ms: 95.419958
+433-  ...
+434-# Subtest: Admin có thể tạo dữ liệu con cho order của user khác bằng batch nguyên tử
+435-ok 62 - Admin có thể tạo dữ liệu con cho order của user khác bằng batch nguyên tử
+436-  ---
+437-  duration_ms: 110.275972
+438-  ...
+439-# [2026-07-19T12:16:46.121Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x2b5c4401 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+440-# Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L1813, false for 'update' @ L1813
+441-# [2026-07-19T12:16:46.131Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x2b5c4402 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+442-# evaluation error at L1826:24 for 'delete' @ L1826, false for 'delete' @ L1826
+--
+727-  ---
+728-  duration_ms: 0.627989
+729-  ...
+730-# Subtest: tạo đơn ghi sequence, order, items và activity trong một transaction
+731:not ok 106 - tạo đơn ghi sequence, order, items và activity trong một transaction
+732-  ---
+733-  duration_ms: 2019.242814
+734-  location: '/home/runner/work/orderKingcup/orderKingcup/tests/order-atomic-save.rules.test.mjs:234:1'
+735-  failureType: 'testCodeFailure'
+736-  error: |-
+737-    
+738-    Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'get' @ L1584, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'get' @ L1584
+739-  code: 'permission-denied'
+740-  name: 'FirebaseError'
+741-  ...
+742-# Subtest: một item sai quyền làm rollback toàn bộ transaction tạo đơn
+743-ok 107 - một item sai quyền làm rollback toàn bộ transaction tạo đơn
+744-  ---
+745-  duration_ms: 135.795147
+746-  ...
+747-# Subtest: người chỉ có orders.edit vẫn thêm, sửa và bỏ dòng sản phẩm trong transaction
+748:not ok 108 - người chỉ có orders.edit vẫn thêm, sửa và bỏ dòng sản phẩm trong transaction
+749-  ---
+750-  duration_ms: 78.846817
+751-  location: '/home/runner/work/orderKingcup/orderKingcup/tests/order-atomic-save.rules.test.mjs:329:1'
+752-  failureType: 'testCodeFailure'
+753-  error: |-
+754-    7 PERMISSION_DENIED: 
+755-    Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'get' @ L1584, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'get' @ L1584
+756-  code: 'permission-denied'
+757-  name: 'FirebaseError'
+758-  ...
+759-# Subtest: một item mới sai ownership làm rollback toàn bộ transaction sửa đơn
+760:not ok 109 - một item mới sai ownership làm rollback toàn bộ transaction sửa đơn
+761-  ---
+762-  duration_ms: 64.844118
+763-  location: '/home/runner/work/orderKingcup/orderKingcup/tests/order-atomic-save.rules.test.mjs:339:1'
+764-  failureType: 'testCodeFailure'
+765-  error: |-
+766-    
+767-    Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'get' @ L1584, Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'get' @ L1584
+768-  code: 'permission-denied'
+769-  name: 'FirebaseError'
+770-  ...
+771-# Subtest: Mã đơn ghép mã người dùng, mã khách và số riêng của khách từ 0001
+772-ok 110 - Mã đơn ghép mã người dùng, mã khách và số riêng của khách từ 0001
+773-  ---
+774-  duration_ms: 1.400218
+775-  ...
+776-# Subtest: Mã người dùng được chuẩn hóa và chỉ nhận chữ A-Z cùng số
+777-ok 111 - Mã người dùng được chuẩn hóa và chỉ nhận chữ A-Z cùng số
+778-  ---
+779-  duration_ms: 0.520777
+780-  ...
+781-# Subtest: Mã khách tự động luôn có đúng 3 chữ cái hoa và 3 chữ số
+782-ok 112 - Mã khách tự động luôn có đúng 3 chữ cái hoa và 3 chữ số
+783-  ---
+784-  duration_ms: 0.287659
+785-  ...
+786-# Subtest: cho phép thêm sản phẩm mới mà không bị các tham chiếu cũ cản trở
+--- SUMMARY ---
+  ---
+  duration_ms: 0.251972
+  ...
+# Subtest: printing source order includes only products with valid logo lines
+ok 231 - printing source order includes only products with valid logo lines
+  ---
+  duration_ms: 0.328516
+  ...
+# Subtest: inventory keeps zero stock after import or transfer-in history
+ok 232 - inventory keeps zero stock after import or transfer-in history
+  ---
+  duration_ms: 0.240351
+  ...
+# Subtest: inventory does not show a movement-only outbound row
+ok 233 - inventory does not show a movement-only outbound row
+  ---
+  duration_ms: 0.241323
+  ...
+# Subtest: V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction chạy đồng thời
+ok 234 - V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction chạy đồng thời
+  ---
+  duration_ms: 3203.933411
+  ...
+# Subtest: V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tại cùng phiên bản
+ok 235 - V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tại cùng phiên bản
+  ---
+  duration_ms: 1241.673467
+  ...
+1..235
+# tests 235
+# suites 0
+# pass 230
+# fail 5
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 48830.761424
+[33m[1m⚠ [22m[39m Script exited unsuccessfully (code 1)
+[36m[1mi  emulators:[22m[39m Shutting down emulators.
+[36m[1mi  firestore:[22m[39m Stopping Firestore Emulator
+[36m[1mi  hub:[22m[39m Stopping emulator hub
+[36m[1mi  logging:[22m[39m Stopping Logging Emulator
+
+[1m[31mError:[39m[22m Script "[1mnode --test --test-concurrency=1 tests/order-code.test.mjs tests/firestore.rules.test.mjs tests/warehouse.transactions.test.mjs tests/warehouse-cost.rules.test.mjs tests/warehouse-lot-allocation.static.test.mjs tests/warehouse-client-payload.static.test.mjs tests/warehouse-export-client.runtime.test.mjs tests/permission-audit.client.test.mjs tests/authorization-source.client.test.mjs tests/permission-matrix.client.test.mjs tests/order-items-by-order.client.test.mjs tests/order-items-by-order.rules.test.mjs tests/order-atomic-save.client.test.mjs tests/order-atomic-save.rules.test.mjs tests/order-item-dependencies.client.test.mjs tests/order-item-dependencies.rules.test.mjs tests/order-printing-delete-lock.rules.test.mjs tests/order-printing-delete-lock.client.test.mjs tests/order-relations.client.test.mjs tests/order-relations.rules.test.mjs tests/order-relation-reconcile.rules.test.mjs tests/export-lifecycle.client.test.mjs tests/export-lifecycle.rules.test.mjs tests/runtime-export-sync.client.test.mjs tests/firebase-error-message.static.test.mjs tests/printing-owner.rules.test.mjs tests/printing-permission.static.test.mjs tests/customer-create-flow.test.mjs tests/export-print-permission.test.mjs[22m" exited with code 1
+ ELIFECYCLE  Command failed with exit code 1.
