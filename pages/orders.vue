@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore'
 import { INVOICE_STATUS_OPTIONS, ORDER_CLASSIFICATION_OPTIONS, ORDER_STATUS_OPTIONS, VAT_RATE_OPTIONS } from '~/constants/permissions'
-import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, ProductDoc } from '~/types/models'
+import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, PrintOrderDoc, ProductDoc } from '~/types/models'
 import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
 import { customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, userCodeValidationError } from '~/utils/orderCode'
 import { generateCustomerCode } from '~/utils/customerCode'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+// @ts-ignore Shared ESM helpers are executed directly by Node client tests.
+import { printingDeleteBlocker } from '~/utils/orderPrintingDeleteLock.mjs'
 
 const { db } = useFirebaseServices()
 const { appUser, hasPermission } = useAuth()
@@ -14,6 +16,7 @@ const { invalidateScopedCache } = useRepo()
 const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
 const { loadScopedOrders, loadScopedOrderItems, loadScopedPayments, loadScopedExportRequests, loadScopedCustomers, loadProducts } = useScopedQueries()
 const { saveOrderAtomic } = useAtomicOrderSave()
+const { loadPrintingProgressForOrders, loadPrintingProgressForOrder } = useOrderPrintingDeleteGuard()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const { buildFulfillmentRows, orderSummary, requestLineProgress } = useWarehouseLogic()
@@ -27,6 +30,7 @@ const products = ref<ProductDoc[]>([])
 const itemsByOrder = ref<Record<string, OrderItemDoc[]>>({})
 const paymentsByOrder = ref<Record<string, PaymentDoc[]>>({})
 const exportRequests = ref<any[]>([])
+const printingProgress = ref<PrintOrderDoc[]>([])
 const showModal = ref(false)
 const showDetailModal = ref(false)
 const selectedDetail = ref<OrderDoc | null>(null)
@@ -162,10 +166,11 @@ async function loadRows(force = false) {
     customers.value = loadedCustomers.filter(isActive)
     products.value = loadedProducts.filter(isActive)
 
-    const [loadedItems, loadedPayments, loadedRequests] = await Promise.all([
+    const [loadedItems, loadedPayments, loadedRequests, loadedPrintingProgress] = await Promise.all([
       loadScopedOrderItems(allOrders, force),
       loadScopedPayments(allOrders, force),
-      loadScopedExportRequests(allOrders, force)
+      loadScopedExportRequests(allOrders, force),
+      loadPrintingProgressForOrders(allOrders)
     ])
 
     const itemMap: Record<string, OrderItemDoc[]> = {}
@@ -182,6 +187,7 @@ async function loadRows(force = false) {
     })
     paymentsByOrder.value = payMap
     exportRequests.value = loadedRequests
+    printingProgress.value = loadedPrintingProgress
 
     rows.value = allOrders.map(order => {
       const orderRequests = loadedRequests.filter(request => request.order_id === order.id && isActive(request))
@@ -389,8 +395,15 @@ function orderHasWarehouseExport(row: OrderDoc) {
   return exportedByQuantity || exportedByRequest
 }
 
+function orderDeleteBlocker(row: OrderDoc) {
+  if (orderHasWarehouseExport(row)) {
+    return 'Đơn hàng đã có số lượng xuất kho hoặc mã phiếu Warehouse nên không thể xóa.'
+  }
+  return printingDeleteBlocker(row, printingProgress.value)
+}
+
 function canDeleteRow(row: OrderDoc) {
-  return hasPermission('orders.delete') && !orderHasWarehouseExport(row)
+  return hasPermission('orders.delete') && !orderDeleteBlocker(row)
 }
 
 function fulfillmentLabel(value: any) {
@@ -570,6 +583,12 @@ async function saveOrder() {
         invoice_status: form.invoice_status || 'Không xuất',
         warehouse_fulfillment_status: form.warehouse_fulfillment_status || 'chua_xuat',
         warehouse_request_status: form.warehouse_request_status || '',
+        printing_progress_count: 0,
+        printing_lock_version: 1,
+        printing_last_action: 'reconcile',
+        printing_last_print_order_id: '',
+        printing_lock_updated_by: createdBy,
+        printing_lock_updated_at: serverTimestamp(),
         created_at: serverTimestamp(),
         active: true,
         deleted: false,
@@ -669,7 +688,9 @@ async function saveOrder() {
 }
 
 async function softDeleteOrder(row: OrderDoc) {
-  if (!canDeleteRow(row)) return showToast('Đơn đã có lịch sử xuất kho, không thể xóa', 'error')
+  if (!hasPermission('orders.delete')) return showToast('Bạn không có quyền xóa đơn hàng.', 'error')
+  const initialBlocker = orderDeleteBlocker(row)
+  if (initialBlocker) return showToast(initialBlocker, 'error')
   const confirmed = await askConfirm({
     title: 'Xóa đơn hàng',
     message: `Bạn chắc chắn muốn xóa đơn hàng ${row.order_code}?\nCác dòng sản phẩm và phiếu xuất chưa thực hiện của đơn này cũng sẽ được xóa mềm.`,
@@ -683,6 +704,9 @@ async function softDeleteOrder(row: OrderDoc) {
     if (orderHasWarehouseExport(row)) {
       throw new Error('Đơn hàng đã có số lượng xuất kho hoặc mã phiếu Warehouse nên không thể xóa.')
     }
+    const latestPrintingProgress = await loadPrintingProgressForOrder(row.id)
+    const latestPrintingBlocker = printingDeleteBlocker(row, latestPrintingProgress)
+    if (latestPrintingBlocker) throw new Error(latestPrintingBlocker)
 
     if (orderItems.length + orderRequests.length + 2 > 500) {
       throw new Error('Đơn hàng có quá nhiều dữ liệu liên quan để xóa an toàn trong một lần.')
@@ -734,6 +758,7 @@ async function softDeleteOrder(row: OrderDoc) {
     await batch.commit()
     rows.value = rows.value.filter(r => r.id !== row.id)
     exportRequests.value = exportRequests.value.filter(request => request.order_id !== row.id)
+    printingProgress.value = printingProgress.value.filter(progress => progress.order_id !== row.id)
     delete itemsByOrder.value[row.id]
     invalidateScopedCache('orders')
     invalidateScopedCache('order_items')
@@ -795,7 +820,7 @@ onMounted(loadRows)
                   <button v-if="canEditRow(row)" class="btn-sm" @click="openModal(row)">Sửa</button>
                   <button v-else class="btn-sm" disabled>Khóa</button>
                   <button v-if="canDeleteRow(row)" class="btn-sm btn-delete" @click="softDeleteOrder(row)">Xóa</button>
-                  <button v-else-if="hasPermission('orders.delete')" class="btn-sm" disabled>Khóa</button>
+                  <button v-else-if="hasPermission('orders.delete')" class="btn-sm" disabled :title="orderDeleteBlocker(row)">Khóa</button>
                 </div>
               </td>
             </tr>

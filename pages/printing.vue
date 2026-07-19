@@ -47,7 +47,7 @@ const {
   loadPrintingSourceOrderItems,
 } = usePrintingScopedQueries()
 const { loadProducts, loadSuppliers } = useScopedQueries()
-const { savePrintOrder, deletePrintOrder } = usePrintingProgress()
+const { savePrintOrder, deletePrintOrder, reconcilePrintingLocks } = usePrintingProgress()
 const { appUser, authReady, isAdmin, permissions, hasPermission } = useAuth()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
@@ -60,6 +60,7 @@ const sourceOrders = ref<OrderDoc[]>([])
 const sourceOrderItems = ref<OrderItemDoc[]>([])
 const loading = ref(false)
 const saving = ref(false)
+const reconciling = ref(false)
 const search = ref('')
 const statusFilter = ref('')
 const showFormModal = ref(false)
@@ -490,6 +491,27 @@ async function removeOrder(order: PrintOrderDoc) {
   }
 }
 
+async function syncOrderPrintingLocks() {
+  if (!isAdmin.value) return showToast('Chỉ quản trị viên được đồng bộ khóa xóa đơn.', 'error')
+  const confirmed = await askConfirm({
+    title: 'Đồng bộ khóa xóa đơn',
+    message: 'Hệ thống sẽ đếm lại toàn bộ tiến độ in còn hiệu lực và cập nhật khóa xóa trên từng đơn hàng. Tiếp tục?',
+    confirmLabel: 'Đồng bộ khóa',
+  })
+  if (!confirmed) return
+
+  reconciling.value = true
+  try {
+    const result = await reconcilePrintingLocks(sourceOrders.value, rows.value)
+    showToast('Đã kiểm tra ' + result.checked + ' đơn và cập nhật ' + result.changed + ' khóa in.', 'success')
+    await loadRows(true)
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không đồng bộ được khóa tiến độ in.'), 'error')
+  } finally {
+    reconciling.value = false
+  }
+}
+
 async function loadRows(force = false) {
   loading.value = true
   try {
@@ -536,6 +558,7 @@ onBeforeUnmount(() => {
   <AppShell>
     <PageHeader title="Tiến độ in ấn" :subtitle="pageSubtitle">
       <button v-if="canCreate" class="btn primary" @click="openCreateModal">+ Thêm đơn in</button>
+      <button v-if="isAdmin" class="btn" :disabled="reconciling" @click="syncOrderPrintingLocks">{{ reconciling ? 'Đang đồng bộ...' : 'Đồng bộ khóa xóa đơn' }}</button>
       <button class="btn" @click="loadRows(true)">Làm mới</button>
     </PageHeader>
 
@@ -618,10 +641,11 @@ onBeforeUnmount(() => {
           <SearchableSelect
             v-model="form.order_id"
             :options="orderOptions"
+            :disabled="!!editing"
             placeholder="Tìm đơn có sản phẩm logo theo mã, khách hàng hoặc SĐT..."
             @change="chooseSourceOrder"
           />
-          <div class="small subtle">Chỉ hiển thị đơn và sản phẩm đã tick Có logo.</div>
+          <div class="small subtle">Chỉ hiển thị đơn và sản phẩm đã tick Có logo. Khi sửa, không thể chuyển tiến độ sang đơn khác.</div>
         </div>
         <div class="form-group">
           <label>Mã AM</label>

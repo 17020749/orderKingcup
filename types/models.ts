@@ -133,6 +133,12 @@ export interface OrderDoc {
   created_by?: string
   warehouse_fulfillment_status?: string
   warehouse_request_status?: string
+  printing_progress_count?: number
+  printing_lock_version?: number
+  printing_last_action?: 'create' | 'delete' | 'reconcile'
+  printing_last_print_order_id?: string
+  printing_lock_updated_by?: string
+  printing_lock_updated_at?: any
   status?: string
   created_at?: any
   updated_at?: any
