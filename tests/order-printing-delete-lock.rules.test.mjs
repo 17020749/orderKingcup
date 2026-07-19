@@ -50,6 +50,18 @@ function sourceOrder(id, { legacy = false } = {}) {
       printing_last_print_order_id: '',
       printing_lock_updated_by: OWNER,
       printing_lock_updated_at: 'now',
+      relation_lock_version: 1,
+      payment_record_count: 0,
+      invoice_record_count: 0,
+      shipment_record_count: 0,
+      payment_relation_revision: 0,
+      invoice_relation_revision: 0,
+      shipment_relation_revision: 0,
+      relation_last_module: 'all',
+      relation_last_action: 'reconcile',
+      relation_last_document_id: '',
+      relation_updated_by: OWNER,
+      relation_updated_at: 'now',
     }),
   }
 }

@@ -49,10 +49,7 @@ const filtered = computed(() => rows.value.filter(row =>
   normalizeText(`${row.order_code} ${row.customer_name} ${row.phone} ${row.order_classification} ${row.order_status} ${row.payment_status} ${row.invoice_status}`).includes(normalizeText(search.value))
 ))
 const canEditOrders = computed(() => hasPermission('orders.edit'))
-const canManageInvoiceStatus = computed(() => editing.value
-  ? hasPermission('invoices.edit')
-  : hasPermission('invoices.create')
-)
+const canManageInvoiceStatus = computed(() => !editing.value && hasPermission('invoices.create'))
 const itemCount = computed(() => `${formItems.value.length} dòng`)
 const modalTotals = computed(() => calcItems(formItems.value, form))
 const selectedDetailItems = computed(() => selectedDetail.value ? (itemsByOrder.value[selectedDetail.value.id] || []) : [])
