@@ -1,17 +1,20 @@
 name: Diagnose Step 7 Relations
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/step-7-atomic-finance-shipping
-    paths:
-      - .github/workflows/diagnose-step7.yml
+      - dev
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: write
 
 jobs:
   diagnose:
+    if: github.head_ref == 'agent/step-7-atomic-finance-shipping'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
