@@ -56,6 +56,8 @@ const search = ref('')
 const warehouseFilter = ref('')
 const logoFilter = ref('')
 const reconcileFilter = ref('')
+const stockStatusFilter = ref('')
+const sortMode = ref('warehouse_product')
 const rows = ref<InventoryBalanceDoc[]>([])
 const movements = ref<StockMovementDoc[]>([])
 const warehouses = ref<WarehouseDoc[]>([])
@@ -311,6 +313,10 @@ const filtered = computed(() => {
       || (reconcileFilter.value === 'matched'
         ? Math.abs(row.difference) < 0.0001
         : Math.abs(row.difference) >= 0.0001)
+    const matchedStockStatus = !stockStatusFilter.value
+      || (stockStatusFilter.value === 'in_stock' && toNumber(row.quantity) > 0)
+      || (stockStatusFilter.value === 'out_of_stock' && Math.abs(toNumber(row.quantity)) < 0.0001)
+      || (stockStatusFilter.value === 'negative' && toNumber(row.quantity) < 0)
     const matchedText = !keyword || normalizeText([
       row.product_code,
       row.product_name,
@@ -318,9 +324,34 @@ const filtered = computed(() => {
       row.logo,
       row.unit,
     ].join(' ')).includes(keyword)
-    return matchedWarehouse && matchedLogo && matchedReconcile && matchedText
+    return matchedWarehouse && matchedLogo && matchedReconcile && matchedStockStatus && matchedText
+  }).sort((a, b) => {
+    switch (sortMode.value) {
+      case 'quantity_desc':
+        return toNumber(b.quantity) - toNumber(a.quantity)
+      case 'quantity_asc':
+        return toNumber(a.quantity) - toNumber(b.quantity)
+      case 'updated_desc':
+        return String(b.last_movement_at || b.updated_at || '').localeCompare(String(a.last_movement_at || a.updated_at || ''))
+      case 'value_desc':
+        return lotValueForRow(b) - lotValueForRow(a)
+      default: {
+        const left = `${a.warehouse_name || ''} ${a.product_code || ''} ${a.logo || ''}`
+        const right = `${b.warehouse_name || ''} ${b.product_code || ''} ${b.logo || ''}`
+        return left.localeCompare(right, 'vi')
+      }
+    }
   })
 })
+
+function resetFilters() {
+  search.value = ''
+  warehouseFilter.value = ''
+  logoFilter.value = ''
+  reconcileFilter.value = ''
+  stockStatusFilter.value = ''
+  sortMode.value = 'warehouse_product'
+}
 
 const summary = computed(() => ({
   lines: filtered.value.length,
@@ -526,6 +557,20 @@ onMounted(() => loadRows())
           <option value="matched">Đã khớp</option>
           <option value="mismatch">Đang lệch</option>
         </select>
+        <select v-model="stockStatusFilter" class="select" style="max-width: 190px">
+          <option value="">Tất cả tình trạng tồn</option>
+          <option value="in_stock">Còn hàng</option>
+          <option value="out_of_stock">Hết hàng</option>
+          <option value="negative">Tồn âm</option>
+        </select>
+        <select v-model="sortMode" class="select" style="max-width: 220px">
+          <option value="warehouse_product">Sắp xếp kho / sản phẩm</option>
+          <option value="quantity_desc">Tồn nhiều nhất</option>
+          <option value="quantity_asc">Tồn ít nhất</option>
+          <option value="updated_desc">Cập nhật mới nhất</option>
+          <option v-if="canViewCost" value="value_desc">Giá trị tồn cao nhất</option>
+        </select>
+        <button class="btn" type="button" @click="resetFilters">Xóa lọc</button>
       </div>
 
       <div v-if="!canViewCost" class="small subtle" style="margin: 0 0 12px;">

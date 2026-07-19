@@ -23,6 +23,10 @@ const loading = ref(false);
 const saving = ref(false);
 const search = ref("");
 const warehouseFilter = ref("");
+const dateFrom = ref("");
+const dateTo = ref("");
+const quantityTypeFilter = ref("");
+const productFilter = ref("");
 const rows = ref<InventoryAdjustmentDoc[]>([]);
 const warehouses = ref<WarehouseDoc[]>([]);
 const products = ref<ProductDoc[]>([]);
@@ -69,6 +73,14 @@ const filtered = computed(() => {
   return rows.value.filter((row) => {
     const matchedWarehouse =
       !warehouseFilter.value || row.warehouse_id === warehouseFilter.value;
+    const rowDate = String(row.adjustment_date || row.created_at || "").slice(0, 10);
+    const matchedDateFrom = !dateFrom.value || rowDate >= dateFrom.value;
+    const matchedDateTo = !dateTo.value || rowDate <= dateTo.value;
+    const matchedQuantityType =
+      !quantityTypeFilter.value ||
+      (quantityTypeFilter.value === "increase" && toNumber(row.quantity) > 0) ||
+      (quantityTypeFilter.value === "decrease" && toNumber(row.quantity) < 0);
+    const matchedProduct = !productFilter.value || row.product_id === productFilter.value;
     const matchedText =
       !keyword ||
       normalizeText(
@@ -82,9 +94,18 @@ const filtered = computed(() => {
           row.created_by,
         ].join(" "),
       ).includes(keyword);
-    return matchedWarehouse && matchedText;
+    return matchedWarehouse && matchedDateFrom && matchedDateTo && matchedQuantityType && matchedProduct && matchedText;
   });
 });
+
+function resetFilters() {
+  search.value = "";
+  warehouseFilter.value = "";
+  dateFrom.value = "";
+  dateTo.value = "";
+  quantityTypeFilter.value = "";
+  productFilter.value = "";
+}
 
 const summary = computed(() => ({
   rows: filtered.value.length,
@@ -246,6 +267,18 @@ onMounted(() => loadRows());
             {{ warehouse.name || warehouse.warehouse_code || warehouse.id }}
           </option>
         </select>
+        <input v-model="dateFrom" class="input" type="date" style="max-width: 160px" title="Từ ngày" />
+        <input v-model="dateTo" class="input" type="date" style="max-width: 160px" title="Đến ngày" />
+        <select v-model="quantityTypeFilter" class="select" style="max-width: 180px">
+          <option value="">Tất cả tăng/giảm</option>
+          <option value="increase">Điều chỉnh tăng</option>
+          <option value="decrease">Điều chỉnh giảm</option>
+        </select>
+        <select v-model="productFilter" class="select" style="max-width: 260px">
+          <option value="">Tất cả sản phẩm</option>
+          <option v-for="product in products" :key="product.id" :value="product.id">{{ product.product_code || product.id }} - {{ product.product_name || product.id }}</option>
+        </select>
+        <button class="btn" type="button" @click="resetFilters">Xóa lọc</button>
       </div>
 
       <LoadingState v-if="loading" />
