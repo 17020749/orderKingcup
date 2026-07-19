@@ -39,6 +39,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/activity-logs", label: "Nhật ký hoạt động", perm: "page.activity_logs" },
       { to: "/settings/users", label: "Người dùng & quyền", perm: "admin.only" },
+      { to: "/settings/permission-audit", label: "Kiểm tra quyền", perm: "admin.only" },
       { to: "/settings/general", label: "Cài đặt chung", perm: "page.settings" },
     ],
   },

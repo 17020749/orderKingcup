@@ -9,7 +9,9 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (!isLoggedIn.value) return navigateTo('/login')
   if (!hasAccess.value) return navigateTo('/login?denied=1')
   if (to.path === '/forbidden') return
-  if (to.path.startsWith('/settings/users') && !isAdmin.value) return navigateTo('/forbidden', { replace: true })
+  const adminOnlyRoute = to.path.startsWith('/settings/users')
+    || to.path.startsWith('/settings/permission-audit')
+  if (adminOnlyRoute && !isAdmin.value) return navigateTo('/forbidden', { replace: true })
 
   const required = APP_ROUTE_PERMISSIONS.find(route => (
     to.path === route.path || to.path.startsWith(`${route.path}/`)
