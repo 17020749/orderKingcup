@@ -1,0 +1,42 @@
+name: Fix Step 8 Regressions
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.head_ref == 'agent/step-8-export-lifecycle'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/step-8-export-lifecycle
+          fetch-depth: 0
+      - name: Check state
+        id: state
+        run: |
+          if grep -q "liên kết nguyên tử" tests/firestore.rules.test.mjs; then
+            echo "applied=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "applied=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Apply regression migrations
+        if: steps.state.outputs.applied == 'false'
+        run: python3 scripts/fix-step8-regressions.py
+      - name: Commit fixes
+        if: steps.state.outputs.applied == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add firestore.rules tests/firestore.rules.test.mjs tests/order-printing-delete-lock.client.test.mjs
+          git commit -m "test(step8): migrate legacy export lifecycle regressions"
+          git push origin HEAD:agent/step-8-export-lifecycle
