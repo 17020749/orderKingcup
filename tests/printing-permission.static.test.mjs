@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { APP_ACCESS_MODULES } from '../constants/accessMatrix.mjs'
 
 const printDocuments = readFileSync('utils/orderPrintDocuments.ts', 'utf8')
 const permissions = readFileSync('constants/permissions.ts', 'utf8')
@@ -44,6 +45,7 @@ test('read-only source-order owners do not receive printing action buttons', () 
 })
 
 test('login and forbidden page use the complete shared route catalog', () => {
+  const pagePermissions = new Set(APP_ACCESS_MODULES.map(module => module.permission).filter(Boolean))
   for (const permission of [
     'page.printing',
     'page.inventory',
@@ -52,8 +54,9 @@ test('login and forbidden page use the complete shared route catalog', () => {
     'page.warehouse_export_requests',
     'page.warehouse_settings',
   ]) {
-    assert.match(routes, new RegExp(permission.replace('.', '\\.')))
+    assert.equal(pagePermissions.has(permission), true, `Access matrix thiếu ${permission}`)
   }
+  assert.match(routes, /APP_ACCESS_MODULES\.map/)
   assert.match(login, /firstAllowedAppRoute/)
   assert.doesNotMatch(login, /navigateTo\('\/dashboard'\)/)
   assert.match(forbidden, /firstAllowedAppRoute/)

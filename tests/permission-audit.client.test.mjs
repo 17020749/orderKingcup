@@ -12,8 +12,22 @@ const catalogKeys = [
   'page.orders',
   'orders.view',
   'orders.create',
+  'page.customers',
+  'customers.view',
+  'page.products',
+  'products.view',
   'page.export_requests',
   'export_requests.view',
+]
+
+const expectedSalePermissions = [
+  'customers.view',
+  'orders.create',
+  'orders.view',
+  'page.customers',
+  'page.orders',
+  'page.products',
+  'products.view',
 ]
 
 const roles = [
@@ -21,7 +35,7 @@ const roles = [
     id: 'sale',
     name: 'Sale',
     active: true,
-    permissions: ['page.orders', 'orders.view', 'orders.create'],
+    permissions: ['orders.create'],
   },
   {
     id: 'admin',
@@ -37,12 +51,12 @@ test('role khớp theo cả id và tên, không phân biệt hoa thường', () 
   assert.equal(roleMatchesName(roles[0], 'warehouse'), false)
 })
 
-test('phát hiện permissions_flat thiếu quyền so với role', () => {
+test('phát hiện permissions_flat thiếu quyền so với ma trận role', () => {
   const [row] = auditPermissionAssignments({
     users: [{
       email: 'sale@example.com',
       roles: ['sale'],
-      permissions_flat: ['page.orders', 'orders.create'],
+      permissions_flat: expectedSalePermissions.filter(permission => permission !== 'orders.view'),
       active: true,
       permission_schema_version: PERMISSION_SCHEMA_VERSION,
     }],
@@ -60,7 +74,7 @@ test('phát hiện quyền thừa và quyền không còn trong catalog', () => 
     users: [{
       email: 'sale@example.com',
       roles: ['sale'],
-      permissions_flat: ['page.orders', 'orders.view', 'orders.create', 'orders.legacy_delete'],
+      permissions_flat: [...expectedSalePermissions, 'orders.legacy_delete'],
       active: true,
       permission_schema_version: PERMISSION_SCHEMA_VERSION,
     }],
@@ -108,7 +122,7 @@ test('không đồng bộ khi user đang tham chiếu role không tồn tại', 
   assert.throws(() => buildPermissionSyncPatch(row), /vai trò không tồn tại/)
 })
 
-test('patch đồng bộ dùng quyền từ role và ghi phiên bản schema', () => {
+test('patch đồng bộ dùng quyền đã mở rộng từ ma trận và ghi phiên bản schema', () => {
   const [row] = auditPermissionAssignments({
     users: [{
       email: 'sale@example.com',
@@ -123,7 +137,7 @@ test('patch đồng bộ dùng quyền từ role và ghi phiên bản schema', (
   assert.deepEqual(buildPermissionSyncPatch(row), {
     roles: ['Sale'],
     role: 'Sale',
-    permissions_flat: ['orders.create', 'orders.view', 'page.orders'],
+    permissions_flat: expectedSalePermissions,
     is_admin: false,
     permission_schema_version: PERMISSION_SCHEMA_VERSION,
   })
