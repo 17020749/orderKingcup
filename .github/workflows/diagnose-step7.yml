@@ -30,7 +30,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --no-frozen-lockfile --ignore-scripts
       - name: Run isolated tests
         id: tests
         continue-on-error: true
