@@ -3,20 +3,42 @@ from pathlib import Path
 path = Path('scripts/apply-step8-export-lifecycle.py')
 source = path.read_text(encoding='utf-8')
 
-replacements = [
-    (
-        """import { canCancelExportRequestRelease } from '~/utils/exportLifecycle.mjs'""",
-        """import { canCancelExportRequestRelease, canReleaseExportRequest } from '~/utils/exportLifecycle.mjs'""",
-    ),
-    (
-        """function canReleaseRequest(row: any) {
+
+def replace_once(old: str, new: str) -> None:
+    global source
+    if old not in source:
+        raise SystemExit(f'Missing fix target: {old[:140]!r}')
+    source = source.replace(old, new, 1)
+
+
+def replace_nth(old: str, new: str, occurrence: int) -> None:
+    global source
+    start = -1
+    for _ in range(occurrence):
+        start = source.find(old, start + 1)
+        if start < 0:
+            raise SystemExit(f'Missing fix target occurrence {occurrence}: {old[:140]!r}')
+    source = source[:start] + new + source[start + len(old):]
+
+
+replace_once(
+    "import { canCancelExportRequestRelease } from '~/utils/exportLifecycle.mjs'",
+    "import { canCancelExportRequestRelease, canReleaseExportRequest } from '~/utils/exportLifecycle.mjs'",
+)
+
+# The old and replacement UI snippets contain the same function text. Only
+# rewrite the replacement (second occurrence), otherwise the patcher would look
+# for code that is not present in the original Vue page.
+old_release_function = """function canReleaseRequest(row: any) {
   return canReleaseAction.value && !requestHasExported(row)
     && ['da_tiep_nhan', 'cho_xuat_kho', 'loi'].includes(String(row.status || ''))
-}""",
-        """function canReleaseRequest(row: any) {
+}"""
+new_release_function = """function canReleaseRequest(row: any) {
   return canReleaseAction.value && canReleaseExportRequest(row) && !requestHasExported(row)
-}""",
-    ),
+}"""
+replace_nth(old_release_function, new_release_function, 2)
+
+replacements = [
     (
         """    function generatedExportCreateMatchesRequest(exportOrderId) {
 """,
@@ -120,9 +142,7 @@ replacements = [
 ]
 
 for old, new in replacements:
-    if old not in source:
-        raise SystemExit(f'Missing fix target: {old[:140]!r}')
-    source = source.replace(old, new, 1)
+    replace_once(old, new)
 
 path.write_text(source, encoding='utf-8')
 print('Step 8 patcher fixes applied')
