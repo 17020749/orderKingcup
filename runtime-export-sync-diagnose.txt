@@ -1,0 +1,70 @@
+42-  ---
+43-  duration_ms: 0.675658
+44-  ...
+45-# Subtest: relation reconciliation remains an explicit admin maintenance action
+46:not ok 7 - relation reconciliation remains an explicit admin maintenance action
+47-  ---
+48-  duration_ms: 4.201891
+49-  location: '/home/runner/work/orderKingcup/orderKingcup/tests/runtime-export-sync.client.test.mjs:28:1'
+50-  failureType: 'testCodeFailure'
+51-  error: |-
+52-    The input did not match the regular expression /relation_last_action: 'reconcile'/. Input:
+53-    
+54-    'import {\n' +
+55-      '  collection,\n' +
+56-      '  doc,\n' +
+57-      '  getDocs,\n' +
+58-      '  runTransaction,\n' +
+59-      '  serverTimestamp,\n' +
+60-      '  writeBatch,\n' +
+61-      '  type DocumentData,\n' +
+62-      "} from 'firebase/firestore'\n" +
+63-      "import type { InvoiceDoc, OrderDoc, PaymentDoc, ShipmentDoc } from '~/types/models'\n" +
+64-      "import { makeId, normalizeEmail, toNumber } from '~/utils/format'\n" +
+65-      "import { invalidateScopedCache } from '~/composables/useScopedQueries'\n" +
+66-      '// @ts-ignore Shared ESM helpers are executed directly by Node client tests.\n' +
+67-      'import {\n' +
+68-      '  buildOrderRelationPatch,\n' +
+69-      '  buildReconciledOrderRelationPatch,\n' +
+70-      '  isActiveOrderRelation,\n' +
+--- SUMMARY ---
+            invoices: invoices.filter(isActiveOrderRelation).length,
+            shipments: shipments.filter(isActiveOrderRelation).length,
+          },
+        }
+      }
+    
+      return {
+        mutateOrderRelation,
+        reconcileOrderRelationLocks,
+        relationCountField,
+        relationRevisionField,
+      }
+    }
+    
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/orderKingcup/orderKingcup/tests/runtime-export-sync.client.test.mjs:34:10)
+    Test.runInAsyncScope (node:async_hooks:206:9)
+    Test.run (node:internal/test_runner/test:796:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:526:18)
+    Test.postRun (node:internal/test_runner/test:889:19)
+    Test.run (node:internal/test_runner/test:835:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 6
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 6334.629245
+[33m[1m⚠ [22m[39m Script exited unsuccessfully (code 1)
+[36m[1mi  emulators:[22m[39m Shutting down emulators.
+[36m[1mi  firestore:[22m[39m Stopping Firestore Emulator
+[36m[1mi  hub:[22m[39m Stopping emulator hub
+[36m[1mi  logging:[22m[39m Stopping Logging Emulator
+
+[1m[31mError:[39m[22m Script "[1mnode --test --test-concurrency=1 tests/runtime-export-sync.client.test.mjs tests/order-relation-reconcile.rules.test.mjs[22m" exited with code 1
