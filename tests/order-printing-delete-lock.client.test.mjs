@@ -81,6 +81,8 @@ test('trang đơn tải print_orders theo order_id và kiểm tra lại ngay tr�
   assert.match(page, /loadPrintingProgressForOrders/)
   assert.match(page, /loadPrintingProgressForOrder\(row\.id\)/)
   assert.match(page, /printingDeleteBlocker/)
+  assert.match(page, /printing_progress_count: 0/)
+  assert.match(page, /printing_lock_version: 1/)
   assert.match(loader, /where\('order_id', 'in', orderIds\)/)
 })
 
