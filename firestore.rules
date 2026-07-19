@@ -1266,6 +1266,40 @@ service cloud.firestore {
         && ownEmailField(request.resource.data, 'updated_by');
     }
 
+    function exportRequestLifecycleFieldsOnly() {
+      return onlyChanged([
+        'status', 'lifecycle_status', 'release_sequence', 'active_export_order_id',
+        'warehouse_export_code', 'warehouse_handled_by', 'warehouse_handled_at',
+        'warehouse_note', 'warehouse_export_id', 'warehouse_export_order_id',
+        'export_order_id', 'exported_at', 'actual_exported_at',
+        'actual_export_summary_json', 'stock_movement_ids', 'request_timeline_json',
+        'operation_id', 'last_operation_id', 'revision', 'last_released_export_order_id',
+        'last_released_export_code', 'last_released_by', 'last_cancelled_export_order_id',
+        'last_cancelled_export_code', 'last_cancelled_by', 'last_cancel_reason',
+        'last_cancelled_at', 'cancel_count', 'updated_at'
+      ]);
+    }
+
+    function exportRequestReleaseAllowed(requestId) {
+      return request.resource.data.get('lifecycle_status', '') == 'released'
+        && request.resource.data.get('status', '') == 'da_xuat'
+        && resource.data.get('status', '') in ['da_tiep_nhan', 'cho_xuat_kho', 'loi']
+        && exportRequestLifecycleFieldsOnly()
+        && hasAnyPerm(['export_requests.release', 'export_requests.process'])
+        && ownEmailField(request.resource.data, 'warehouse_handled_by')
+        && exportRequestReleaseLinkValid(requestId);
+    }
+
+    function exportRequestCancelAllowed(requestId) {
+      return request.resource.data.get('lifecycle_status', '') == 'release_cancelled'
+        && request.resource.data.get('status', '') in ['da_tiep_nhan', 'cho_xuat_kho']
+        && resource.data.get('status', '') == 'da_xuat'
+        && exportRequestLifecycleFieldsOnly()
+        && hasAnyPerm(['export_requests.release', 'export_requests.process'])
+        && ownEmailField(request.resource.data, 'warehouse_handled_by')
+        && exportRequestCancelLinkValid(requestId);
+    }
+
     function exportWarehouseProcessAllowed() {
       let path = userPath();
       let user = get(path).data;
@@ -1282,15 +1316,8 @@ service cloud.firestore {
         && exists(path)
         && activeUserData(user)
         && onlyChanged([
-          'status', 'lifecycle_status', 'release_sequence', 'active_export_order_id',
-          'warehouse_export_code', 'warehouse_handled_by', 'warehouse_handled_at',
-          'warehouse_note', 'warehouse_export_id', 'warehouse_export_order_id',
-          'export_order_id', 'exported_at', 'actual_exported_at',
-          'actual_export_summary_json', 'stock_movement_ids', 'request_timeline_json',
-          'operation_id', 'last_operation_id', 'revision', 'last_released_export_order_id',
-          'last_released_export_code', 'last_released_by', 'last_cancelled_export_order_id',
-          'last_cancelled_export_code', 'last_cancelled_by', 'last_cancel_reason',
-          'last_cancelled_at', 'cancel_count', 'updated_at'
+          'status', 'warehouse_handled_by', 'warehouse_handled_at',
+          'warehouse_note', 'request_timeline_json', 'updated_at'
         ])
         && ownEmailField(request.resource.data, 'warehouse_handled_by')
         && (
@@ -1309,24 +1336,6 @@ service cloud.firestore {
               legacyProcess
               || (permissions is list && 'export_requests.reject' in permissions)
             )
-          )
-          || (
-            afterStatus == 'da_xuat'
-            && beforeStatus in ['da_tiep_nhan', 'cho_xuat_kho', 'loi']
-            && (
-              legacyProcess
-              || (permissions is list && 'export_requests.release' in permissions)
-            )
-            && exportRequestReleaseLinkValid(docId)
-          )
-          || (
-            afterStatus in ['da_tiep_nhan', 'cho_xuat_kho']
-            && beforeStatus == 'da_xuat'
-            && (
-              legacyProcess
-              || (permissions is list && 'export_requests.release' in permissions)
-            )
-            && exportRequestCancelLinkValid(docId)
           )
         );
     }
@@ -1532,6 +1541,7 @@ service cloud.firestore {
           && orderIdentityUnchanged()
           && orderCanBeDeleted()
         )
+        || orderWarehouseSummaryUpdateAllowed()
         // Dispatch relation summaries by the cheap module marker first. This
         // prevents Firestore from evaluating all three expensive parent/child
         // relation branches for every order update.
@@ -1548,7 +1558,6 @@ service cloud.firestore {
           && orderShipmentSummaryUpdateAllowed(docId)
         )
         || orderPrintingSummaryUpdateAllowed(docId)
-        || orderWarehouseSummaryUpdateAllowed()
         || isAdmin()
         || (
           // Normal business edit by an owner.
@@ -1708,9 +1717,18 @@ service cloud.firestore {
 
       allow create: if exportCreateAllowed();
 
-      // Evaluate cheap operation-shape checks first. This avoids exhausting
-      // Firestore's 1000-expression limit on the page's three-write batch.
-      allow update: if exportSoftDeleteAllowed()
+      // Dispatch release/cancel by the lifecycle marker before evaluating
+      // legacy owner/warehouse branches. This keeps multi-write batches below
+      // Firestore's 1000-expression evaluation limit.
+      allow update: if (
+          request.resource.data.get('lifecycle_status', '') == 'released'
+          && exportRequestReleaseAllowed(docId)
+        )
+        || (
+          request.resource.data.get('lifecycle_status', '') == 'release_cancelled'
+          && exportRequestCancelAllowed(docId)
+        )
+        || exportSoftDeleteAllowed()
         || exportOwnerEditAllowed()
         || exportWarehouseProcessAllowed()
         || isAdmin();
@@ -1966,20 +1984,30 @@ service cloud.firestore {
 
     match /export_orders/{docId} {
       allow read: if hasAnyPerm(['export.view', 'export_requests.release', 'export_requests.process']);
-      allow create: if ownEmailField(request.resource.data, 'created_by')
-        && (
-          (
-            hasAnyPerm(['export.create'])
-            && manualExportOrderData(request.resource.data)
-          )
-          || (
-            hasAnyPerm(['export_requests.release', 'export_requests.process'])
-            && generatedExportCreateMatchesRequest(docId)
-          )
-        );
-      allow update: if isAdmin()
+      allow create: if (
+          request.resource.data.get('source_request_id', '') != ''
+          && hasAnyPerm(['export_requests.release', 'export_requests.process'])
+          && ownEmailField(request.resource.data, 'created_by')
+          && generatedExportCreateMatchesRequest(docId)
+        )
         || (
-          hasAnyPerm(['export.edit'])
+          request.resource.data.get('source_request_id', '') == ''
+          && hasPerm('export.create')
+          && ownEmailField(request.resource.data, 'created_by')
+          && manualExportOrderData(request.resource.data)
+        );
+      allow update: if (
+          resource.data.get('source_request_id', '') != ''
+          && hasAnyPerm(['export_requests.release', 'export_requests.process'])
+          && generatedExportCancelMatchesRequest(docId)
+          && unchanged([
+            'source_request_id', 'sync_source', 'source', 'release_sequence',
+            'source_request_revision', 'request_operation_id', 'created_at', 'created_by'
+          ])
+        )
+        || (
+          resource.data.get('source_request_id', '') == ''
+          && hasPerm('export.edit')
           && manualExportOrderData(resource.data)
           && manualExportOrderData(request.resource.data)
           && warehouseDocIdentitySafe()
@@ -1990,47 +2018,53 @@ service cloud.firestore {
           ])
         )
         || (
-          hasAnyPerm(['export.delete'])
+          resource.data.get('source_request_id', '') == ''
+          && hasPerm('export.delete')
           && manualExportOrderData(resource.data)
           && manualExportOrderData(request.resource.data)
           && warehouseDocIdentitySafe()
           && unchanged(['source_request_id', 'sync_source'])
           && warehouseSoftDeleteOnly()
         )
-        || (
-          hasAnyPerm(['export_requests.release', 'export_requests.process'])
-          && generatedExportCancelMatchesRequest(docId)
-          && unchanged([
-            'source_request_id', 'sync_source', 'source', 'release_sequence',
-            'source_request_revision', 'request_operation_id', 'created_at', 'created_by'
-          ])
-        );
+        || isAdmin();
       allow delete: if isAdmin();
     }
 
     match /export_order_items/{docId} {
       allow read: if hasAnyPerm(['export.view', 'export_requests.release', 'export_requests.process']);
-      allow create: if request.resource.data.export_order_id is string
+      allow create: if request.resource.data.get('source', '') == 'kingcup_firestore'
+        && hasAnyPerm(['export_requests.release', 'export_requests.process'])
+        && request.resource.data.export_order_id is string
         && quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) > 0
         && ownEmailField(request.resource.data, 'created_by')
-        && (
-          (
-            hasAnyPerm(['export.create'])
-            && manualExportOrderAfterById(request.resource.data.export_order_id)
-          )
-          || (
-            hasAnyPerm(['export_requests.release', 'export_requests.process'])
-            && generatedExportItemCreateAllowed()
-          )
-          || (
-            hasAnyPerm(['export.edit'])
-            && manualExportOrderById(request.resource.data.export_order_id)
+        && generatedExportItemCreateAllowed()
+        || (
+          request.resource.data.get('source', '') != 'kingcup_firestore'
+          && request.resource.data.export_order_id is string
+          && quantityIsNumber(request.resource.data)
+          && request.resource.data.get('quantity', 0) > 0
+          && ownEmailField(request.resource.data, 'created_by')
+          && (
+            (
+              hasPerm('export.create')
+              && manualExportOrderAfterById(request.resource.data.export_order_id)
+            )
+            || (
+              hasPerm('export.edit')
+              && manualExportOrderById(request.resource.data.export_order_id)
+            )
           )
         );
-      allow update: if isAdmin()
+      allow update: if (
+          resource.data.get('source', '') == 'kingcup_firestore'
+          && hasAnyPerm(['export_requests.release', 'export_requests.process'])
+          && unchanged(['export_order_id', 'created_at', 'created_by', 'source'])
+          && generatedExportItemCancelAllowed()
+        )
         || (
-          hasAnyPerm(['export.edit'])
+          resource.data.get('source', '') != 'kingcup_firestore'
+          && hasPerm('export.edit')
           && resource.data.export_order_id is string
           && manualExportOrderById(resource.data.export_order_id)
           && unchanged(['export_order_id', 'created_at', 'created_by', 'source'])
@@ -2038,17 +2072,14 @@ service cloud.firestore {
           && request.resource.data.get('quantity', 0) > 0
         )
         || (
-          hasAnyPerm(['export.delete'])
+          resource.data.get('source', '') != 'kingcup_firestore'
+          && hasPerm('export.delete')
           && resource.data.export_order_id is string
           && manualExportOrderById(resource.data.export_order_id)
           && unchanged(['export_order_id', 'created_at', 'created_by', 'source'])
           && warehouseSoftDeleteOnly()
         )
-        || (
-          hasAnyPerm(['export_requests.release', 'export_requests.process'])
-          && unchanged(['export_order_id', 'created_at', 'created_by', 'source'])
-          && generatedExportItemCancelAllowed()
-        );
+        || isAdmin();
       allow delete: if isAdmin();
     }
 
