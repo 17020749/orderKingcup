@@ -238,7 +238,10 @@ test('tạo đơn ghi sequence, order, items và activity trong một transactio
   assert.equal((await getDoc(doc(db, 'orders', 'order-create'))).data().items_count, 2)
   assert.equal((await getDoc(doc(db, 'order_items', 'create-item-a'))).data().order_id, 'order-create')
   assert.equal((await getDoc(doc(db, 'order_sequences', 'customer-create'))).data().last_number, 1)
-  assert.equal((await getDoc(doc(db, 'activity_logs', 'activity-create'))).data().operation_id, 'operation-create')
+  await env.withSecurityRulesDisabled(async context => {
+    const adminDb = context.firestore()
+    assert.equal((await getDoc(doc(adminDb, 'activity_logs', 'activity-create'))).data().operation_id, 'operation-create')
+  })
 })
 
 test('một item sai quyền làm rollback toàn bộ transaction tạo đơn', async () => {
