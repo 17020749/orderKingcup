@@ -1180,12 +1180,12 @@ service cloud.firestore {
           && ownsOrderData(resource.data)
         );
 
+      // New clients initialize the printing lock at zero. Legacy create payloads
+      // remain compatible, but orderCanBeDeleted() fails closed until reconciliation.
       allow create: if hasPerm('orders.create')
         && ownEmailField(request.resource.data, 'created_by')
         && ownsOrderData(request.resource.data)
-        && validOrderNumberCreate()
-        && printingLockReadyData(request.resource.data)
-        && request.resource.data.get('printing_progress_count', -1) == 0;
+        && validOrderNumberCreate();
 
       allow update: if orderPrintingSummaryUpdateAllowed(docId)
         || orderWarehouseSummaryUpdateAllowed()
