@@ -1,13 +1,17 @@
 import {
   collection,
   getDocs,
+  limit as queryLimit,
   onSnapshot,
+  orderBy,
   or,
   query,
+  startAfter,
   where,
   type DocumentData,
   type Query,
   type QueryConstraint,
+  type QueryDocumentSnapshot,
   type Unsubscribe
 } from 'firebase/firestore'
 import type {
@@ -51,7 +55,14 @@ type ListOptions = {
 type RealtimeRowsHandler<T extends AnyDoc> = (rows: T[]) => void
 type RealtimeErrorHandler = (error: any) => void
 
-const EXPORT_REQUEST_OWNER_FIELDS = [
+export type CursorPage<T extends AnyDoc> = {
+  rows: T[]
+  cursor: QueryDocumentSnapshot<DocumentData> | null
+  hasMore: boolean
+  mode: 'cursor' | 'full'
+}
+
+export const EXPORT_REQUEST_OWNER_FIELDS = [
   'requested_by',
   'order_owner_email',
   'order_created_by',
@@ -194,6 +205,57 @@ export function useScopedQueries() {
   async function fetchCollection<T extends AnyDoc>(name: string, constraints: QueryConstraint[] = []) {
     const snap = await getDocs(query(collection(db, name), ...constraints))
     return snap.docs.map(d => ({ ...d.data(), id: d.id, firestore_id: d.id } as T))
+  }
+
+
+  function cleanIds(rows: Array<{ id?: string }>) {
+    return Array.from(new Set(rows.map(row => String(row?.id || '').trim()).filter(Boolean)))
+  }
+
+  function chunks<T>(values: T[], size = 30) {
+    const result: T[][] = []
+    for (let index = 0; index < values.length; index += size) {
+      result.push(values.slice(index, index + size))
+    }
+    return result
+  }
+
+  async function fetchByFieldValues<T extends AnyDoc>(name: string, field: string, values: string[]) {
+    const cleanValues = Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)))
+    if (!cleanValues.length) return [] as T[]
+    const groups = await Promise.all(chunks(cleanValues).map(group => (
+      fetchCollection<T>(name, [where(field, 'in', group)])
+    )))
+    return uniqueById(groups.flat() as T[])
+  }
+
+  async function fetchOrderedPage<T extends AnyDoc>(
+    name: string,
+    orderField: string,
+    cursor: QueryDocumentSnapshot<DocumentData> | null = null,
+    pageSize = 50,
+  ): Promise<CursorPage<T>> {
+    const safeSize = Math.min(100, Math.max(10, Math.trunc(pageSize) || 50))
+    const constraints: QueryConstraint[] = [orderBy(orderField, 'desc')]
+    if (cursor) constraints.push(startAfter(cursor))
+    constraints.push(queryLimit(safeSize + 1))
+
+    const snapshot = await getDocs(query(collection(db, name), ...constraints))
+    const pageDocs = snapshot.docs.slice(0, safeSize)
+    return {
+      rows: pageDocs.map(item => ({
+        ...item.data(),
+        id: item.id,
+        firestore_id: item.id,
+      } as T)),
+      cursor: pageDocs.at(-1) || null,
+      hasMore: snapshot.docs.length > safeSize,
+      mode: 'cursor',
+    }
+  }
+
+  function fullCursorPage<T extends AnyDoc>(rows: T[]): CursorPage<T> {
+    return { rows, cursor: null, hasMore: false, mode: 'full' }
   }
 
   function listenerErrorCode(error: any) {
@@ -380,9 +442,10 @@ export function useScopedQueries() {
 
   async function loadScopedOrderItems(orders: OrderDoc[], force = false) {
     if (canAll('orders.view_all')) {
-      return (await listCollection<OrderItemDoc>('order_items', [], {
-        cacheKey: 'all', ttlMs: 20_000, force
-      })).filter(isActive) as OrderItemDoc[]
+      const orderIds = cleanIds(orders)
+      if (!orderIds.length) return [] as OrderItemDoc[]
+      return (await fetchByFieldValues<OrderItemDoc>('order_items', 'order_id', orderIds))
+        .filter(isActive) as OrderItemDoc[]
     }
     const orderIds = new Set(orders.map(order => order.id).filter(Boolean))
     if (!orderIds.size) return []
@@ -459,6 +522,120 @@ export function useScopedQueries() {
     ), 'requested_at')
   }
 
+
+  async function loadScopedOrdersPage(
+    cursor: QueryDocumentSnapshot<DocumentData> | null = null,
+    pageSize = 50,
+    force = false,
+  ): Promise<CursorPage<OrderDoc>> {
+    if (!canAll('orders.view_all')) return fullCursorPage(await loadScopedOrders(force))
+    const page = await fetchOrderedPage<OrderDoc>('orders', 'created_at', cursor, pageSize)
+    return { ...page, rows: page.rows.filter(isActive) as OrderDoc[] }
+  }
+
+  async function loadScopedPaymentsPage(
+    orders: OrderDoc[] = [],
+    cursor: QueryDocumentSnapshot<DocumentData> | null = null,
+    pageSize = 50,
+    force = false,
+  ): Promise<CursorPage<PaymentDoc>> {
+    if (!canAll('payments.view_all')) return fullCursorPage(await loadScopedPayments(orders, force))
+    const page = await fetchOrderedPage<PaymentDoc>('payments', 'payment_date', cursor, pageSize)
+    return { ...page, rows: page.rows.filter(isActive) as PaymentDoc[] }
+  }
+
+  async function loadScopedInvoicesPage(
+    cursor: QueryDocumentSnapshot<DocumentData> | null = null,
+    pageSize = 50,
+    force = false,
+  ): Promise<CursorPage<InvoiceDoc>> {
+    if (!isAdminUser()) return fullCursorPage(await loadScopedInvoices(force))
+    const page = await fetchOrderedPage<InvoiceDoc>('invoices', 'invoice_date', cursor, pageSize)
+    return { ...page, rows: page.rows.filter(isActive) as InvoiceDoc[] }
+  }
+
+  async function loadScopedShipmentsPage(
+    cursor: QueryDocumentSnapshot<DocumentData> | null = null,
+    pageSize = 50,
+    force = false,
+  ): Promise<CursorPage<ShipmentDoc>> {
+    if (!isAdminUser()) return fullCursorPage(await loadScopedShipments(force))
+    const page = await fetchOrderedPage<ShipmentDoc>('shipments', 'shipped_date', cursor, pageSize)
+    return { ...page, rows: page.rows.filter(isActive) as ShipmentDoc[] }
+  }
+
+  async function loadImportOrdersPage(
+    cursor: QueryDocumentSnapshot<DocumentData> | null = null,
+    pageSize = 50,
+  ): Promise<CursorPage<ImportOrderDoc>> {
+    if (!hasPermission('import.view') && !hasPermission('*')) return fullCursorPage([])
+    const page = await fetchOrderedPage<ImportOrderDoc>('import_orders', 'import_date', cursor, pageSize)
+    return { ...page, rows: page.rows.filter(isActive) as ImportOrderDoc[] }
+  }
+
+  async function loadExportOrdersPage(
+    cursor: QueryDocumentSnapshot<DocumentData> | null = null,
+    pageSize = 50,
+  ): Promise<CursorPage<ExportOrderDoc>> {
+    if (!hasPermission('export.view') && !hasPermission('*')) return fullCursorPage([])
+    const page = await fetchOrderedPage<ExportOrderDoc>('export_orders', 'export_date', cursor, pageSize)
+    return { ...page, rows: page.rows.filter(isActive) as ExportOrderDoc[] }
+  }
+
+  async function loadInventoryAdjustmentsPage(
+    cursor: QueryDocumentSnapshot<DocumentData> | null = null,
+    pageSize = 50,
+  ): Promise<CursorPage<InventoryAdjustmentDoc>> {
+    if (!hasAnyWarehousePermission(['inventory.view', 'inventory.adjust'])) return fullCursorPage([])
+    const page = await fetchOrderedPage<InventoryAdjustmentDoc>('inventory_adjustments', 'adjustment_date', cursor, pageSize)
+    return { ...page, rows: page.rows.filter(isActive) as InventoryAdjustmentDoc[] }
+  }
+
+  async function loadScopedPaymentsForOrders(orders: OrderDoc[], force = false) {
+    const orderIds = cleanIds(orders)
+    if (!orderIds.length) return [] as PaymentDoc[]
+    if (!canAll('payments.view_all')) {
+      const visible = await loadScopedPayments(orders, force)
+      const allowedOrderIds = new Set(orderIds)
+      return visible.filter(payment => allowedOrderIds.has(payment.order_id))
+    }
+    return sortNewest(
+      (await fetchByFieldValues<PaymentDoc>('payments', 'order_id', orderIds)).filter(isActive) as PaymentDoc[],
+      'payment_date',
+    )
+  }
+
+  async function loadScopedExportRequestsForOrders(orders: OrderDoc[], force = false) {
+    const orderIds = cleanIds(orders)
+    if (!orderIds.length) return [] as AnyDoc[]
+    if (!canAll('export_requests.view_all')) {
+      const visible = await loadScopedExportRequests(orders, force)
+      const allowedOrderIds = new Set(orderIds)
+      return visible.filter(request => allowedOrderIds.has(request.order_id))
+    }
+    return sortNewest(
+      (await fetchByFieldValues<AnyDoc>('order_export_requests', 'order_id', orderIds)).filter(isActive),
+      'requested_at',
+    )
+  }
+
+  async function loadImportOrderItemsForOrders(orders: ImportOrderDoc[]) {
+    if (!hasPermission('import.view') && !hasPermission('*')) return [] as ImportOrderItemDoc[]
+    return (await fetchByFieldValues<ImportOrderItemDoc>(
+      'import_order_items',
+      'import_order_id',
+      cleanIds(orders),
+    )).filter(isActive) as ImportOrderItemDoc[]
+  }
+
+  async function loadExportOrderItemsForOrders(orders: ExportOrderDoc[]) {
+    if (!hasPermission('export.view') && !hasPermission('*')) return [] as ExportOrderItemDoc[]
+    return (await fetchByFieldValues<ExportOrderItemDoc>(
+      'export_order_items',
+      'export_order_id',
+      cleanIds(orders),
+    )).filter(isActive) as ExportOrderItemDoc[]
+  }
 
   async function loadWarehouseExportRequests(force = false) {
     if (!hasAnyWarehousePermission([
@@ -768,9 +945,13 @@ export function useScopedQueries() {
   return {
     listCollection,
     loadScopedOrders,
+    loadScopedOrdersPage,
     loadScopedOrderItems,
     loadScopedPayments,
+    loadScopedPaymentsPage,
+    loadScopedPaymentsForOrders,
     loadScopedExportRequests,
+    loadScopedExportRequestsForOrders,
     loadWarehouseExportRequests,
     listenScopedExportRequests,
     listenWarehouseExportRequests,
@@ -780,18 +961,25 @@ export function useScopedQueries() {
     loadSuppliers,
     loadUnits,
     loadImportOrders,
+    loadImportOrdersPage,
     loadImportOrderItems,
+    loadImportOrderItemsForOrders,
     loadExportOrders,
+    loadExportOrdersPage,
     loadExportOrderItems,
+    loadExportOrderItemsForOrders,
     loadInventoryBalances,
     loadInventoryAdjustments,
+    loadInventoryAdjustmentsPage,
     loadStockMovements,
     loadPrintOrders,
     loadPrintOrderItems,
     loadPrintingSourceOrders,
     loadPrintingSourceOrderItems,
     loadScopedShipments,
+    loadScopedShipmentsPage,
     loadScopedInvoices,
+    loadScopedInvoicesPage,
     invalidateScopedCache
   }
 }

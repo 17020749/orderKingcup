@@ -3,12 +3,13 @@ import { PAYMENT_METHODS, PAYMENT_STATUSES, PAYMENT_TYPES } from '~/constants/pe
 import type { OrderDoc, PaymentDoc } from '~/types/models'
 import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 import { toDateKey } from '~/utils/listFilters'
 
-const { computePaymentStatus } = useOrderLogic()
 const { mutateOrderRelation } = useAtomicOrderRelations()
 const { appUser, hasPermission } = useAuth()
-const { loadScopedOrders, loadScopedPayments } = useScopedQueries()
+const { loadScopedOrders, loadScopedPaymentsPage, loadScopedPaymentsForOrders } = useScopedQueries()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
@@ -21,6 +22,11 @@ const paymentStatusFilter = ref('')
 const dateFrom = ref('')
 const dateTo = ref('')
 const rows = ref<PaymentDoc[]>([])
+const PAGE_SIZE = 50
+const pageCursor = shallowRef<any>(null)
+const hasMoreRows = ref(false)
+const pageMode = ref<'cursor' | 'full'>('cursor')
+const loadingMore = ref(false)
 const orders = ref<OrderDoc[]>([])
 const showModal = ref(false)
 const showDetailModal = ref(false)
@@ -70,26 +76,27 @@ function resetFilters() {
 const canEditPayments = computed(() => hasPermission('*') || hasPermission('payments.edit'))
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id || order.order_code === form.order_code))
 
-function applyLocalPaymentSummary(orderId: string) {
-  const order = orders.value.find(item => item.id === orderId)
-  if (!order) return
-  Object.assign(order, computePaymentStatus(
-    order,
-    rows.value.filter(row => row.order_id === orderId && isActive(row))
-  ))
-}
-
-async function loadRows(force = false) {
-  loading.value = true
+async function loadRows(force = false, append = false) {
+  if (append && (!hasMoreRows.value || loadingMore.value)) return
+  if (append) loadingMore.value = true
+  else loading.value = true
   try {
-    orders.value = await loadScopedOrders(force)
-    rows.value = await loadScopedPayments(orders.value, force)
-    orders.value.forEach(order => applyLocalPaymentSummary(order.id))
+    if (!append) orders.value = await loadScopedOrders(force)
+    const page = await loadScopedPaymentsPage(orders.value, append ? pageCursor.value : null, PAGE_SIZE, force)
+    rows.value = append ? appendUniqueRows(rows.value, page.rows) : page.rows
+    pageCursor.value = page.cursor
+    hasMoreRows.value = page.hasMore
+    pageMode.value = page.mode
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được thanh toán.'), 'error')
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
+}
+
+async function loadMoreRows() {
+  await loadRows(false, true)
 }
 
 function chooseOrder() {
@@ -144,7 +151,7 @@ async function savePayment() {
         cod_status: '',
         created_by: editing.value?.created_by || appUser.value?.email || '',
       },
-      existingRecords: rows.value.filter(row => row.order_id === order.id),
+      existingRecords: await loadScopedPaymentsForOrders([order], true),
       actor: appUser.value?.email || '',
     })
 
@@ -179,7 +186,7 @@ async function removePayment(row: PaymentDoc) {
       mode: 'delete',
       order,
       record: row,
-      existingRecords: rows.value.filter(item => item.order_id === order.id),
+      existingRecords: await loadScopedPaymentsForOrders([order], true),
       actor: appUser.value?.email || '',
     })
     rows.value = rows.value.filter(item => item.id !== row.id)
@@ -228,6 +235,7 @@ onMounted(() => loadRows())
           </tbody>
         </table>
       </div>
+      <CursorLoadMore :loaded-count="rows.length" :has-more="hasMoreRows" :loading="loadingMore" :mode="pageMode" @load-more="loadMoreRows" />
     </div>
 
     <BaseModal

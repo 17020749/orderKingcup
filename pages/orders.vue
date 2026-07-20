@@ -7,6 +7,8 @@ import { customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, 
 import { generateCustomerCode } from '~/utils/customerCode'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 import { toDateKey } from '~/utils/listFilters'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import { printingDeleteBlocker } from '~/utils/orderPrintingDeleteLock.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
@@ -19,7 +21,14 @@ const { appUser, hasPermission, isAdmin } = useAuth()
 const { calcItems, computePaymentStatus, parseLogoLines } = useOrderLogic()
 const { invalidateScopedCache } = useRepo()
 const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
-const { loadScopedOrders, loadScopedOrderItems, loadScopedPayments, loadScopedExportRequests, loadScopedCustomers, loadProducts } = useScopedQueries()
+const {
+  loadScopedOrdersPage,
+  loadScopedOrderItems,
+  loadScopedPaymentsForOrders,
+  loadScopedExportRequestsForOrders,
+  loadScopedCustomers,
+  loadProducts,
+} = useScopedQueries()
 const { saveOrderAtomic } = useAtomicOrderSave()
 const { reconcileOrderRelationLocks } = useAtomicOrderRelations()
 const { loadPrintingDependenciesForOrders, loadPrintingProgressForOrder } = useOrderPrintingDeleteGuard()
@@ -38,6 +47,11 @@ const dateFrom = ref('')
 const dateTo = ref('')
 const ownerFilter = ref('')
 const rows = ref<OrderDoc[]>([])
+const PAGE_SIZE = 50
+const pageCursor = shallowRef<any>(null)
+const hasMoreRows = ref(false)
+const pageMode = ref<'cursor' | 'full'>('cursor')
+const loadingMore = ref(false)
 const customers = ref<CustomerDoc[]>([])
 const products = ref<ProductDoc[]>([])
 const itemsByOrder = ref<Record<string, OrderItemDoc[]>>({})
@@ -192,52 +206,69 @@ function warehouseStatusLabel(status: any) {
   } as any)[status] || status || '-'
 }
 
-async function loadRows(force = false) {
-  loading.value = true
+async function loadRows(force = false, append = false) {
+  if (append && (!hasMoreRows.value || loadingMore.value)) return
+  if (append) loadingMore.value = true
+  else loading.value = true
+
   try {
-    const [loadedCustomers, loadedProducts, allOrders] = await Promise.all([
-      loadScopedCustomers(force),
-      loadProducts(force),
-      loadScopedOrders(force)
-    ])
-    customers.value = loadedCustomers.filter(isActive)
-    products.value = loadedProducts.filter(isActive)
+    const pagePromise = loadScopedOrdersPage(append ? pageCursor.value : null, PAGE_SIZE, force)
+    const referencePromise = append
+      ? Promise.resolve([customers.value, products.value] as const)
+      : Promise.all([loadScopedCustomers(force), loadProducts(force)])
 
+    const [page, [loadedCustomers, loadedProducts]] = await Promise.all([pagePromise, referencePromise])
+    if (!append) {
+      customers.value = loadedCustomers.filter(isActive)
+      products.value = loadedProducts.filter(isActive)
+    }
+
+    const pageOrders = page.rows
     const [loadedItems, loadedPayments, loadedRequests, loadedPrintingDependencies] = await Promise.all([
-      loadScopedOrderItems(allOrders, force),
-      loadScopedPayments(allOrders, force),
-      loadScopedExportRequests(allOrders, force),
-      loadPrintingDependenciesForOrders(allOrders)
+      loadScopedOrderItems(pageOrders, force),
+      loadScopedPaymentsForOrders(pageOrders, force),
+      loadScopedExportRequestsForOrders(pageOrders, force),
+      loadPrintingDependenciesForOrders(pageOrders),
     ])
 
-    const itemMap: Record<string, OrderItemDoc[]> = {}
+    const itemMap: Record<string, OrderItemDoc[]> = append ? { ...itemsByOrder.value } : {}
     loadedItems.forEach(item => {
       if (!itemMap[item.order_id]) itemMap[item.order_id] = []
       itemMap[item.order_id].push(item)
     })
     itemsByOrder.value = itemMap
 
-    const payMap: Record<string, PaymentDoc[]> = {}
+    const payMap: Record<string, PaymentDoc[]> = append ? { ...paymentsByOrder.value } : {}
     loadedPayments.forEach(payment => {
       if (!payMap[payment.order_id]) payMap[payment.order_id] = []
       payMap[payment.order_id].push(payment)
     })
     paymentsByOrder.value = payMap
-    exportRequests.value = loadedRequests
-    printingProgress.value = loadedPrintingDependencies.printOrders
-    printingProgressItems.value = loadedPrintingDependencies.printItems
+    exportRequests.value = appendUniqueRows(append ? exportRequests.value : [], loadedRequests)
+    printingProgress.value = appendUniqueRows(append ? printingProgress.value : [], loadedPrintingDependencies.printOrders)
+    printingProgressItems.value = appendUniqueRows(append ? printingProgressItems.value : [], loadedPrintingDependencies.printItems)
 
-    rows.value = allOrders.map(order => {
+    const enrichedRows = pageOrders.map(order => {
       const orderRequests = loadedRequests.filter(request => request.order_id === order.id && isActive(request))
       const progress = buildFulfillmentRows(itemMap[order.id] || [], orderRequests)
       const paymentSummary = computePaymentStatus(order, payMap[order.id] || [])
       return { ...order, ...paymentSummary, ...orderSummary(progress, orderRequests) }
     })
+
+    rows.value = append ? appendUniqueRows(rows.value, enrichedRows) : enrichedRows
+    pageCursor.value = page.cursor
+    hasMoreRows.value = page.hasMore
+    pageMode.value = page.mode
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được danh sách đơn hàng.'), 'error')
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
+}
+
+async function loadMoreRows() {
+  await loadRows(false, true)
 }
 
 function normalizeItemForForm(item: any = {}) {
@@ -1091,6 +1122,13 @@ onMounted(loadRows)
           </tbody>
         </table>
       </div>
+      <CursorLoadMore
+        :loaded-count="rows.length"
+        :has-more="hasMoreRows"
+        :loading="loadingMore"
+        :mode="pageMode"
+        @load-more="loadMoreRows"
+      />
     </div>
 
     <BaseModal

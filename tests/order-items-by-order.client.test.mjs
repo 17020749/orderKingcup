@@ -76,6 +76,6 @@ test('màn hình đơn và yêu cầu xuất cùng dùng auto-import useScopedQu
   const ordersPage = readFileSync('pages/orders.vue', 'utf8')
   const requestsPage = readFileSync('pages/export-requests.vue', 'utf8')
 
-  assert.match(ordersPage, /loadScopedOrderItems\(allOrders, force\)/)
+  assert.match(ordersPage, /loadScopedOrderItems\(pageOrders, force\)/)
   assert.match(requestsPage, /loadScopedOrderItems\(orders\.value, force\)/)
 })
