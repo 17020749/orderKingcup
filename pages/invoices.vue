@@ -2,6 +2,7 @@
 import type { InvoiceDoc, OrderDoc } from '~/types/models'
 import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { toDateKey } from '~/utils/listFilters'
 
 const { mutateOrderRelation } = useAtomicOrderRelations()
 const { loadScopedOrders, loadScopedInvoices } = useScopedQueries()
@@ -35,15 +36,11 @@ function updateFilter(key: string, value: string) {
   if (key === 'to') dateTo.value = value
 }
 
-function dateKey(value: any) {
-  return String(value || '').slice(0, 10)
-}
-
 const filtered = computed(() => {
   const keyword = normalizeText(search.value)
   return rows.value.filter(row => {
     const matchedText = !keyword || normalizeText(`${row.order_code} ${row.invoice_number} ${row.company_name} ${row.invoice_status}`).includes(keyword)
-    const rowDate = dateKey(row.invoice_date || row.created_at)
+    const rowDate = toDateKey(row.invoice_date || row.created_at)
     return matchedText
       && (!invoiceStatusFilter.value || row.invoice_status === invoiceStatusFilter.value)
       && (!dateFrom.value || (!!rowDate && rowDate >= dateFrom.value))

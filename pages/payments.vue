@@ -3,6 +3,7 @@ import { PAYMENT_METHODS, PAYMENT_STATUSES, PAYMENT_TYPES } from '~/constants/pe
 import type { OrderDoc, PaymentDoc } from '~/types/models'
 import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { toDateKey } from '~/utils/listFilters'
 
 const { computePaymentStatus } = useOrderLogic()
 const { mutateOrderRelation } = useAtomicOrderRelations()
@@ -43,15 +44,11 @@ function updateFilter(key: string, value: string) {
   if (key === 'to') dateTo.value = value
 }
 
-function dateKey(value: any) {
-  return String(value || '').slice(0, 10)
-}
-
 const filtered = computed(() => {
   const keyword = normalizeText(search.value)
   return rows.value.filter(row => {
     const matchedText = !keyword || normalizeText(`${row.order_code} ${row.payment_type} ${row.method} ${row.payment_status} ${row.created_by}`).includes(keyword)
-    const rowDate = dateKey(row.payment_date || row.created_at)
+    const rowDate = toDateKey(row.payment_date || row.created_at)
     return matchedText
       && (!paymentTypeFilter.value || row.payment_type === paymentTypeFilter.value)
       && (!methodFilter.value || row.method === methodFilter.value)
