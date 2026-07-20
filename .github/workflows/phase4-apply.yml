@@ -2,14 +2,9 @@ name: Phase 4 Dashboard Rules Diagnostic
 
 on:
   pull_request:
-    branches:
-      - dev
-    types:
-      - opened
-      - synchronize
-      - reopened
-    paths:
-      - .phase4-transfer/trigger
+    branches: [dev]
+    types: [opened, synchronize, reopened]
+    paths: [.phase4-transfer/trigger]
 
 permissions:
   contents: write
@@ -20,7 +15,6 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 25
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,13 +40,11 @@ jobs:
           tar -xzf /tmp/phase4.tar.gz -C .
           python - <<'PY'
           from pathlib import Path
-
           path = Path('firestore.rules')
           source = path.read_text(encoding='utf-8')
-          marker = """    function hasPerm(permission) {
-          """
-          helper = """    // Minimal, fail-closed path for server aggregation queries. The app's
-              // canonical administrator source is the wildcard in permissions_flat.
+
+          marker = "    function hasPerm(permission) {"
+          helper = """    // Minimal, fail-closed authorization for Dashboard aggregation.
               function dashboardAggregateAdmin() {
                 let path = userPath();
                 let user = get(path).data;
@@ -68,34 +60,36 @@ jobs:
               raise SystemExit('hasPerm marker not found')
           source = source.replace(marker, helper + marker, 1)
 
-          replacements = {
-            "      allow read: if isAdmin()\n        || (\n          hasPerm('customers.view')":
+          replacements = [
+            (
+              "      allow read: if isAdmin()\n        || (\n          hasPerm('customers.view')",
               "      allow read: if dashboardAggregateAdmin()\n        || isAdmin()\n        || (\n          hasPerm('customers.view')",
-            "      allow read: if hasAnyPerm(['products.view', 'inventory.view', 'printing.view']);":
+            ),
+            (
+              "      allow read: if hasAnyPerm(['products.view', 'inventory.view', 'printing.view']);",
               "      allow read: if dashboardAggregateAdmin()\n        || hasAnyPerm(['products.view', 'inventory.view', 'printing.view']);",
-            "      allow read: if hasPerm('orders.view_all')":
-              "      allow read: if dashboardAggregateAdmin()\n        || hasPerm('orders.view_all')",
-            "      allow read: if hasPerm('payments.view_all')":
-              "      allow read: if dashboardAggregateAdmin()\n        || hasPerm('payments.view_all')",
-            "      allow read: if hasAnyPerm([\n          'page.warehouse_export_requests',":
-              "      allow read: if dashboardAggregateAdmin()\n        || hasAnyPerm([\n          'page.warehouse_export_requests',",
-          }
-          for old, new in replacements.items():
+            ),
+            (
+              "    match /orders/{docId} {\n      allow read: if hasPerm('orders.view_all')",
+              "    match /orders/{docId} {\n      allow read: if dashboardAggregateAdmin()\n        || hasPerm('orders.view_all')",
+            ),
+            (
+              "    match /order_items/{docId} {\n      allow read: if hasPerm('orders.view_all')",
+              "    match /order_items/{docId} {\n      allow read: if dashboardAggregateAdmin()\n        || hasPerm('orders.view_all')",
+            ),
+            (
+              "    match /payments/{docId} {\n      allow read: if hasPerm('payments.view_all')",
+              "    match /payments/{docId} {\n      allow read: if dashboardAggregateAdmin()\n        || hasPerm('payments.view_all')",
+            ),
+            (
+              "    match /order_export_requests/{docId} {\n      allow read: if hasAnyPerm([",
+              "    match /order_export_requests/{docId} {\n      allow read: if dashboardAggregateAdmin()\n        || hasAnyPerm([",
+            ),
+          ]
+          for old, new in replacements:
               if old not in source:
-                  raise SystemExit(f'Rules block not found: {old[:60]}')
+                  raise SystemExit(f'Rules block not found: {old[:55]}')
               source = source.replace(old, new, 1)
-
-          # The orders.view_all pattern occurs first in /orders and then /order_items.
-          order_items_old = """    match /order_items/{docId} {
-              allow read: if hasPerm('orders.view_all')
-          """.replace('\n              ', '\n      ')
-          order_items_new = """    match /order_items/{docId} {
-              allow read: if dashboardAggregateAdmin()
-                || hasPerm('orders.view_all')
-          """.replace('\n              ', '\n      ').replace('\n                ', '\n        ')
-          if order_items_old not in source:
-              raise SystemExit('order_items read block not found')
-          source = source.replace(order_items_old, order_items_new, 1)
           path.write_text(source, encoding='utf-8')
           PY
           git diff --check
