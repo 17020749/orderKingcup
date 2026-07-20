@@ -1,4 +1,4 @@
-name: Phase 4 Corrected Rules Diagnostic
+name: Phase 4 Completion
 
 on:
   pull_request:
@@ -15,15 +15,23 @@ permissions:
   contents: write
 
 concurrency:
-  group: phase4-corrected-rules-${{ github.event.pull_request.number }}
+  group: phase4-completion-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
-  diagnostic:
-    name: Capture corrected Phase 4 Rules failure
+  complete:
+    name: Verify and commit Phase 4 completion
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
+    env:
+      NUXT_PUBLIC_FIREBASE_API_KEY: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ci.invalid
+      NUXT_PUBLIC_FIREBASE_PROJECT_ID: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+      NUXT_PUBLIC_FIREBASE_APP_ID: '1:000000000000:web:0000000000000000000000'
+      NUXT_PUBLIC_APP_NAME: KINGCUP CI
 
     steps:
       - name: Checkout correction branch
@@ -63,12 +71,15 @@ jobs:
           base64 --decode /tmp/phase4-files.tar.gz.b64 > /tmp/phase4-files.tar.gz
           echo '53add98bcf8090ea181e57838dacf5d0096e2ec27dfeaad6c4abdbf2330e11cd  /tmp/phase4-files.tar.gz' | sha256sum --check --strict
           tar -xzf /tmp/phase4-files.tar.gz -C .
+          git diff --check
 
-      - name: Apply corrected dashboard aggregate split
+      - name: Apply Dashboard aggregate and test isolation fixes
         shell: bash
         run: |
           python - <<'PY'
+          import json
           from pathlib import Path
+          from textwrap import dedent
 
           scoped_path = Path('composables/useScopedQueries.ts')
           scoped = scoped_path.read_text(encoding='utf-8')
@@ -79,16 +90,25 @@ jobs:
           if start < 0 or end < 0:
               raise SystemExit('Dashboard aggregate section not found')
           end += len(end_marker)
-          replacement = """    const active = [where('active', '==', true), where('deleted', '==', false)]
+          replacement = dedent("""\
+              const active = [where('active', '==', true), where('deleted', '==', false)]
               const activeOrders = query(collection(db, 'orders'), ...active)
               const [orderCount, orderRevenue, orderDebt, customerCount, productCount, paymentAggregate, itemAggregate, requestCount, orderPage, paymentPage] = await Promise.all([
+                // Keep each aggregate request small. Combining count + multiple sums in one
+                // request can exceed the Firestore Rules 1,000-expression budget.
                 getCountFromServer(activeOrders),
                 getAggregateFromServer(activeOrders, { revenue: sum('actual_revenue') }),
                 getAggregateFromServer(activeOrders, { debt: sum('debt_amount') }),
                 getCountFromServer(query(collection(db, 'customers'), ...active)),
                 getCountFromServer(query(collection(db, 'products'), ...active)),
-                getAggregateFromServer(query(collection(db, 'payments'), ...active, where('payment_status', '==', 'Đã nhận')), { paid: sum('amount') }),
-                getAggregateFromServer(query(collection(db, 'order_items'), ...active), { profit: sum('line_profit') }),
+                getAggregateFromServer(query(
+                  collection(db, 'payments'),
+                  ...active,
+                  where('payment_status', '==', 'Đã nhận'),
+                ), { paid: sum('amount') }),
+                getAggregateFromServer(query(collection(db, 'order_items'), ...active), {
+                  profit: sum('line_profit'),
+                }),
                 getCountFromServer(query(collection(db, 'order_export_requests'), ...active)),
                 fetchOrderedPage<OrderDoc>('orders', 'created_at', null, 50),
                 fetchOrderedPage<PaymentDoc>('payments', 'payment_date', null, 50),
@@ -104,50 +124,95 @@ jobs:
                   debt: Number(orderDebt.data().debt || 0),
                   profit: Number(itemAggregate.data().profit || 0),
                   exportRequests: requestCount.data().count,
-                },""".replace('\n              ', '\n    ').replace('\n                ', '\n      ').replace('\n                  ', '\n        ')
+                },
+          """)
           scoped_path.write_text(scoped[:start] + replacement + scoped[end:], encoding='utf-8')
 
           test_path = Path('tests/dashboard-aggregation.rules.test.mjs')
-          source = test_path.read_text(encoding='utf-8')
+          test_source = test_path.read_text(encoding='utf-8')
           start_marker = "  const orders = await assertSucceeds(getAggregateFromServer(query(collection(db, 'orders'), ...active), {"
           end_marker = "  assert.equal(orders.data().debt, 800)"
-          start = source.find(start_marker)
-          end = source.find(end_marker, start)
+          start = test_source.find(start_marker)
+          end = test_source.find(end_marker, start)
           if start < 0 or end < 0:
-              raise SystemExit('Combined aggregate test not found')
+              raise SystemExit('Combined Dashboard aggregate test not found')
           end += len(end_marker)
-          replacement = """  const activeOrders = query(collection(db, 'orders'), ...active)
+          replacement = dedent("""\
+            const activeOrders = query(collection(db, 'orders'), ...active)
             const orderCount = await assertSucceeds(getCountFromServer(activeOrders))
-            const orderRevenue = await assertSucceeds(getAggregateFromServer(activeOrders, { revenue: sum('actual_revenue') }))
-            const orderDebt = await assertSucceeds(getAggregateFromServer(activeOrders, { debt: sum('debt_amount') }))
+            const orderRevenue = await assertSucceeds(getAggregateFromServer(activeOrders, {
+              revenue: sum('actual_revenue'),
+            }))
+            const orderDebt = await assertSucceeds(getAggregateFromServer(activeOrders, {
+              debt: sum('debt_amount'),
+            }))
             assert.equal(orderCount.data().count, 2)
             assert.equal(orderRevenue.data().revenue, 3000)
-            assert.equal(orderDebt.data().debt, 800)""".replace('\n            ', '\n  ')
-          test_path.write_text(source[:start] + replacement + source[end:], encoding='utf-8')
+            assert.equal(orderDebt.data().debt, 800)
+          """)
+          test_path.write_text(test_source[:start] + replacement + test_source[end:], encoding='utf-8')
+
+          package_path = Path('package.json')
+          package = json.loads(package_path.read_text(encoding='utf-8'))
+          scripts = package['scripts']
+          original_rules = scripts['test:rules']
+          dashboard_test = ' tests/dashboard-aggregation.rules.test.mjs'
+          if dashboard_test not in original_rules:
+              raise SystemExit('Dashboard test was not found in test:rules')
+          scripts['test:rules:dashboard'] = (
+              'firebase emulators:exec --only firestore '
+              '"node --test --test-concurrency=1 tests/dashboard-aggregation.rules.test.mjs"'
+          )
+          scripts['test:rules:core'] = original_rules.replace(dashboard_test, '', 1)
+          scripts['test:rules'] = 'npm run test:rules:dashboard && npm run test:rules:core'
+          package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
           PY
+          git diff --check
 
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Run full Rules suite and retain log
-        id: rules
-        shell: bash
-        run: |
-          set +e
-          npm run test:rules 2>&1 | tee .phase4-transfer/corrected-rules-diagnostic.log
-          status=${PIPESTATUS[0]}
-          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
-          exit 0
+      - name: Prepare Nuxt
+        run: npx --no-install nuxi prepare
 
-      - name: Commit diagnostic log
+      - name: Test cursor pagination
+        run: npm run test:pagination
+
+      - name: Validate Firestore indexes
+        run: npm run test:indexes
+
+      - name: Build
+        run: npm run build
+
+      - name: Generate static site
+        run: npm run generate
+
+      - name: Firestore Rules and concurrency tests
+        run: npm run test:rules
+
+      - name: Commit verified Phase 4 completion
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f .phase4-transfer/corrected-rules-diagnostic.log
-          git commit -m 'test(phase4): capture corrected Rules failure'
-          git push origin HEAD:fix/phase-4-completion
+          rm -rf .phase4-transfer
+          rm -f .github/workflows/phase4-apply.yml
+          git add -A
+          git diff --cached --check
 
-      - name: Fail when Rules suite failed
-        if: steps.rules.outputs.exit_code != '0'
-        run: exit 1
+          unexpected=0
+          while IFS= read -r path; do
+            case "$path" in
+              components/CursorLoadMore.vue|composables/useScopedQueries.ts|docs/cursor-pagination-dashboard.md|package.json|pages/dashboard.vue|pages/orders.vue|pages/payments.vue|pages/invoices.vue|pages/shipments.vue|pages/imports.vue|pages/exports.vue|pages/inventory-adjustments.vue|tests/cursor-pagination.test.mjs|tests/dashboard-aggregation.rules.test.mjs|utils/cursorPagination.mjs|.github/workflows/phase4-apply.yml|.phase4-transfer/*)
+                ;;
+              *)
+                echo "Unexpected Phase 4 path: $path"
+                unexpected=1
+                ;;
+            esac
+          done < <(git diff --cached --name-only)
+          test "$unexpected" -eq 0
+          test -z "$(git diff --cached --name-only -- firestore.rules firestore.indexes.json package-lock.json)"
+
+          git commit -m 'perf(firestore): complete cursor pagination and dashboard aggregates'
+          git push origin HEAD:fix/phase-4-completion
