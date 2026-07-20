@@ -7,14 +7,29 @@ on:
     paths:
       - .github/workflows/phase5-staging-diagnostic.yml
 
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
+    paths:
+      - .github/workflows/phase5-staging-diagnostic.yml
+
 permissions:
   contents: read
 
 env:
   EXPECTED_FIREBASE_PROJECT_ID: kingcupmanagerstaging
 
+concurrency:
+  group: phase5-staging-diagnostic-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   diagnose-staging-rules:
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'security/phase-5-activity-notifications'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -22,6 +37,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          ref: security/phase-5-activity-notifications
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
