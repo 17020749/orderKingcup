@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
-import type { CustomerDoc, OrderDoc, OrderItemDoc } from '~/types/models'
+import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc } from '~/types/models'
 import { formatDateTime, money, normalizeText, safeJsonParse, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
@@ -8,6 +8,8 @@ const route = useRoute()
 const { db } = useFirebaseServices()
 const { hasPermission } = useAuth()
 const { showToast } = useUi()
+const { computePaymentStatus } = useOrderLogic()
+const { loadScopedOrders, loadScopedPayments } = useScopedQueries()
 
 const loading = ref(false)
 const customer = ref<CustomerDoc | null>(null)
@@ -64,7 +66,7 @@ async function openOrderDetail(order: OrderDoc) {
   }
 }
 
-async function loadData() {
+async function loadData(force = false) {
   if (!hasPermission('customers.orders_view')) {
     await navigateTo('/forbidden', { replace: true })
     return
@@ -72,9 +74,9 @@ async function loadData() {
 
   loading.value = true
   try {
-    const [customerSnapshot, orderSnapshot] = await Promise.all([
+    const [customerSnapshot, scopedOrders] = await Promise.all([
       getDoc(doc(db, 'customers', customerId.value)),
-      getDocs(query(collection(db, 'orders'), where('customer_id', '==', customerId.value))),
+      loadScopedOrders(force),
     ])
     if (!customerSnapshot.exists()) throw new Error('Không tìm thấy khách hàng hoặc bạn không có quyền xem.')
 
@@ -82,10 +84,24 @@ async function loadData() {
       ...customerSnapshot.data(),
       id: customerSnapshot.id,
     } as CustomerDoc
-    orders.value = orderSnapshot.docs
-      .map(item => ({ ...item.data(), id: item.id }) as OrderDoc)
-      .filter(item => item.deleted !== true && item.status !== 'deleted')
-      .sort((a, b) => String(b.order_date || b.created_at || '').localeCompare(String(a.order_date || a.created_at || '')))
+    const customerOrders = scopedOrders
+      .filter(order => order.customer_id === customerId.value)
+
+    if (hasPermission('payments.view')) {
+      const loadedPayments = await loadScopedPayments(customerOrders, force)
+      const paymentsByOrder: Record<string, PaymentDoc[]> = {}
+      loadedPayments.forEach(payment => {
+        if (!paymentsByOrder[payment.order_id]) paymentsByOrder[payment.order_id] = []
+        paymentsByOrder[payment.order_id].push(payment)
+      })
+
+      orders.value = customerOrders.map(order => ({
+        ...order,
+        ...computePaymentStatus(order, paymentsByOrder[order.id] || []),
+      }))
+    } else {
+      orders.value = customerOrders
+    }
   } catch (error: any) {
     showToast(error?.code
       ? reportFirebaseError(error, 'Không tải được đơn hàng của khách.')
