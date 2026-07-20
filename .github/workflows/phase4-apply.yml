@@ -81,42 +81,14 @@ jobs:
 
           scoped_path = Path('composables/useScopedQueries.ts')
           scoped = scoped_path.read_text(encoding='utf-8')
-          old_scoped = """    const active = [where('active', '==', true), where('deleted', '==', false)]
-              const [ordersAggregate, customerCount, productCount, paymentAggregate, itemAggregate, requestCount, orderPage, paymentPage] = await Promise.all([
-                getAggregateFromServer(query(collection(db, 'orders'), ...active), {
-                  total: count(),
-                  revenue: sum('actual_revenue'),
-                  debt: sum('debt_amount'),
-                }),
-                getCountFromServer(query(collection(db, 'customers'), ...active)),
-                getCountFromServer(query(collection(db, 'products'), ...active)),
-                getAggregateFromServer(query(
-                  collection(db, 'payments'),
-                  ...active,
-                  where('payment_status', '==', 'Đã nhận'),
-                ), { paid: sum('amount') }),
-                getAggregateFromServer(query(collection(db, 'order_items'), ...active), {
-                  profit: sum('line_profit'),
-                }),
-                getCountFromServer(query(collection(db, 'order_export_requests'), ...active)),
-                fetchOrderedPage<OrderDoc>('orders', 'created_at', null, 50),
-                fetchOrderedPage<PaymentDoc>('payments', 'payment_date', null, 50),
-              ])
-
-              const orderData = ordersAggregate.data()
-              return {
-                stats: {
-                  orders: Number(orderData.total || 0),
-                  customers: customerCount.data().count,
-                  products: productCount.data().count,
-                  revenue: Number(orderData.revenue || 0),
-                  paid: Number(paymentAggregate.data().paid || 0),
-                  debt: Number(orderData.debt || 0),
-                  profit: Number(itemAggregate.data().profit || 0),
-                  exportRequests: requestCount.data().count,
-                },
-          """
-          new_scoped = """    const active = [where('active', '==', true), where('deleted', '==', false)]
+          scoped_start_marker = "    const active = [where('active', '==', true), where('deleted', '==', false)]"
+          scoped_end_marker = "        exportRequests: requestCount.data().count,\n      },"
+          scoped_start = scoped.find(scoped_start_marker)
+          scoped_end = scoped.find(scoped_end_marker, scoped_start)
+          if scoped_start < 0 or scoped_end < 0:
+              raise SystemExit('Expected dashboard aggregate section was not found')
+          scoped_end += len(scoped_end_marker)
+          scoped_replacement = """    const active = [where('active', '==', true), where('deleted', '==', false)]
               const activeOrders = query(collection(db, 'orders'), ...active)
               const [orderCount, orderRevenue, orderDebt, customerCount, productCount, paymentAggregate, itemAggregate, requestCount, orderPage, paymentPage] = await Promise.all([
                 // Keep each aggregate request small. Combining count + multiple sums in one
@@ -149,24 +121,19 @@ jobs:
                   debt: Number(orderDebt.data().debt || 0),
                   profit: Number(itemAggregate.data().profit || 0),
                   exportRequests: requestCount.data().count,
-                },
-          """
-          if old_scoped not in scoped:
-              raise SystemExit('Expected dashboard aggregate block was not found in useScopedQueries.ts')
-          scoped_path.write_text(scoped.replace(old_scoped, new_scoped, 1), encoding='utf-8')
+                },""".replace('\n              ', '\n    ').replace('\n                ', '\n      ').replace('\n                  ', '\n        ')
+          scoped_path.write_text(scoped[:scoped_start] + scoped_replacement + scoped[scoped_end:], encoding='utf-8')
 
           test_path = Path('tests/dashboard-aggregation.rules.test.mjs')
           test_source = test_path.read_text(encoding='utf-8')
-          old_test = """  const orders = await assertSucceeds(getAggregateFromServer(query(collection(db, 'orders'), ...active), {
-              total: count(),
-              revenue: sum('actual_revenue'),
-              debt: sum('debt_amount'),
-            }))
-            assert.equal(orders.data().total, 2)
-            assert.equal(orders.data().revenue, 3000)
-            assert.equal(orders.data().debt, 800)
-          """
-          new_test = """  const activeOrders = query(collection(db, 'orders'), ...active)
+          test_start_marker = "  const orders = await assertSucceeds(getAggregateFromServer(query(collection(db, 'orders'), ...active), {"
+          test_end_marker = "  assert.equal(orders.data().debt, 800)"
+          test_start = test_source.find(test_start_marker)
+          test_end = test_source.find(test_end_marker, test_start)
+          if test_start < 0 or test_end < 0:
+              raise SystemExit('Expected combined dashboard aggregate test was not found')
+          test_end += len(test_end_marker)
+          test_replacement = """  const activeOrders = query(collection(db, 'orders'), ...active)
             const orderCount = await assertSucceeds(getCountFromServer(activeOrders))
             const orderRevenue = await assertSucceeds(getAggregateFromServer(activeOrders, {
               revenue: sum('actual_revenue'),
@@ -176,11 +143,8 @@ jobs:
             }))
             assert.equal(orderCount.data().count, 2)
             assert.equal(orderRevenue.data().revenue, 3000)
-            assert.equal(orderDebt.data().debt, 800)
-          """
-          if old_test not in test_source:
-              raise SystemExit('Expected combined aggregate test block was not found')
-          test_path.write_text(test_source.replace(old_test, new_test, 1), encoding='utf-8')
+            assert.equal(orderDebt.data().debt, 800)""".replace('\n            ', '\n  ').replace('\n              ', '\n    ')
+          test_path.write_text(test_source[:test_start] + test_replacement + test_source[test_end:], encoding='utf-8')
           PY
           git diff --check
 
@@ -210,7 +174,6 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
           rm -rf .phase4-transfer
           rm -f .github/workflows/phase4-apply.yml
           git add -A
