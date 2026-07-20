@@ -1,4 +1,4 @@
-name: Phase 4 Dashboard Rules Diagnostic
+name: Phase 4 Safe Completion
 
 on:
   pull_request:
@@ -9,12 +9,25 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: phase4-safe-completion-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
-  diagnostic:
-    name: Test minimal Dashboard admin Rules path
+  complete:
+    name: Verify and commit safe Phase 4 scope
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 50
+    env:
+      NUXT_PUBLIC_FIREBASE_API_KEY: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ci.invalid
+      NUXT_PUBLIC_FIREBASE_PROJECT_ID: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+      NUXT_PUBLIC_FIREBASE_APP_ID: '1:000000000000:web:0000000000000000000000'
+      NUXT_PUBLIC_APP_NAME: KINGCUP CI
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,89 +44,105 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Reconstruct source and add minimal Dashboard Rules path
+      - name: Reconstruct verified Phase 4 source
         shell: bash
         run: |
           cat .phase4-transfer/chunk-00 .phase4-transfer/rest-00 .phase4-transfer/rest-01-* .phase4-transfer/rest-02 .phase4-transfer/rest-03-00 .phase4-transfer/rest-03-01 .phase4-transfer/rest-03-02-* > /tmp/phase4.b64
           base64 --decode /tmp/phase4.b64 > /tmp/phase4.tar.gz
           echo '53add98bcf8090ea181e57838dacf5d0096e2ec27dfeaad6c4abdbf2330e11cd  /tmp/phase4.tar.gz' | sha256sum --check --strict
           tar -xzf /tmp/phase4.tar.gz -C .
+
+      - name: Keep safe cursor scope and update regression expectations
+        shell: bash
+        run: |
+          git checkout HEAD -- pages/dashboard.vue
+          rm -f tests/dashboard-aggregation.rules.test.mjs
           python - <<'PY'
+          import json
           from pathlib import Path
-          path = Path('firestore.rules')
-          source = path.read_text(encoding='utf-8')
 
-          marker = "    function hasPerm(permission) {"
-          helper = """    // Minimal, fail-closed authorization for Dashboard aggregation.
-              function dashboardAggregateAdmin() {
-                let path = userPath();
-                let user = get(path).data;
-                return signedIn()
-                  && exists(path)
-                  && activeUserData(user)
-                  && user.get('permissions_flat', []) is list
-                  && '*' in user.get('permissions_flat', []);
-              }
+          scoped_path = Path('composables/useScopedQueries.ts')
+          scoped = scoped_path.read_text(encoding='utf-8')
+          for line in [
+              '  count,\n',
+              '  getAggregateFromServer,\n',
+              '  getCountFromServer,\n',
+              '  sum,\n',
+          ]:
+              scoped = scoped.replace(line, '', 1)
 
-          """.replace('\n              ', '\n    ').replace('\n                ', '\n      ').replace('\n                  ', '\n        ')
-          if marker not in source:
-              raise SystemExit('hasPerm marker not found')
-          source = source.replace(marker, helper + marker, 1)
+          type_start = scoped.find('type AdminDashboardSummary = {')
+          type_end = scoped.find('const EXPORT_REQUEST_OWNER_FIELDS', type_start)
+          if type_start < 0 or type_end < 0:
+              raise SystemExit('AdminDashboardSummary type block not found')
+          scoped = scoped[:type_start] + scoped[type_end:]
 
-          replacements = [
-            (
-              "      allow read: if isAdmin()\n        || (\n          hasPerm('customers.view')",
-              "      allow read: if dashboardAggregateAdmin()\n        || isAdmin()\n        || (\n          hasPerm('customers.view')",
-            ),
-            (
-              "      allow read: if hasAnyPerm(['products.view', 'inventory.view', 'printing.view']);",
-              "      allow read: if dashboardAggregateAdmin()\n        || hasAnyPerm(['products.view', 'inventory.view', 'printing.view']);",
-            ),
-            (
-              "    match /orders/{docId} {\n      allow read: if hasPerm('orders.view_all')",
-              "    match /orders/{docId} {\n      allow read: if dashboardAggregateAdmin()\n        || hasPerm('orders.view_all')",
-            ),
-            (
-              "    match /order_items/{docId} {\n      allow read: if hasPerm('orders.view_all')",
-              "    match /order_items/{docId} {\n      allow read: if dashboardAggregateAdmin()\n        || hasPerm('orders.view_all')",
-            ),
-            (
-              "    match /payments/{docId} {\n      allow read: if hasPerm('payments.view_all')",
-              "    match /payments/{docId} {\n      allow read: if dashboardAggregateAdmin()\n        || hasPerm('payments.view_all')",
-            ),
-            (
-              "    match /order_export_requests/{docId} {\n      allow read: if hasAnyPerm([",
-              "    match /order_export_requests/{docId} {\n      allow read: if dashboardAggregateAdmin()\n        || hasAnyPerm([",
-            ),
-          ]
-          for old, new in replacements:
-              if old not in source:
-                  raise SystemExit(f'Rules block not found: {old[:55]}')
-              source = source.replace(old, new, 1)
-          path.write_text(source, encoding='utf-8')
+          fn_start = scoped.find('  async function loadAdminDashboardSummary')
+          fn_end = scoped.find('  async function loadWarehouseExportRequests', fn_start)
+          if fn_start < 0 or fn_end < 0:
+              raise SystemExit('loadAdminDashboardSummary block not found')
+          scoped = scoped[:fn_start] + scoped[fn_end:]
+          scoped = scoped.replace('    loadAdminDashboardSummary,\n', '', 1)
+          scoped_path.write_text(scoped, encoding='utf-8')
+
+          package_path = Path('package.json')
+          package = json.loads(package_path.read_text(encoding='utf-8'))
+          dashboard_token = ' tests/dashboard-aggregation.rules.test.mjs'
+          rules_script = package['scripts']['test:rules']
+          if dashboard_token not in rules_script:
+              raise SystemExit('Dashboard Rules test token not found in package.json')
+          package['scripts']['test:rules'] = rules_script.replace(dashboard_token, '', 1)
+          package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          client_test_path = Path('tests/order-items-by-order.client.test.mjs')
+          client_test = client_test_path.read_text(encoding='utf-8')
+          old_expectation = "assert.match(ordersPage, /loadScopedOrderItems\\(allOrders, force\\)/)"
+          new_expectation = "assert.match(ordersPage, /loadScopedOrderItems\\(pageOrders, force\\)/)"
+          if old_expectation not in client_test:
+              raise SystemExit('Old allOrders static expectation not found')
+          client_test_path.write_text(client_test.replace(old_expectation, new_expectation, 1), encoding='utf-8')
+
+          docs_path = Path('docs/cursor-pagination-dashboard.md')
+          docs_path.write_text('''# Cursor pagination\n\n## Danh sách lớn\n\nCác trang đơn hàng, thanh toán, hóa đơn, vận chuyển, nhập kho, xuất kho và điều chỉnh tồn tải 50 bản ghi mới nhất trước, sau đó dùng Firestore document cursor cho nút **Tải thêm**.\n\nTài khoản có quyền xem toàn bộ dùng `orderBy + limit + startAfter`. Tài khoản bị giới hạn phạm vi giữ truy vấn ownership hiện tại để không bỏ sót hoặc lộ dữ liệu. Tìm kiếm và bộ lọc áp dụng trên các bản ghi đã tải; giao diện luôn hiển thị số bản ghi hiện có.\n\nQuan hệ con chỉ được truy vấn theo ID của các bản ghi cha đã tải:\n\n- Order items, payments, export requests và printing dependencies theo order ID.\n- Import items theo import order ID.\n- Export items theo export order ID.\n\n## Dashboard\n\nDashboard tiếp tục dùng đường tổng hợp client hiện tại để bảo toàn số liệu. Firestore server aggregation trên `orders` đã được kiểm chứng bằng emulator nhưng vượt giới hạn 1.000 biểu thức của Rules vì quyền đọc phụ thuộc user document và ownership. Không nới Rules sang `signedIn()` vì sẽ làm lộ dữ liệu.\n\nTối ưu KPI Dashboard cần một backend dùng Admin SDK hoặc custom auth claim chuyên dụng; hạng mục đó được tách khỏi Giai đoạn 4.\n\n## Kiểm tra\n\n```bash\nnpm run test:pagination\nnpm run test:indexes\nnpm run build\nnpm run generate\nnpm run test:rules\n```\n''', encoding='utf-8')
           PY
           git diff --check
 
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx --no-install nuxi prepare
+      - name: Test cursor pagination
+        run: npm run test:pagination
+      - name: Validate Firestore indexes
+        run: npm run test:indexes
+      - name: Build
+        run: npm run build
+      - name: Generate static site
+        run: npm run generate
+      - name: Firestore Rules and concurrency tests
+        run: npm run test:rules
 
-      - name: Run Dashboard aggregate test
-        id: dashboard
-        shell: bash
-        run: |
-          set +e
-          npx firebase emulators:exec --only firestore "node --test --test-concurrency=1 tests/dashboard-aggregation.rules.test.mjs" 2>&1 | tee .phase4-transfer/minimal-dashboard-admin.log
-          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
-          exit 0
-
-      - name: Commit diagnostic log
+      - name: Commit verified safe Phase 4 completion
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f .phase4-transfer/minimal-dashboard-admin.log
-          git commit -m 'test(phase4): capture minimal Dashboard admin result'
-          git push origin HEAD:fix/phase-4-completion
+          rm -rf .phase4-transfer
+          rm -f .github/workflows/phase4-apply.yml
+          git add -A
+          git diff --cached --check
 
-      - name: Report failure
-        if: steps.dashboard.outputs.exit_code != '0'
-        run: exit 1
+          unexpected=0
+          while IFS= read -r path; do
+            case "$path" in
+              components/CursorLoadMore.vue|composables/useScopedQueries.ts|docs/cursor-pagination-dashboard.md|package.json|pages/orders.vue|pages/payments.vue|pages/invoices.vue|pages/shipments.vue|pages/imports.vue|pages/exports.vue|pages/inventory-adjustments.vue|tests/cursor-pagination.test.mjs|tests/order-items-by-order.client.test.mjs|utils/cursorPagination.mjs|.github/workflows/phase4-apply.yml|.phase4-transfer/*)
+                ;;
+              *)
+                echo "Unexpected Phase 4 path: $path"
+                unexpected=1
+                ;;
+            esac
+          done < <(git diff --cached --name-only)
+          test "$unexpected" -eq 0
+          test -z "$(git diff --cached --name-only -- firestore.rules firestore.indexes.json package-lock.json pages/dashboard.vue)"
+
+          git commit -m 'perf(firestore): complete cursor pagination rollout'
+          git push origin HEAD:fix/phase-4-completion
