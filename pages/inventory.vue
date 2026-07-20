@@ -393,6 +393,22 @@ function resetFilters() {
   sortMode.value = 'warehouse_product'
 }
 
+const filterValues = computed(() => ({ warehouse: warehouseFilter.value, logo: logoFilter.value, reconcile: reconcileFilter.value, stock: stockStatusFilter.value, sort: sortMode.value }))
+const toolbarFilters = computed(() => [
+  { key: 'warehouse', label: 'Kho', allLabel: 'Tất cả kho', options: warehouses.value.map(row => ({ label: row.name || row.warehouse_code || row.id, value: row.id })) },
+  { key: 'logo', label: 'Logo', allLabel: 'Tất cả logo', options: [{ label: 'Không logo', value: 'no-logo' }, { label: 'Có logo', value: 'logo' }] },
+  { key: 'reconcile', label: 'Đối soát', allLabel: 'Tất cả đối soát', options: [{ label: 'Đã khớp', value: 'matched' }, { label: 'Đang lệch', value: 'mismatch' }] },
+  { key: 'stock', label: 'Tình trạng tồn', allLabel: 'Tất cả tình trạng', options: [{ label: 'Còn hàng', value: 'in_stock' }, { label: 'Hết hàng', value: 'out_of_stock' }, { label: 'Tồn âm', value: 'negative' }] },
+  { key: 'sort', label: 'Sắp xếp', options: [{ label: 'Kho / sản phẩm', value: 'warehouse_product' }, { label: 'Tồn nhiều nhất', value: 'quantity_desc' }, { label: 'Tồn ít nhất', value: 'quantity_asc' }, { label: 'Cập nhật mới nhất', value: 'updated_desc' }, ...(canViewCost.value ? [{ label: 'Giá trị tồn cao nhất', value: 'value_desc' }] : [])] },
+])
+function updateFilter(key: string, value: string) {
+  if (key === 'warehouse') warehouseFilter.value = value
+  if (key === 'logo') logoFilter.value = value
+  if (key === 'reconcile') reconcileFilter.value = value
+  if (key === 'stock') stockStatusFilter.value = value
+  if (key === 'sort') sortMode.value = value
+}
+
 const summary = computed(() => ({
   lines: filtered.value.length,
   quantity: filtered.value.reduce((sum, row) => sum + toNumber(row.quantity), 0),
@@ -575,7 +591,8 @@ onMounted(() => loadRows())
     </div>
 
     <div class="card" style="margin: 24px;">
-      <div class="toolbar">
+      <FilterToolbar v-model:search="search" search-placeholder="Tìm mã/tên sản phẩm, kho, logo..." :filters="toolbarFilters" :values="filterValues" :result-count="filtered.length" :loading="loading" @update:filter="updateFilter" @reset="resetFilters" />
+      <div v-if="false" class="toolbar">
         <input v-model="search" class="input" style="max-width: 420px" placeholder="Tìm mã/tên sản phẩm, kho, logo..." />
         <select v-model="warehouseFilter" class="select" style="max-width: 220px">
           <option value="">Tất cả kho</option>

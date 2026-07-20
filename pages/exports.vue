@@ -78,6 +78,22 @@ const warehouseOptions = computed(() =>
   })),
 );
 
+const filterValues = computed(() => ({ destination: destinationFilter.value, warehouse: fromWarehouseFilter.value, status: statusFilter.value, from: dateFrom.value, to: dateTo.value }));
+const toolbarFilters = computed(() => [
+  { key: 'destination', label: 'Nơi nhận', allLabel: 'Tất cả nơi nhận', options: [{ label: 'Khách hàng', value: 'customer' }, { label: 'Kho khác', value: 'warehouse' }] },
+  { key: 'warehouse', label: 'Kho xuất', allLabel: 'Tất cả kho', options: warehouseOptions.value.map(row => ({ label: row.label, value: row.value })) },
+  { key: 'status', label: 'Trạng thái', allLabel: 'Tất cả trạng thái', options: [{ label: 'Đang hoạt động', value: 'active' }, { label: 'Đã khóa', value: 'inactive' }] },
+  { key: 'from', label: 'Từ ngày', type: 'date' as const },
+  { key: 'to', label: 'Đến ngày', type: 'date' as const },
+]);
+function updateFilter(key: string, value: string) {
+  if (key === 'destination') destinationFilter.value = value;
+  if (key === 'warehouse') fromWarehouseFilter.value = value;
+  if (key === 'status') statusFilter.value = value;
+  if (key === 'from') dateFrom.value = value;
+  if (key === 'to') dateTo.value = value;
+}
+
 const itemsByOrder = computed(() => {
   const map = new Map<string, ExportOrderItemDoc[]>();
   items.value.forEach((item) => {
@@ -499,7 +515,8 @@ onMounted(() => loadRows());
     </div>
 
     <div class="card" style="margin: 24px;">
-      <div class="toolbar">
+      <FilterToolbar v-model:search="search" search-placeholder="Tìm mã phiếu, sản phẩm, kho..." :filters="toolbarFilters" :values="filterValues" :result-count="filtered.length" :loading="loading" show-refresh @update:filter="updateFilter" @reset="resetFilters" @refresh="loadRows(true)" />
+      <div v-if="false" class="toolbar">
         <input
           v-model="search"
           class="input"
@@ -519,9 +536,9 @@ onMounted(() => loadRows());
         </select>
         <select v-model="statusFilter" class="select" style="max-width: 180px">
           <option value="">Tất cả trạng thái</option>
-          <option value="active">active</option>
-          <option value="cancelled">cancelled</option>
-          <option value="deleted">deleted</option>
+<option value="active">Đang hoạt động</option>
+<option value="cancelled">Đã hủy</option>
+<option value="deleted">Đã xóa</option>
         </select>
         <button class="btn" type="button" @click="resetFilters">Xóa lọc</button>
       </div>

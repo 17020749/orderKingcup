@@ -27,6 +27,22 @@ const selectedDetail = ref<PaymentDoc | null>(null)
 const editing = ref<PaymentDoc | null>(null)
 const form = reactive<any>({})
 
+const filterValues = computed(() => ({ type: paymentTypeFilter.value, method: methodFilter.value, status: paymentStatusFilter.value, from: dateFrom.value, to: dateTo.value }))
+const toolbarFilters = computed(() => [
+  { key: 'type', label: 'Loại thanh toán', allLabel: 'Tất cả loại', options: PAYMENT_TYPES.map(value => ({ label: value, value })) },
+  { key: 'method', label: 'Phương thức', allLabel: 'Tất cả phương thức', options: PAYMENT_METHODS.map(value => ({ label: value, value })) },
+  { key: 'status', label: 'Trạng thái', allLabel: 'Tất cả trạng thái', options: PAYMENT_STATUSES.map(value => ({ label: value, value })) },
+  { key: 'from', label: 'Từ ngày', type: 'date' as const },
+  { key: 'to', label: 'Đến ngày', type: 'date' as const },
+])
+function updateFilter(key: string, value: string) {
+  if (key === 'type') paymentTypeFilter.value = value
+  if (key === 'method') methodFilter.value = value
+  if (key === 'status') paymentStatusFilter.value = value
+  if (key === 'from') dateFrom.value = value
+  if (key === 'to') dateTo.value = value
+}
+
 function dateKey(value: any) {
   return String(value || '').slice(0, 10)
 }
@@ -185,7 +201,8 @@ onMounted(() => loadRows())
     </PageHeader>
 
     <div class="card" style="margin: 24px;">
-      <div class="toolbar">
+      <FilterToolbar v-model:search="search" search-placeholder="Tìm mã đơn, loại thanh toán..." :filters="toolbarFilters" :values="filterValues" :result-count="filtered.length" :loading="loading" show-refresh @update:filter="updateFilter" @reset="resetFilters" @refresh="loadRows(true)" />
+      <div v-if="false" class="toolbar">
         <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm mã đơn, loại thanh toán..." />
         <select v-model="paymentTypeFilter" class="select"><option value="">Tất cả loại</option><option v-for="value in PAYMENT_TYPES" :key="value" :value="value">{{ value }}</option></select>
         <select v-model="methodFilter" class="select"><option value="">Tất cả phương thức</option><option v-for="value in PAYMENT_METHODS" :key="value" :value="value">{{ value }}</option></select>

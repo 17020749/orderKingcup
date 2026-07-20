@@ -72,8 +72,8 @@ const requestedByOptions = computed(() => uniqueOptions(rows.value, "requested_b
 const statusOptions = computed(() => uniqueOptions(rows.value, "status"));
 const filterValues = computed(() => ({ status: statusFilter.value, from: dateFrom.value, to: dateTo.value, requestedBy: requestedByFilter.value }));
 const toolbarFilters = computed(() => [
-  { key: "status", allLabel: "Tất cả trạng thái", width: "200px", options: statusOptions.value.map(status => ({ label: statusLabel(status), value: status })) },
-  { key: "requestedBy", allLabel: "Tất cả người yêu cầu", width: "240px", options: requestedByOptions.value.map(user => ({ label: user, value: normalizeText(user) })) },
+  { key: "status", label: "Trạng thái", allLabel: "Tất cả trạng thái", width: "200px", options: statusOptions.value.map(status => ({ label: statusLabel(status), value: status })) },
+  { key: "requestedBy", label: "Người yêu cầu", allLabel: "Tất cả người yêu cầu", width: "240px", options: requestedByOptions.value.map(user => ({ label: user, value: normalizeText(user) })) },
   { key: "from", type: "date" as const, label: "Từ ngày" },
   { key: "to", type: "date" as const, label: "Đến ngày" },
 ]);

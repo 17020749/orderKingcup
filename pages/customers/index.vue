@@ -25,11 +25,11 @@ const form = reactive<any>({})
 const sourceOptions = computed(() => uniqueOptions(rows.value, 'source'))
 const filterValues = computed(() => ({ status: statusFilter.value, source: sourceFilter.value }))
 const toolbarFilters = computed(() => [
-  { key: 'status', allLabel: 'Tất cả trạng thái', width: '180px', options: [
+  { key: 'status', label: 'Trạng thái', allLabel: 'Tất cả trạng thái', width: '180px', options: [
     { label: 'Hoạt động', value: 'active' },
     { label: 'Không hoạt động', value: 'inactive' },
   ] },
-  { key: 'source', allLabel: 'Tất cả nguồn khách', width: '220px', options: sourceOptions.value.map(source => ({ label: source, value: normalizeText(source) })) },
+  { key: 'source', label: 'Nguồn khách hàng', allLabel: 'Tất cả nguồn khách', width: '220px', options: sourceOptions.value.map(source => ({ label: source, value: normalizeText(source) })) },
 ])
 
 function updateFilter(key: string, value: string) {

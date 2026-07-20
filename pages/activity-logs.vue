@@ -22,9 +22,9 @@ const actionOptions = computed(() => uniqueOptions(rows.value, 'action'))
 const actorOptions = computed(() => uniqueOptions(rows.value, 'changed_by'))
 const filterValues = computed(() => ({ module: moduleFilter.value, action: actionFilter.value, actor: actorFilter.value, from: dateFrom.value, to: dateTo.value }))
 const toolbarFilters = computed(() => [
-  { key: 'module', allLabel: 'Tất cả module', width: '200px', options: moduleOptions.value.map(module => ({ label: module, value: normalizeText(module) })) },
-  { key: 'action', allLabel: 'Tất cả hành động', width: '180px', options: actionOptions.value.map(action => ({ label: action, value: normalizeText(action) })) },
-  { key: 'actor', allLabel: 'Tất cả người đổi', width: '240px', options: actorOptions.value.map(actor => ({ label: actor, value: normalizeText(actor) })) },
+  { key: 'module', label: 'Chức năng', allLabel: 'Tất cả chức năng', width: '200px', options: moduleOptions.value.map(module => ({ label: module, value: normalizeText(module) })) },
+  { key: 'action', label: 'Hành động', allLabel: 'Tất cả hành động', width: '180px', options: actionOptions.value.map(action => ({ label: action, value: normalizeText(action) })) },
+  { key: 'actor', label: 'Người thực hiện', allLabel: 'Tất cả người thực hiện', width: '240px', options: actorOptions.value.map(actor => ({ label: actor, value: normalizeText(actor) })) },
   { key: 'from', type: 'date' as const, label: 'Từ ngày' },
   { key: 'to', type: 'date' as const, label: 'Đến ngày' },
 ])

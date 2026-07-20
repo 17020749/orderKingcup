@@ -89,6 +89,23 @@ function toggleNavGroup(key: string) {
   }
 }
 
+function navIcon(key: string) {
+  const icons: Record<string, string> = {
+    dashboard: '⌂', orders: '▤', export_requests: '↗', customers: '◉', payments: '₫', invoices: '▣',
+    imports: '↓', warehouse_export_requests: '⇥', exports: '↑', inventory_adjustments: '±', inventory: '▥',
+    warehouse_settings: '⚙', shipments: '⌁', products: '◇', printing: '▧', activity_logs: '◷',
+    settings_users: '♙', permission_audit: '✓', settings_general: '⚙',
+  }
+  return icons[key] || '•'
+}
+
+const userInitials = computed(() => String(appUser.value?.display_name || firebaseUser.value?.displayName || appUser.value?.email || 'U')
+  .split(/\s+/)
+  .filter(Boolean)
+  .slice(0, 2)
+  .map(value => value.charAt(0).toUpperCase())
+  .join(''))
+
 function openActiveNavGroup() {
   const activeGroup = visibleNavEntries.value
     .filter((entry): entry is Extract<NavEntry, { type: 'group' }> => entry.type === 'group')
@@ -149,6 +166,7 @@ onBeforeUnmount(saveNavScroll)
         <div class="brand-wordmark" aria-label="KINGCUP">
           <span class="brand-wordmark-king">KING</span><span class="brand-wordmark-cup">CUP</span>
         </div>
+        <div class="brand-caption">QUẢN TRỊ BÁN HÀNG</div>
       </div>
       <nav ref="navElement" class="nav" @scroll.passive="saveNavScroll">
         <template v-for="entry in visibleNavEntries" :key="entry.key">
@@ -157,7 +175,8 @@ onBeforeUnmount(saveNavScroll)
             :to="entry.item.to"
             class="nav-standalone-link"
           >
-            <span>{{ entry.item.label }}</span>
+            <span class="nav-icon" aria-hidden="true">{{ navIcon(entry.item.key) }}</span>
+            <span class="nav-label">{{ entry.item.label }}</span>
           </NuxtLink>
 
           <section
@@ -171,7 +190,7 @@ onBeforeUnmount(saveNavScroll)
               :aria-expanded="!collapsedGroups[entry.group.key]"
               @click="toggleNavGroup(entry.group.key)"
             >
-              <span>{{ entry.group.label }}</span>
+              <span class="nav-group-title"><span class="nav-section-mark" aria-hidden="true" />{{ entry.group.label }}</span>
               <span class="nav-group-meta">
                 <small>{{ entry.group.items.length }}</small>
                 <span class="nav-chevron" :class="{ collapsed: collapsedGroups[entry.group.key] }">⌄</span>
@@ -179,7 +198,8 @@ onBeforeUnmount(saveNavScroll)
             </button>
             <div v-show="!collapsedGroups[entry.group.key]" class="nav-group-links">
               <NuxtLink v-for="item in entry.group.items" :key="item.to" :to="item.to">
-                <span>{{ item.label }}</span>
+                <span class="nav-icon" aria-hidden="true">{{ navIcon(item.key) }}</span>
+                <span class="nav-label">{{ item.label }}</span>
               </NuxtLink>
             </div>
           </section>

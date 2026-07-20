@@ -34,6 +34,22 @@ const selected = ref<InventoryAdjustmentDoc | null>(null);
 const showDetailModal = ref(false);
 const showCreateModal = ref(false);
 
+const filterValues = computed(() => ({ warehouse: warehouseFilter.value, from: dateFrom.value, to: dateTo.value, quantity: quantityTypeFilter.value, product: productFilter.value }));
+const toolbarFilters = computed(() => [
+  { key: 'warehouse', label: 'Kho', allLabel: 'Tất cả kho', options: warehouseOptions.value.map(row => ({ label: row.label, value: row.value })) },
+  { key: 'from', label: 'Từ ngày', type: 'date' as const },
+  { key: 'to', label: 'Đến ngày', type: 'date' as const },
+  { key: 'quantity', label: 'Loại điều chỉnh', allLabel: 'Tất cả loại', options: [{ label: 'Tăng tồn', value: 'increase' }, { label: 'Giảm tồn', value: 'decrease' }] },
+  { key: 'product', label: 'Sản phẩm', allLabel: 'Tất cả sản phẩm', options: productOptions.value.map(row => ({ label: row.label, value: row.value })) },
+]);
+function updateFilter(key: string, value: string) {
+  if (key === 'warehouse') warehouseFilter.value = value;
+  if (key === 'from') dateFrom.value = value;
+  if (key === 'to') dateTo.value = value;
+  if (key === 'quantity') quantityTypeFilter.value = value;
+  if (key === 'product') productFilter.value = value;
+}
+
 const form = reactive({
   adjustment_date: todayKey(),
   product_id: "",
@@ -246,7 +262,8 @@ onMounted(() => loadRows());
     </div>
 
     <div class="card" style="margin: 24px;">
-      <div class="toolbar">
+      <FilterToolbar v-model:search="search" search-placeholder="Tìm sản phẩm, kho, logo, lý do..." :filters="toolbarFilters" :values="filterValues" :result-count="filtered.length" :loading="loading" @update:filter="updateFilter" @reset="resetFilters" />
+      <div v-if="false" class="toolbar">
         <input
           v-model="search"
           class="input"
