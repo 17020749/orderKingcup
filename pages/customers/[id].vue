@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
-import type { CustomerDoc, OrderDoc, OrderItemDoc } from '~/types/models'
+import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc } from '~/types/models'
 import { formatDateTime, money, normalizeText, safeJsonParse, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
@@ -8,10 +8,13 @@ const route = useRoute()
 const { db } = useFirebaseServices()
 const { hasPermission } = useAuth()
 const { showToast } = useUi()
+const { computePaymentStatus } = useOrderLogic()
+const { loadScopedOrders, loadScopedPayments } = useScopedQueries()
 
 const loading = ref(false)
 const customer = ref<CustomerDoc | null>(null)
 const orders = ref<OrderDoc[]>([])
+const paymentsByOrder = ref<Record<string, PaymentDoc[]>>({})
 const search = ref('')
 const selectedOrder = ref<OrderDoc | null>(null)
 const selectedOrderItems = ref<OrderItemDoc[]>([])
@@ -47,6 +50,13 @@ const selectedOrderLines = computed(() => selectedOrderItems.value.flatMap(item 
   }]
 }))
 
+const selectedOrderPayments = computed(() => {
+  if (!selectedOrder.value) return []
+  return [...(paymentsByOrder.value[selectedOrder.value.id] || [])].sort((a, b) =>
+    String(b.payment_date || b.created_at || '').localeCompare(String(a.payment_date || a.created_at || '')),
+  )
+})
+
 async function openOrderDetail(order: OrderDoc) {
   selectedOrder.value = order
   selectedOrderItems.value = []
@@ -64,7 +74,7 @@ async function openOrderDetail(order: OrderDoc) {
   }
 }
 
-async function loadData() {
+async function loadData(force = false) {
   if (!hasPermission('customers.orders_view')) {
     await navigateTo('/forbidden', { replace: true })
     return
@@ -72,9 +82,9 @@ async function loadData() {
 
   loading.value = true
   try {
-    const [customerSnapshot, orderSnapshot] = await Promise.all([
+    const [customerSnapshot, scopedOrders] = await Promise.all([
       getDoc(doc(db, 'customers', customerId.value)),
-      getDocs(query(collection(db, 'orders'), where('customer_id', '==', customerId.value))),
+      loadScopedOrders(force),
     ])
     if (!customerSnapshot.exists()) throw new Error('Không tìm thấy khách hàng hoặc bạn không có quyền xem.')
 
@@ -82,10 +92,26 @@ async function loadData() {
       ...customerSnapshot.data(),
       id: customerSnapshot.id,
     } as CustomerDoc
-    orders.value = orderSnapshot.docs
-      .map(item => ({ ...item.data(), id: item.id }) as OrderDoc)
-      .filter(item => item.deleted !== true && item.status !== 'deleted')
-      .sort((a, b) => String(b.order_date || b.created_at || '').localeCompare(String(a.order_date || a.created_at || '')))
+    const customerOrders = scopedOrders
+      .filter(order => order.customer_id === customerId.value)
+
+    if (hasPermission('payments.view')) {
+      const loadedPayments = await loadScopedPayments(customerOrders, force)
+      const nextPaymentsByOrder: Record<string, PaymentDoc[]> = {}
+      loadedPayments.forEach(payment => {
+        if (!nextPaymentsByOrder[payment.order_id]) nextPaymentsByOrder[payment.order_id] = []
+        nextPaymentsByOrder[payment.order_id].push(payment)
+      })
+      paymentsByOrder.value = nextPaymentsByOrder
+
+      orders.value = customerOrders.map(order => ({
+        ...order,
+        ...computePaymentStatus(order, nextPaymentsByOrder[order.id] || []),
+      }))
+    } else {
+      paymentsByOrder.value = {}
+      orders.value = customerOrders
+    }
   } catch (error: any) {
     showToast(error?.code
       ? reportFirebaseError(error, 'Không tải được đơn hàng của khách.')
@@ -167,6 +193,29 @@ onMounted(loadData)
         <div class="detail-item"><label>Ghi chú</label><strong>{{ selectedOrder.note || '-' }}</strong></div>
       </div>
 
+      <h3 v-if="hasPermission('payments.view')" class="detail-section-title">Lịch sử thanh toán</h3>
+      <div v-if="hasPermission('payments.view') && selectedOrderPayments.length" class="payment-timeline">
+        <div v-for="payment in selectedOrderPayments" :key="payment.id" class="payment-timeline-item">
+          <span class="payment-timeline-dot" aria-hidden="true"></span>
+          <div class="payment-timeline-content">
+            <div class="payment-timeline-head">
+              <strong>{{ payment.payment_type || 'Thanh toán' }}</strong>
+              <strong class="payment-timeline-amount">{{ money(payment.amount) }}</strong>
+            </div>
+            <div class="payment-timeline-meta">
+              {{ payment.payment_date || formatDateTime(payment.created_at) || '-' }}
+              · {{ payment.method || 'Chưa rõ phương thức' }}
+              · {{ payment.created_by || 'Không rõ người tạo' }}
+            </div>
+            <span class="badge" :class="payment.payment_status === 'Đã nhận' ? 'green' : 'blue'">
+              {{ payment.payment_status || 'Chưa rõ trạng thái' }}
+            </span>
+            <div v-if="payment.note" class="payment-timeline-note">{{ payment.note }}</div>
+          </div>
+        </div>
+      </div>
+      <div v-else-if="hasPermission('payments.view')" class="empty payment-timeline-empty">Đơn hàng chưa có lần thanh toán nào.</div>
+
       <h3 class="detail-products-title">Sản phẩm trong đơn</h3>
       <LoadingState v-if="detailLoading" />
       <div v-else class="table-wrap">
@@ -192,9 +241,22 @@ onMounted(loadData)
 
 <style scoped>
 .customer-orders-card { margin: 24px; }
+.detail-section-title { margin: 24px 0 12px; }
 .detail-products-title { margin-top: 20px; }
 .customer-order-detail-table { min-width: 980px; }
+.payment-timeline { position: relative; display: grid; gap: 14px; margin-bottom: 20px; padding-left: 24px; }
+.payment-timeline::before { content: ''; position: absolute; top: 8px; bottom: 8px; left: 7px; width: 2px; background: #dbe3f0; }
+.payment-timeline-item { position: relative; }
+.payment-timeline-dot { position: absolute; top: 8px; left: -24px; width: 16px; height: 16px; border: 3px solid #fff; border-radius: 50%; background: #384bdc; box-shadow: 0 0 0 2px #b9c5ef; }
+.payment-timeline-content { padding: 12px 14px; border: 1px solid #e1e7f0; border-radius: 10px; background: #f8faff; }
+.payment-timeline-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.payment-timeline-amount { color: #1f35c7; white-space: nowrap; }
+.payment-timeline-meta { margin: 5px 0 8px; color: #64748b; font-size: 13px; }
+.payment-timeline-note { margin-top: 8px; color: #334155; font-size: 13px; }
+.payment-timeline-empty { margin-bottom: 20px; }
 @media (max-width: 700px) {
   .customer-orders-card { margin: 12px 0; }
+  .payment-timeline-head { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .payment-timeline-meta { line-height: 1.5; }
 }
 </style>
