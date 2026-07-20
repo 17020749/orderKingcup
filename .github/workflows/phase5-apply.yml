@@ -1,0 +1,540 @@
+name: Phase 5 Security Apply
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened]
+    paths: [.phase5-trigger]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase5-security-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Verify and commit Phase 5 security
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NUXT_PUBLIC_FIREBASE_API_KEY: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ci.invalid
+      NUXT_PUBLIC_FIREBASE_PROJECT_ID: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+      NUXT_PUBLIC_FIREBASE_APP_ID: '1:000000000000:web:0000000000000000000000'
+      NUXT_PUBLIC_APP_NAME: KINGCUP CI
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: security/phase-5-audit-notifications
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm install --global npm@10.9.2 --no-audit --no-fund
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Apply Rules hardening and tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          rules_path = Path('firestore.rules')
+          rules = rules_path.read_text(encoding='utf-8')
+
+          old_target = """    function notificationCreateTargetIsValid() {
+              let directEmail = request.resource.data.get('to_email', '');
+              let audience = request.resource.data.get('audience', '');
+              return (
+                  directEmail is string
+                  && directEmail != ''
+                )
+                || (
+                  audience == 'warehouse_export'
+                  && hasPerm('orders.warehouse_export')
+                );
+            }
+          """.replace('\n              ', '\n    ').replace('\n                ', '\n      ').replace('\n                  ', '\n        ')
+          new_target = """    function notificationTargetUserIsActive(targetEmail) {
+              let path = /databases/$(database)/documents/users/$(targetEmail.lower());
+              return targetEmail is string
+                && targetEmail != ''
+                && exists(path)
+                && activeUserData(get(path).data);
+            }
+
+            function notificationDirectTargetIsValid(data) {
+              let directEmail = data.get('to_email', '');
+              return notificationTargetUserIsActive(directEmail)
+                && data.get('audience', '') == ''
+                && data.get('audience_permissions', []) == [];
+            }
+
+            function notificationWarehouseTargetIsValid(data) {
+              let requiredPermissions = [
+                'export_requests.accept',
+                'export_requests.reject',
+                'export_requests.release',
+                'export_requests.process'
+              ];
+              let audiencePermissions = data.get('audience_permissions', []);
+              return data.get('to_email', '') == ''
+                && data.get('audience', '') == 'warehouse_export'
+                && audiencePermissions is list
+                && audiencePermissions.hasAll(requiredPermissions)
+                && audiencePermissions.hasOnly(requiredPermissions)
+                && hasPerm('orders.warehouse_export');
+            }
+
+            function notificationCreateTargetIsValid() {
+              return notificationDirectTargetIsValid(request.resource.data)
+                || notificationWarehouseTargetIsValid(request.resource.data);
+            }
+
+            function notificationInitialStateIsValid(data) {
+              return data.get('read', false) == false
+                && data.get('is_read', false) == false
+                && data.get('seen', false) == false
+                && ['', 'unread'].hasAny([data.get('status', '')])
+                && data.get('deleted', false) != true;
+            }
+          """.replace('\n              ', '\n    ').replace('\n                ', '\n      ').replace('\n                  ', '\n        ')
+          if old_target not in rules:
+              raise SystemExit('notificationCreateTargetIsValid block not found')
+          rules = rules.replace(old_target, new_target, 1)
+
+          old_logs = """    match /activity_logs/{docId} {
+              allow read: if hasPerm('activity_logs.view');
+
+              // Rules can guarantee the authenticated actor email. A fully tamper-
+              // proof audit trail still requires a trusted backend trigger.
+              allow create: if signedIn()
+                && ownEmailField(request.resource.data, 'changed_by');
+
+              allow update, delete: if isAdmin();
+            }
+          """.replace('\n              ', '\n    ').replace('\n                ', '\n      ')
+          new_logs = """    match /activity_logs/{docId} {
+              allow read: if hasPerm('activity_logs.view');
+
+              // Client audit entries are append-only. Rules bind the actor to the
+              // authenticated active user; a backend trigger remains the strongest
+              // option for a fully trusted audit trail.
+              allow create: if activeUser()
+                && ownEmailField(request.resource.data, 'changed_by')
+                && request.resource.data.get('module', '') is string
+                && request.resource.data.get('module', '') != ''
+                && request.resource.data.get('action', '') is string
+                && request.resource.data.get('action', '') != '';
+
+              allow update, delete: if false;
+            }
+          """.replace('\n              ', '\n    ').replace('\n                ', '\n      ').replace('\n                  ', '\n        ')
+          if old_logs not in rules:
+              raise SystemExit('activity_logs block not found')
+          rules = rules.replace(old_logs, new_logs, 1)
+
+          old_notifications = """    match /notifications/{docId} {
+              allow read: if isAdmin()
+                || (
+                  activeUser()
+                  && (
+                    ownEmailField(resource.data, 'to_email')
+                    || notificationAudienceMatches(resource.data)
+                  )
+                );
+
+              allow create: if activeUser()
+                && ownEmailField(request.resource.data, 'created_by')
+                && notificationCreateTargetIsValid();
+
+              // Direct recipients may still update legacy read fields. Broadcast
+              // notifications use notification_reads so each warehouse user has an
+              // independent read state.
+              allow update: if isAdmin()
+                || (
+                  activeUser()
+                  && ownEmailField(resource.data, 'to_email')
+                  && unchanged(['to_email', 'audience', 'audience_permissions', 'created_by', 'created_at'])
+                  && onlyChanged([
+                    'read',
+                    'is_read',
+                    'read_at',
+                    'seen',
+                    'seen_at',
+                    'status',
+                    'updated_at'
+                  ])
+                );
+
+              allow delete: if isAdmin();
+            }
+          """.replace('\n              ', '\n    ').replace('\n                ', '\n      ').replace('\n                  ', '\n        ')
+          new_notifications = """    match /notifications/{docId} {
+              allow read: if isAdmin()
+                || (
+                  activeUser()
+                  && (
+                    ownEmailField(resource.data, 'to_email')
+                    || notificationAudienceMatches(resource.data)
+                  )
+                );
+
+              allow create: if activeUser()
+                && ownEmailField(request.resource.data, 'created_by')
+                && notificationCreateTargetIsValid()
+                && notificationInitialStateIsValid(request.resource.data);
+
+              // Notification identity and content are immutable after creation.
+              // Direct recipients and admins may only update legacy read-state fields.
+              // Broadcast notifications keep per-user state in notification_reads.
+              allow update: if (
+                  isAdmin()
+                  || (
+                    activeUser()
+                    && ownEmailField(resource.data, 'to_email')
+                  )
+                )
+                && unchanged([
+                  'to_email',
+                  'audience',
+                  'audience_permissions',
+                  'created_by',
+                  'created_at',
+                  'title',
+                  'message',
+                  'module',
+                  'action',
+                  'item_code',
+                  'entity_id',
+                  'payload'
+                ])
+                && onlyChanged([
+                  'read',
+                  'is_read',
+                  'read_at',
+                  'seen',
+                  'seen_at',
+                  'status',
+                  'updated_at'
+                ]);
+
+              allow delete: if isAdmin();
+            }
+          """.replace('\n              ', '\n    ').replace('\n                ', '\n      ').replace('\n                  ', '\n        ')
+          if old_notifications not in rules:
+              raise SystemExit('notifications block not found')
+          rules_path.write_text(rules.replace(old_notifications, new_notifications, 1), encoding='utf-8')
+
+          test_path = Path('tests/security-logs-notifications.rules.test.mjs')
+          test_path.write_text(r'''import { readFileSync } from 'node:fs'
+          import { after, before, beforeEach, test } from 'node:test'
+          import {
+            assertFails,
+            assertSucceeds,
+            initializeTestEnvironment,
+          } from '@firebase/rules-unit-testing'
+          import {
+            deleteDoc,
+            doc,
+            getDoc,
+            setDoc,
+            updateDoc,
+          } from 'firebase/firestore'
+
+          const projectId = 'demo-orderkingcup-security-phase5'
+          const CREATOR = 'creator@example.com'
+          const RECIPIENT = 'recipient@example.com'
+          const NO_WAREHOUSE = 'no-warehouse@example.com'
+          const ADMIN = 'admin@example.com'
+          const INACTIVE = 'inactive@example.com'
+          let env
+
+          async function seed() {
+            await env.withSecurityRulesDisabled(async context => {
+              const db = context.firestore()
+              await Promise.all([
+                setDoc(doc(db, 'users', CREATOR), {
+                  email: CREATOR,
+                  active: true,
+                  deleted: false,
+                  permissions_flat: ['orders.warehouse_export'],
+                }),
+                setDoc(doc(db, 'users', RECIPIENT), {
+                  email: RECIPIENT,
+                  active: true,
+                  deleted: false,
+                  permissions_flat: [],
+                }),
+                setDoc(doc(db, 'users', NO_WAREHOUSE), {
+                  email: NO_WAREHOUSE,
+                  active: true,
+                  deleted: false,
+                  permissions_flat: [],
+                }),
+                setDoc(doc(db, 'users', ADMIN), {
+                  email: ADMIN,
+                  active: true,
+                  deleted: false,
+                  permissions_flat: ['*'],
+                }),
+                setDoc(doc(db, 'users', INACTIVE), {
+                  email: INACTIVE,
+                  active: false,
+                  deleted: false,
+                  permissions_flat: [],
+                }),
+                setDoc(doc(db, 'activity_logs', 'audit-existing'), {
+                  module: 'orders',
+                  action: 'create',
+                  changed_by: CREATOR,
+                  created_at: 'now',
+                  active: true,
+                  deleted: false,
+                }),
+                setDoc(doc(db, 'notifications', 'direct-existing'), {
+                  to_email: RECIPIENT,
+                  audience: '',
+                  audience_permissions: [],
+                  created_by: CREATOR,
+                  title: 'Thông báo',
+                  message: 'Nội dung gốc',
+                  status: 'unread',
+                  read: false,
+                  active: true,
+                  deleted: false,
+                  created_at: 'now',
+                }),
+                setDoc(doc(db, 'notifications', 'broadcast-existing'), {
+                  to_email: '',
+                  audience: 'warehouse_export',
+                  audience_permissions: [
+                    'export_requests.accept',
+                    'export_requests.reject',
+                    'export_requests.release',
+                    'export_requests.process',
+                  ],
+                  created_by: CREATOR,
+                  title: 'Yêu cầu xuất kho',
+                  message: 'YCXK-01',
+                  status: 'unread',
+                  read: false,
+                  active: true,
+                  deleted: false,
+                  created_at: 'now',
+                }),
+              ])
+            })
+          }
+
+          before(async () => {
+            env = await initializeTestEnvironment({
+              projectId,
+              firestore: { rules: readFileSync('firestore.rules', 'utf8') },
+            })
+          })
+
+          beforeEach(async () => {
+            await env.clearFirestore()
+            await seed()
+          })
+
+          after(async () => {
+            await env.cleanup()
+          })
+
+          test('activity_logs chỉ cho active actor ghi log của chính mình', async () => {
+            const creatorDb = env.authenticatedContext(CREATOR, { email: CREATOR }).firestore()
+            const inactiveDb = env.authenticatedContext(INACTIVE, { email: INACTIVE }).firestore()
+
+            await assertSucceeds(setDoc(doc(creatorDb, 'activity_logs', 'audit-valid'), {
+              module: 'orders',
+              action: 'update',
+              changed_by: CREATOR,
+              created_at: 'now',
+              active: true,
+              deleted: false,
+            }))
+            await assertFails(setDoc(doc(creatorDb, 'activity_logs', 'audit-forged'), {
+              module: 'orders',
+              action: 'update',
+              changed_by: RECIPIENT,
+              created_at: 'now',
+            }))
+            await assertFails(setDoc(doc(inactiveDb, 'activity_logs', 'audit-inactive'), {
+              module: 'orders',
+              action: 'update',
+              changed_by: INACTIVE,
+              created_at: 'now',
+            }))
+            await assertFails(setDoc(doc(creatorDb, 'activity_logs', 'audit-empty-module'), {
+              module: '',
+              action: 'update',
+              changed_by: CREATOR,
+              created_at: 'now',
+            }))
+          })
+
+          test('activity_logs là append-only kể cả với admin', async () => {
+            const adminDb = env.authenticatedContext(ADMIN, { email: ADMIN }).firestore()
+            await assertFails(updateDoc(doc(adminDb, 'activity_logs', 'audit-existing'), {
+              action: 'forged-update',
+            }))
+            await assertFails(deleteDoc(doc(adminDb, 'activity_logs', 'audit-existing')))
+          })
+
+          test('notification trực tiếp chỉ được gửi tới user active và không trộn audience', async () => {
+            const creatorDb = env.authenticatedContext(CREATOR, { email: CREATOR }).firestore()
+            const base = {
+              audience: '',
+              audience_permissions: [],
+              created_by: CREATOR,
+              title: 'Thông báo mới',
+              message: 'Nội dung',
+              status: 'unread',
+              read: false,
+              active: true,
+              deleted: false,
+              created_at: 'now',
+            }
+
+            await assertSucceeds(setDoc(doc(creatorDb, 'notifications', 'direct-valid'), {
+              ...base,
+              to_email: RECIPIENT,
+            }))
+            await assertFails(setDoc(doc(creatorDb, 'notifications', 'direct-missing-user'), {
+              ...base,
+              to_email: 'missing@example.com',
+            }))
+            await assertFails(setDoc(doc(creatorDb, 'notifications', 'direct-inactive'), {
+              ...base,
+              to_email: INACTIVE,
+            }))
+            await assertFails(setDoc(doc(creatorDb, 'notifications', 'direct-mixed'), {
+              ...base,
+              to_email: RECIPIENT,
+              audience: 'warehouse_export',
+            }))
+            await assertFails(setDoc(doc(creatorDb, 'notifications', 'direct-pre-read'), {
+              ...base,
+              to_email: RECIPIENT,
+              status: 'read',
+              read: true,
+            }))
+            await assertFails(setDoc(doc(creatorDb, 'notifications', 'direct-forged-creator'), {
+              ...base,
+              to_email: RECIPIENT,
+              created_by: ADMIN,
+            }))
+          })
+
+          test('broadcast kho phải có đúng quyền và đúng creator permission', async () => {
+            const creatorDb = env.authenticatedContext(CREATOR, { email: CREATOR }).firestore()
+            const deniedDb = env.authenticatedContext(NO_WAREHOUSE, { email: NO_WAREHOUSE }).firestore()
+            const permissions = [
+              'export_requests.accept',
+              'export_requests.reject',
+              'export_requests.release',
+              'export_requests.process',
+            ]
+            const base = {
+              to_email: '',
+              audience: 'warehouse_export',
+              audience_permissions: permissions,
+              created_by: CREATOR,
+              title: 'Yêu cầu xuất kho',
+              message: 'YCXK-02',
+              status: 'unread',
+              read: false,
+              active: true,
+              deleted: false,
+              created_at: 'now',
+            }
+
+            await assertSucceeds(setDoc(doc(creatorDb, 'notifications', 'broadcast-valid'), base))
+            await assertFails(setDoc(doc(creatorDb, 'notifications', 'broadcast-missing-perm'), {
+              ...base,
+              audience_permissions: permissions.slice(0, 3),
+            }))
+            await assertFails(setDoc(doc(creatorDb, 'notifications', 'broadcast-extra-perm'), {
+              ...base,
+              audience_permissions: [...permissions, '*'],
+            }))
+            await assertFails(setDoc(doc(deniedDb, 'notifications', 'broadcast-no-permission'), {
+              ...base,
+              created_by: NO_WAREHOUSE,
+            }))
+          })
+
+          test('recipient và admin chỉ được đổi read-state, không sửa nội dung hoặc target', async () => {
+            const recipientDb = env.authenticatedContext(RECIPIENT, { email: RECIPIENT }).firestore()
+            const adminDb = env.authenticatedContext(ADMIN, { email: ADMIN }).firestore()
+            const creatorDb = env.authenticatedContext(CREATOR, { email: CREATOR }).firestore()
+
+            await assertSucceeds(getDoc(doc(recipientDb, 'notifications', 'direct-existing')))
+            await assertSucceeds(updateDoc(doc(recipientDb, 'notifications', 'direct-existing'), {
+              status: 'read',
+              read: true,
+              read_at: 'now',
+              updated_at: 'now',
+            }))
+            await assertFails(updateDoc(doc(recipientDb, 'notifications', 'direct-existing'), {
+              message: 'Nội dung bị sửa',
+              updated_at: 'now',
+            }))
+            await assertFails(updateDoc(doc(adminDb, 'notifications', 'direct-existing'), {
+              to_email: ADMIN,
+              message: 'Admin sửa nội dung',
+            }))
+            await assertFails(updateDoc(doc(creatorDb, 'notifications', 'broadcast-existing'), {
+              status: 'read',
+              read: true,
+              updated_at: 'now',
+            }))
+          })
+          '''.replace('\n          ', '\n'), encoding='utf-8')
+
+          package_path = Path('package.json')
+          package = json.loads(package_path.read_text(encoding='utf-8'))
+          token = ' tests/security-logs-notifications.rules.test.mjs'
+          if token not in package['scripts']['test:rules']:
+              package['scripts']['test:rules'] = package['scripts']['test:rules'].replace(
+                  ' tests/firestore.rules.test.mjs',
+                  ' tests/firestore.rules.test.mjs' + token,
+                  1,
+              )
+          package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+          git diff --check
+
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx --no-install nuxi prepare
+      - name: Build
+        run: npm run build
+      - name: Generate
+        run: npm run generate
+      - name: Rules and security regression tests
+        run: npm run test:rules
+
+      - name: Commit verified Phase 5 source
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add firestore.rules package.json tests/security-logs-notifications.rules.test.mjs
+          git diff --cached --check
+          test -z "$(git diff --cached --name-only -- firestore.indexes.json package-lock.json)"
+          git commit -m 'security(firestore): harden audit logs and notifications'
+          git push origin HEAD:security/phase-5-audit-notifications
