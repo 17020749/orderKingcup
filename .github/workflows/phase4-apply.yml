@@ -1,9 +1,13 @@
 name: Phase 4 Apply
 
 on:
-  push:
+  pull_request:
     branches:
-      - perf/phase-4-cursor-dashboard
+      - dev
+    types:
+      - opened
+      - synchronize
+      - reopened
     paths:
       - .phase4-transfer/trigger
 
@@ -11,12 +15,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: phase4-apply-${{ github.ref }}
+  group: phase4-apply-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   apply:
     name: Verify and commit Phase 4 source
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -92,6 +97,8 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -rf .phase4-transfer
+          git add -A .phase4-transfer
           git add \
             components/CursorLoadMore.vue \
             composables/useScopedQueries.ts \
