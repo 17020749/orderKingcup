@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/home/runner/work/orderKingcup/orderKingcup/.phase5-apply/apply.py", line 587, in <module>
+    text = replace_count(
+           ^^^^^^^^^^^^^^
+  File "/home/runner/work/orderKingcup/orderKingcup/.phase5-apply/apply.py", line 27, in replace_count
+    raise RuntimeError(f"{label}: expected {expected} matches, found {count}")
+RuntimeError: tests/firestore.rules.test.mjs activity timestamps: expected 2 matches, found 4
