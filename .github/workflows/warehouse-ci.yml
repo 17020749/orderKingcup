@@ -46,12 +46,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.19.4'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: '9.15.9'
-          run_install: false
+      - name: Pin npm
+        run: npm install --global npm@10.9.2 --no-audit --no-fund
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
@@ -60,19 +59,19 @@ jobs:
           java-version: '21'
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Prepare Nuxt
-        run: pnpm exec nuxi prepare
+        run: npx --no-install nuxi prepare
 
       - name: Build
-        run: pnpm run build
+        run: npm run build
 
       - name: Generate static site
-        run: pnpm run generate
+        run: npm run generate
 
       - name: Firestore Rules and concurrency tests
-        run: pnpm run test:rules
+        run: npm run test:rules
 
   preview_dev:
     name: Deploy staging rules and PR preview
@@ -100,18 +99,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.19.4'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: '9.15.9'
-          run_install: false
+      - name: Pin npm
+        run: npm install --global npm@10.9.2 --no-audit --no-fund
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Prepare Nuxt
-        run: pnpm exec nuxi prepare
+        run: npx --no-install nuxi prepare
 
       - name: Load and validate Firebase web configuration
         id: firebase_config
@@ -203,10 +201,10 @@ jobs:
           NODE
 
       - name: Build for staging
-        run: pnpm run build
+        run: npm run build
 
       - name: Generate staging site
-        run: pnpm run generate
+        run: npm run generate
 
       - name: Authenticate for Firestore Rules deployment
         uses: google-github-actions/auth@v3
@@ -215,7 +213,7 @@ jobs:
 
       - name: Deploy Firestore Rules to staging
         run: >-
-          pnpm exec firebase deploy
+          npx --no-install firebase deploy
           --only firestore:rules
           --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID"
           --non-interactive
@@ -250,12 +248,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.19.4'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: '9.15.9'
-          run_install: false
+      - name: Pin npm
+        run: npm install --global npm@10.9.2 --no-audit --no-fund
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
@@ -264,10 +261,10 @@ jobs:
           java-version: '21'
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Prepare Nuxt
-        run: pnpm exec nuxi prepare
+        run: npx --no-install nuxi prepare
 
       - name: Load and validate Firebase web configuration
         id: firebase_config
@@ -364,13 +361,13 @@ jobs:
           NODE
 
       - name: Build for selected environment
-        run: pnpm run build
+        run: npm run build
 
       - name: Firestore Rules and concurrency tests
-        run: pnpm run test:rules
+        run: npm run test:rules
 
       - name: Generate selected environment site
-        run: pnpm run generate
+        run: npm run generate
 
       - name: Authenticate for Firestore Rules deployment
         uses: google-github-actions/auth@v3
@@ -379,7 +376,7 @@ jobs:
 
       - name: Deploy Firestore Rules
         run: >-
-          pnpm exec firebase deploy
+          npx --no-install firebase deploy
           --only firestore:rules
           --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID"
           --non-interactive

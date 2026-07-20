@@ -2,6 +2,7 @@
 import type { OrderDoc, ShipmentDoc } from '~/types/models'
 import { formatDateTime, isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { toDateKey } from '~/utils/listFilters'
 
 const { mutateOrderRelation } = useAtomicOrderRelations()
 const { loadScopedOrders, loadScopedShipments } = useScopedQueries()
@@ -38,17 +39,13 @@ function updateFilter(key: string, value: string) {
   if (key === 'to') dateTo.value = value
 }
 
-function dateKey(value: any) {
-  return String(value || '').slice(0, 10)
-}
-
 const carrierOptions = computed(() => Array.from(new Set(rows.value.map(row => String(row.carrier || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')))
 
 const filtered = computed(() => {
   const keyword = normalizeText(search.value)
   return rows.value.filter(row => {
     const matchedText = !keyword || normalizeText(`${row.order_code} ${row.carrier} ${row.tracking_code} ${row.shipping_status}`).includes(keyword)
-    const rowDate = dateKey(row.shipped_date || row.delivered_date || row.created_at)
+    const rowDate = toDateKey(row.shipped_date || row.delivered_date || row.created_at)
     return matchedText
       && (!shippingStatusFilter.value || row.shipping_status === shippingStatusFilter.value)
       && (!carrierFilter.value || row.carrier === carrierFilter.value)

@@ -6,6 +6,7 @@ import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, 
 import { customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, userCodeValidationError } from '~/utils/orderCode'
 import { generateCustomerCode } from '~/utils/customerCode'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { toDateKey } from '~/utils/listFilters'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import { printingDeleteBlocker } from '~/utils/orderPrintingDeleteLock.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
@@ -55,10 +56,6 @@ const form = reactive<any>({})
 const formItems = ref<any[]>([])
 const customerForm = reactive<any>({})
 
-function dateKey(value: any) {
-  return String(value || '').slice(0, 10)
-}
-
 const ownerOptions = computed(() => Array.from(new Set(rows.value.flatMap(row => [row.owner_email, row.sale_email, row.created_by]).map(value => String(value || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')))
 
 const filtered = computed(() => {
@@ -69,7 +66,7 @@ const filtered = computed(() => {
     const matchedPaymentStatus = !paymentStatusFilter.value || row.payment_status === paymentStatusFilter.value
     const matchedInvoiceStatus = !invoiceStatusFilter.value || row.invoice_status === invoiceStatusFilter.value
     const matchedClassification = !classificationFilter.value || row.order_classification === classificationFilter.value
-    const rowDate = dateKey(row.order_date || row.created_at)
+    const rowDate = toDateKey(row.order_date || row.created_at)
     const matchedDateFrom = !dateFrom.value || (!!rowDate && rowDate >= dateFrom.value)
     const matchedDateTo = !dateTo.value || (!!rowDate && rowDate <= dateTo.value)
     const matchedOwner = !ownerFilter.value || [row.owner_email, row.sale_email, row.created_by].includes(ownerFilter.value)
