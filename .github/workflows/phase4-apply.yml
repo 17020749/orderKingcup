@@ -64,7 +64,9 @@ jobs:
             .phase4-transfer/rest-00 \
             .phase4-transfer/rest-01-* \
             .phase4-transfer/rest-02 \
-            .phase4-transfer/rest-03-* \
+            .phase4-transfer/rest-03-00 \
+            .phase4-transfer/rest-03-01 \
+            .phase4-transfer/rest-03-02-* \
             > /tmp/phase4-files.tar.gz.b64
           base64 --decode /tmp/phase4-files.tar.gz.b64 > /tmp/phase4-files.tar.gz
           echo '53add98bcf8090ea181e57838dacf5d0096e2ec27dfeaad6c4abdbf2330e11cd  /tmp/phase4-files.tar.gz' | sha256sum --check --strict
