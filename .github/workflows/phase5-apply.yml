@@ -70,12 +70,150 @@ jobs:
         if: steps.apply.outcome == 'failure'
         run: |
           cat .phase5-apply/last-run.log
-          git config user.name "github-actions[bot]"
+          git config user.name "github-actions[bot]]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f .phase5-apply/last-run.log
           git commit -m "chore: capture phase 5 apply failure"
           git push origin HEAD:security/phase-5-activity-notifications
           exit 1
+
+      - name: Optimize rules and align legacy regression fixtures
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          rules_path = Path('firestore.rules')
+          rules = rules_path.read_text(encoding='utf-8')
+          lean_activity = '''    function validActivityLogCreate(data) {
+              return activeUser()
+                && data.keys().hasAll(['module', 'action', 'changed_by', 'created_at'])
+                && validBoundedString(data.get('module', ''), 1, 80)
+                && validBoundedString(data.get('action', ''), 1, 80)
+                && validBoundedString(data.get('changed_by', ''), 3, 254)
+                && data.get('changed_by', '').lower() == email()
+                && data.get('created_at', null) is timestamp
+                && data.get('created_at', null) == request.time
+                && data.get('before_json', '') is string
+                && data.get('before_json', '').size() <= 100000
+                && data.get('after_json', '') is string
+                && data.get('after_json', '').size() <= 100000
+                && data.get('active', true) == true
+                && data.get('deleted', false) == false;
+            }
+
+            function notificationRequestPath'''
+          rules, count = re.subn(
+              r'    function validActivityLogCreate\(data\) \{.*?\n    \}\n\n    function notificationRequestPath',
+              lean_activity,
+              rules,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise SystemExit(f'activity rule optimization: expected one match, found {count}')
+          rules_path.write_text(rules, encoding='utf-8')
+
+          test_path = Path('tests/firestore.rules.test.mjs')
+          test_text = test_path.read_text(encoding='utf-8')
+          test_text = replace_once(
+              test_text,
+              "setDoc(doc(db, 'order_export_requests', 'export-a'), { order_id: 'order-a', requested_by: A, ...ownership(A), status: 'cho_xu_ly', payload_json: '{}', active: true, deleted: false }),",
+              "setDoc(doc(db, 'order_export_requests', 'export-a'), { order_id: 'order-a', requested_by: A, updated_by: A, ...ownership(A), status: 'cho_xu_ly', payload_json: '{}', active: true, deleted: false }),",
+              'export request updated_by fixture',
+          )
+          test_text = replace_once(
+              test_text,
+              "    status: 'read', read_at: 'now', updated_at: 'now'",
+              "    status: 'read', read_at: serverTimestamp(), updated_at: serverTimestamp()",
+              'notification read timestamp fixture',
+          )
+
+          old_created = '''  await assertSucceeds(setDoc(doc(saleDb, 'notifications', 'notification-sale-created'), {
+              type: 'warehouse_export_request_created',
+              title: 'Có yêu cầu xuất kho mới',
+              message: 'YCXK-NEW',
+              created_by: A,
+              to_email: '',
+              audience: 'warehouse_export',
+              audience_permissions: ['export_requests.accept', 'export_requests.reject', 'export_requests.release'],
+              status: 'unread',
+              active: true,
+              deleted: false
+            }))'''
+          new_created = '''  await assertSucceeds(setDoc(doc(saleDb, 'notifications', 'notification-sale-created'), {
+              type: 'warehouse_export_request_created',
+              title: 'Có yêu cầu xuất kho mới',
+              message: 'YCXK-NEW',
+              route: '/warehouse-export-requests',
+              entity_collection: 'order_export_requests',
+              entity_id: 'export-a',
+              entity_code: 'EXPORT-A',
+              created_by: A,
+              to_email: '',
+              audience: 'warehouse_export',
+              audience_permissions: [
+                'export_requests.accept',
+                'export_requests.reject',
+                'export_requests.release',
+                'export_requests.process'
+              ],
+              metadata_json: '{}',
+              status: 'unread',
+              read: false,
+              active: true,
+              deleted: false,
+              created_at: serverTimestamp(),
+              updated_at: serverTimestamp()
+            }))'''
+          test_text = replace_once(test_text, old_created, new_created, 'created notification fixture')
+
+          old_updated = '''  await assertSucceeds(setDoc(doc(saleDb, 'notifications', notificationId), {
+              type: 'warehouse_export_request_updated',
+              title: 'Yêu cầu xuất kho vừa được cập nhật',
+              message: 'YCXK-UPDATED',
+              created_by: A,
+              to_email: '',
+              audience: 'warehouse_export',
+              audience_permissions: ['export_requests.accept', 'export_requests.reject', 'export_requests.release'],
+              status: 'unread',
+              active: true,
+              deleted: false
+            }))'''
+          new_updated = '''  await assertSucceeds(setDoc(doc(saleDb, 'notifications', notificationId), {
+              type: 'warehouse_export_request_updated',
+              title: 'Yêu cầu xuất kho vừa được cập nhật',
+              message: 'YCXK-UPDATED',
+              route: '/warehouse-export-requests',
+              entity_collection: 'order_export_requests',
+              entity_id: 'export-a',
+              entity_code: 'EXPORT-A',
+              created_by: A,
+              to_email: '',
+              audience: 'warehouse_export',
+              audience_permissions: [
+                'export_requests.accept',
+                'export_requests.reject',
+                'export_requests.release',
+                'export_requests.process'
+              ],
+              metadata_json: '{}',
+              status: 'unread',
+              read: false,
+              active: true,
+              deleted: false,
+              created_at: serverTimestamp(),
+              updated_at: serverTimestamp()
+            }))'''
+          test_text = replace_once(test_text, old_updated, new_updated, 'updated notification fixture')
+          test_path.write_text(test_text, encoding='utf-8')
+          PY
 
       - name: Confirm temporary bootstrap is excluded from final diff
         run: |
