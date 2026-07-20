@@ -28,9 +28,10 @@ export function money(value: any) {
   return toNumber(value).toLocaleString('vi-VN') + ' ₫'
 }
 
-export function todayKey() {
-  return new Date().toISOString().slice(0, 10)
-}
+// @ts-ignore Shared ESM helpers are executed directly by Node tests.
+import { BUSINESS_TIME_ZONE, businessDateKey, monthKey, todayKey } from '../lib/businessDate.mjs'
+
+export { BUSINESS_TIME_ZONE, businessDateKey, monthKey, todayKey }
 
 export function nowDateTimeLocal() {
   const d = new Date()
@@ -55,14 +56,6 @@ export function formatDateTime(value: any) {
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return String(value).replace('T', ' ')
   return d.toLocaleString('vi-VN', { hour12: false })
-}
-
-export function monthKey(dateValue?: any) {
-  const raw = String(dateValue || todayKey())
-  if (/^\d{4}-\d{2}/.test(raw)) return raw.slice(0, 7)
-  const d = new Date(raw)
-  if (Number.isNaN(d.getTime())) return todayKey().slice(0, 7)
-  return d.toISOString().slice(0, 7)
 }
 
 export function makeId(prefix = 'id') {

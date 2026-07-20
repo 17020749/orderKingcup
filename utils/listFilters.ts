@@ -1,24 +1,10 @@
 import { normalizeText } from './format.ts'
+// @ts-ignore Shared ESM helpers are executed directly by Node tests.
+import { isDateInRange, toDateKey } from '../lib/businessDate.mjs'
 
 export type DateLike = string | number | Date | null | undefined | { toDate?: () => Date; seconds?: number }
 
-export function toDateKey(value: DateLike): string {
-  if (!value) return ''
-  const date = typeof (value as any)?.toDate === 'function'
-    ? (value as any).toDate()
-    : typeof (value as any)?.seconds === 'number'
-      ? new Date((value as any).seconds * 1000)
-      : new Date(value as any)
-  if (!date || Number.isNaN(date.getTime())) return ''
-  return date.toISOString().slice(0, 10)
-}
-
-export function isDateInRange(value: DateLike, from?: string, to?: string): boolean {
-  const key = toDateKey(value)
-  if (from && (!key || key < from)) return false
-  if (to && (!key || key > to)) return false
-  return true
-}
+export { isDateInRange, toDateKey }
 
 export function matchesKeyword(values: unknown[], keyword?: string): boolean {
   const normalizedKeyword = normalizeText(keyword)
