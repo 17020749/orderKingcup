@@ -63,11 +63,12 @@ test('parent list pages load relation rows only for the loaded parent page', () 
   assert.match(source('pages/orders.vue'), /loadScopedExportRequestsForOrders\(pageOrders/)
 })
 
-test('dashboard keeps the accurate legacy aggregation path until a backend summary exists', () => {
+test('dashboard keeps the accurate client aggregation path until a backend summary exists', () => {
   const scopedQueries = source('composables/useScopedQueries.ts')
   const dashboard = source('pages/dashboard.vue')
   assert.doesNotMatch(scopedQueries, /loadAdminDashboardSummary/)
   assert.doesNotMatch(scopedQueries, /getAggregateFromServer/)
   assert.doesNotMatch(dashboard, /loadAdminDashboardSummary/)
-  assert.match(dashboard, /loadLegacyDashboard/)
+  assert.match(dashboard, /async function loadDashboard/)
+  assert.match(dashboard, /loadScopedOrders\(force\)/)
 })
