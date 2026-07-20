@@ -23,6 +23,18 @@ const selectedDetail = ref<InvoiceDoc | null>(null)
 const editing = ref<InvoiceDoc | null>(null)
 const form = reactive<any>({})
 
+const filterValues = computed(() => ({ status: invoiceStatusFilter.value, from: dateFrom.value, to: dateTo.value }))
+const toolbarFilters = [
+  { key: 'status', label: 'Trạng thái hóa đơn', allLabel: 'Tất cả trạng thái', options: ['Yêu cầu xuất', 'HĐ nháp', 'Đã xuất'].map(value => ({ label: value, value })) },
+  { key: 'from', label: 'Từ ngày', type: 'date' as const },
+  { key: 'to', label: 'Đến ngày', type: 'date' as const },
+]
+function updateFilter(key: string, value: string) {
+  if (key === 'status') invoiceStatusFilter.value = value
+  if (key === 'from') dateFrom.value = value
+  if (key === 'to') dateTo.value = value
+}
+
 function dateKey(value: any) {
   return String(value || '').slice(0, 10)
 }
@@ -165,6 +177,7 @@ onMounted(() => loadRows())
     </PageHeader>
     <div class="card" style="padding: 24px;">
       <div class="toolbar"><input v-model="search" class="input" placeholder="Tìm đơn, số hóa đơn, công ty..."/><select v-model="invoiceStatusFilter" class="select"><option value="">Tất cả trạng thái</option><option>Yêu cầu xuất</option><option>HĐ nháp</option><option>Đã xuất</option></select><input v-model="dateFrom" class="input" type="date" aria-label="Từ ngày"/><input v-model="dateTo" class="input" type="date" aria-label="Đến ngày"/><button class="btn" @click="resetFilters">Xóa lọc</button><button class="btn" @click="loadRows(true)">Làm mới</button></div>
+      <FilterToolbar v-model:search="search" search-placeholder="Tìm đơn, số hóa đơn, công ty..." :filters="toolbarFilters" :values="filterValues" :result-count="filtered.length" :loading="loading" show-refresh @update:filter="updateFilter" @reset="resetFilters" @refresh="loadRows(true)" />
       <LoadingState v-if="loading"/>
       <div v-else class="table-wrap">
         <table>
@@ -203,3 +216,7 @@ onMounted(() => loadRows())
     <ConfirmModal v-bind="confirmState" @cancel="resolveConfirm(false)" @confirm="resolveConfirm(true)" />
   </AppShell>
 </template>
+
+<style scoped>
+.toolbar { display: none; }
+</style>

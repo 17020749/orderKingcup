@@ -246,12 +246,164 @@ button {
   /* margin: 24px; */
 }
 .toolbar {
+  display: grid;
+  grid-template-columns:
+    minmax(280px, 2fr)
+    repeat(3, minmax(170px, 1fr));
+  gap: 14px;
+
+  margin-bottom: 16px;
+  padding: 16px;
+
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+}
+
+/* Keep legacy page toolbars aligned with the shared filter layout. */
+.toolbar > .input,
+.toolbar > .select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.toolbar > .btn {
+  align-self: end;
+  min-height: 42px;
+}
+
+.filter-toolbar > .filter-field > .input,
+.filter-toolbar > .filter-field > .select {
+  max-width: none !important;
+}
+
+.filter-field {
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.filter-label {
+  padding-left: 2px;
+
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  color: #64748b;
+}
+
+.filter-field > .input,
+.filter-field > .select {
+  width: 100%;
+  height: 42px;
+  min-width: 0;
+  box-sizing: border-box;
+
+  padding: 0 12px;
+
+  font: inherit;
+  font-size: 14px;
+  color: #0f172a;
+
+  background-color: #fff;
+  border: 1px solid #dbe3ee;
+  border-radius: 10px;
+  outline: none;
+
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.filter-field > .input::placeholder {
+  color: #94a3b8;
+}
+
+.filter-field > .input:hover,
+.filter-field > .select:hover {
+  border-color: #b8c4d4;
+}
+
+.filter-field > .input:focus,
+.filter-field > .select:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.11);
+}
+
+.filter-field > .select {
+  cursor: pointer;
+}
+
+.filter-actions {
+  grid-column: 1 / -1;
+
+  display: flex;
+  justify-content: flex-end;
   gap: 10px;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
+}
+
+.filter-actions > .btn {
+  min-width: 110px;
+  height: 40px;
+}
+
+.filter-actions > .btn-primary {
+  color: #fff;
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.filter-actions > .btn-primary:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
+@media (max-width: 1200px) {
+  .toolbar {
+    grid-template-columns: repeat(3, minmax(170px, 1fr));
+  }
+
+  .filter-field--search {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 800px) {
+  .toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .filter-field--search {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 520px) {
+  .toolbar {
+    grid-template-columns: 1fr;
+    padding: 12px;
+  }
+
+  .filter-field--search,
+  .filter-actions {
+    grid-column: auto;
+  }
+
+  .filter-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .filter-actions > .btn {
+    width: 100%;
+    min-width: 0;
+  }
 }
 .row {
   display: flex;

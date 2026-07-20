@@ -891,17 +891,169 @@ onMounted(loadRows)
 
     <div class="card" style="margin: 24px;">
       <div class="toolbar">
-        <input v-model="search" class="input" style="max-width:480px" placeholder="Tìm mã đơn, khách hàng, SĐT..." />
-        <select v-model="orderStatusFilter" class="select"><option value="">Tất cả trạng thái đơn</option><option v-for="value in ORDER_STATUS_OPTIONS" :key="value" :value="value">{{ value }}</option></select>
-        <select v-model="paymentStatusFilter" class="select"><option value="">Tất cả thanh toán</option><option value="Chưa thanh toán">Chưa thanh toán</option><option value="Thanh toán một phần">Thanh toán một phần</option><option value="Đã thanh toán">Đã thanh toán</option></select>
-        <select v-model="invoiceStatusFilter" class="select"><option value="">Tất cả hóa đơn</option><option v-for="value in INVOICE_STATUS_OPTIONS" :key="value" :value="value">{{ value }}</option></select>
-        <select v-model="classificationFilter" class="select"><option value="">Tất cả phân loại</option><option v-for="value in ORDER_CLASSIFICATION_OPTIONS" :key="value" :value="value">{{ value }}</option></select>
-        <input v-model="dateFrom" class="input" type="date" aria-label="Từ ngày" />
-        <input v-model="dateTo" class="input" type="date" aria-label="Đến ngày" />
-        <select v-model="ownerFilter" class="select"><option value="">Tất cả phụ trách</option><option v-for="value in ownerOptions" :key="value" :value="value">{{ value }}</option></select>
-        <button class="btn" @click="resetFilters">Xóa lọc</button>
-        <button class="btn" @click="loadRows(true)">Làm mới</button>
-      </div>
+  <div class="filter-field filter-field--search">
+    <label class="filter-label" for="order-search">
+      Tìm kiếm
+    </label>
+
+    <input
+      id="order-search"
+      v-model="search"
+      class="input"
+      type="search"
+      placeholder="Tìm mã đơn, khách hàng, SĐT..."
+    />
+  </div>
+
+  <div class="filter-field">
+    <label class="filter-label" for="order-status-filter">
+      Trạng thái đơn
+    </label>
+
+    <select
+      id="order-status-filter"
+      v-model="orderStatusFilter"
+      class="select"
+    >
+      <option value="">Tất cả trạng thái đơn</option>
+
+      <option
+        v-for="value in ORDER_STATUS_OPTIONS"
+        :key="value"
+        :value="value"
+      >
+        {{ value }}
+      </option>
+    </select>
+  </div>
+
+  <div class="filter-field">
+    <label class="filter-label" for="payment-status-filter">
+      Thanh toán
+    </label>
+
+    <select
+      id="payment-status-filter"
+      v-model="paymentStatusFilter"
+      class="select"
+    >
+      <option value="">Tất cả thanh toán</option>
+      <option value="Chưa thanh toán">Chưa thanh toán</option>
+      <option value="Thanh toán một phần">Thanh toán một phần</option>
+      <option value="Đã thanh toán">Đã thanh toán</option>
+    </select>
+  </div>
+
+  <div class="filter-field">
+    <label class="filter-label" for="invoice-status-filter">
+      Hóa đơn
+    </label>
+
+    <select
+      id="invoice-status-filter"
+      v-model="invoiceStatusFilter"
+      class="select"
+    >
+      <option value="">Tất cả hóa đơn</option>
+
+      <option
+        v-for="value in INVOICE_STATUS_OPTIONS"
+        :key="value"
+        :value="value"
+      >
+        {{ value }}
+      </option>
+    </select>
+  </div>
+
+  <div class="filter-field">
+    <label class="filter-label" for="classification-filter">
+      Phân loại
+    </label>
+
+    <select
+      id="classification-filter"
+      v-model="classificationFilter"
+      class="select"
+    >
+      <option value="">Tất cả phân loại</option>
+
+      <option
+        v-for="value in ORDER_CLASSIFICATION_OPTIONS"
+        :key="value"
+        :value="value"
+      >
+        {{ value }}
+      </option>
+    </select>
+  </div>
+
+  <div class="filter-field">
+    <label class="filter-label" for="date-from">
+      Từ ngày
+    </label>
+
+    <input
+      id="date-from"
+      v-model="dateFrom"
+      class="input"
+      type="date"
+    />
+  </div>
+
+  <div class="filter-field">
+    <label class="filter-label" for="date-to">
+      Đến ngày
+    </label>
+
+    <input
+      id="date-to"
+      v-model="dateTo"
+      class="input"
+      type="date"
+    />
+  </div>
+
+  <div class="filter-field">
+    <label class="filter-label" for="owner-filter">
+      Người phụ trách
+    </label>
+
+    <select
+      id="owner-filter"
+      v-model="ownerFilter"
+      class="select"
+    >
+      <option value="">Tất cả phụ trách</option>
+
+      <option
+        v-for="value in ownerOptions"
+        :key="value"
+        :value="value"
+      >
+        {{ value }}
+      </option>
+    </select>
+  </div>
+
+  <div class="filter-actions">
+    <button
+      type="button"
+      class="btn"
+      @click="resetFilters"
+    >
+      Xóa lọc
+    </button>
+
+    <button
+      type="button"
+      class="btn btn-primary"
+      @click="loadRows(true)"
+    >
+      Làm mới
+    </button>
+  </div>
+</div>
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
         <table style="min-width:1420px">

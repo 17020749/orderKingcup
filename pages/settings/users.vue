@@ -621,7 +621,7 @@ onMounted(loadRows);
         <div class="form-group"><label>Email</label><input v-model="userForm.email" class="input" :readonly="isEditingUser" /></div>
         <div class="form-group"><label>Mã Người dùng *</label><input v-model="userForm.user_code" class="input" maxlength="12" placeholder="VD: HIEU01" @blur="userForm.user_code = normalizeUserCode(userForm.user_code)" /><div class="small subtle">Chỉ dùng chữ A-Z và số; mã không được trùng.</div></div>
         <div class="form-group"><label>Tên hiển thị</label><input v-model="userForm.display_name" class="input" /></div>
-        <div class="form-group"><label>Trạng thái</label><select v-model="userForm.status" class="select"><option value="active">active</option><option value="inactive">inactive</option></select></div>
+<div class="form-group"><label>Trạng thái</label><select v-model="userForm.status" class="select"><option value="active">Đang hoạt động</option><option value="inactive">Ngừng hoạt động</option></select></div>
       </div>
       <h3>Vai trò</h3>
       <div class="role-checkbox-grid">

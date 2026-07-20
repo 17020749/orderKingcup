@@ -60,12 +60,12 @@ const categoryOptions = computed(() => uniqueOptions(rows.value, 'category'))
 const unitOptions = computed(() => uniqueOptions(rows.value, 'unit'))
 const filterValues = computed(() => ({ status: statusFilter.value, category: categoryFilter.value, unit: unitFilter.value }))
 const toolbarFilters = computed(() => [
-  { key: 'status', allLabel: 'Tất cả trạng thái', width: '180px', options: [
+  { key: 'status', label: 'Trạng thái', allLabel: 'Tất cả trạng thái', width: '180px', options: [
     { label: 'Đang bán', value: 'active' },
     { label: 'Ngừng bán', value: 'inactive' },
   ] },
-  { key: 'category', allLabel: 'Tất cả nhóm', width: '220px', options: categoryOptions.value.map(category => ({ label: category, value: normalizeText(category) })) },
-  { key: 'unit', allLabel: 'Tất cả đơn vị', width: '180px', options: unitOptions.value.map(unit => ({ label: unit, value: normalizeText(unit) })) },
+  { key: 'category', label: 'Nhóm sản phẩm', allLabel: 'Tất cả nhóm', width: '220px', options: categoryOptions.value.map(category => ({ label: category, value: normalizeText(category) })) },
+  { key: 'unit', label: 'Đơn vị', allLabel: 'Tất cả đơn vị', width: '180px', options: unitOptions.value.map(unit => ({ label: unit, value: normalizeText(unit) })) },
 ])
 
 function updateFilter(key: string, value: string) {

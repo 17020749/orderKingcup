@@ -464,7 +464,7 @@ onMounted(() => loadRows())
         <div v-if="activeTab === 'suppliers'" class="form-group"><label>Email</label><input v-model="form.email" class="input" /></div>
         <div v-if="activeTab === 'warehouses'" class="form-group"><label>Quản lý</label><input v-model="form.manager" class="input" /></div>
         <div v-if="activeTab !== 'units'" class="form-group"><label>Địa chỉ</label><input v-model="form.address" class="input" /></div>
-        <div class="form-group"><label>Trạng thái</label><select v-model="form.status" class="select"><option value="active">active</option><option value="inactive">inactive</option></select></div>
+<div class="form-group"><label>Trạng thái</label><select v-model="form.status" class="select"><option value="active">Đang hoạt động</option><option value="inactive">Ngừng hoạt động</option></select></div>
       </div>
       <div class="form-group" style="margin-top:12px"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
     </BaseModal>
