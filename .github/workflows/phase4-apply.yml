@@ -55,7 +55,7 @@ jobs:
       - name: Keep safe cursor scope and update regression expectations
         shell: bash
         run: |
-          git checkout HEAD -- pages/dashboard.vue
+          git checkout HEAD -- pages/dashboard.vue tests/cursor-pagination.test.mjs
           rm -f tests/dashboard-aggregation.rules.test.mjs
           python - <<'PY'
           import json
