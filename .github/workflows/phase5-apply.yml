@@ -221,12 +221,12 @@ jobs:
           test_path.write_text(test_text, encoding='utf-8')
           PY
 
-      - name: Confirm temporary bootstrap is excluded from final diff
+      - name: Remove temporary patch files before source commit
         run: |
-          git rm -f .phase5-apply/apply.py .github/workflows/phase5-apply.yml
+          git rm -f .phase5-apply/apply.py
           rm -f .phase5-apply/last-run.log
           test ! -e .phase5-apply/apply.py
-          test ! -e .github/workflows/phase5-apply.yml
+          test ! -e .phase5-apply/last-run.log
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -275,6 +275,7 @@ jobs:
 
       - name: Commit verified Phase 5 changes
         run: |
+          rm -f .phase5-apply/last-run.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
