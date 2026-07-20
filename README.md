@@ -78,13 +78,17 @@ Có thể dùng lệnh tắt:
 npm run deploy
 ```
 
-## Deploy rules và indexes
+## Firestore indexes
 
-Trước khi app ghi trực tiếp Firestore, nên deploy rules/indexes:
+Kiểm tra cấu hình index và đối chiếu với query trong source:
 
 ```bash
-firebase deploy --only firestore:rules,firestore:indexes
+npm run test:indexes
 ```
+
+Việc deploy index được tách khỏi workflow Hosting/Rules và chỉ chạy thủ công tại **GitHub Actions → Firestore Indexes**. Luôn deploy staging trước, nhập đúng project ID để xác nhận và dùng GitHub Environment `production` cho production approval. Workflow chỉ deploy `firestore:indexes`, kiểm tra service account thuộc đúng project và không dùng `--force`.
+
+Chi tiết inventory, cách validate và quy trình staging/production: [`docs/firestore-indexes.md`](docs/firestore-indexes.md).
 
 ## Dữ liệu yêu cầu trước khi đăng nhập
 
