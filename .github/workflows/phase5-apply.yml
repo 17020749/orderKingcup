@@ -8,15 +8,27 @@ on:
       - .phase5-apply/apply.py
       - .github/workflows/phase5-apply.yml
 
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
+    paths:
+      - .phase5-apply/apply.py
+      - .github/workflows/phase5-apply.yml
+
 permissions:
   contents: write
 
 concurrency:
-  group: phase5-apply-${{ github.ref }}
+  group: phase5-apply-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
   apply-and-verify:
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'security/phase-5-activity-notifications'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
