@@ -31,7 +31,7 @@ The validator checks:
 - Dynamic query calls are listed for explicit review.
 - The deployment workflow is manual, project-confirmed and contains no `--force`.
 
-Warehouse CI runs the same validation for pull requests and pushes.
+The `Firestore Indexes` workflow runs validation on relevant pull requests and pushes. Its deploy job is skipped unless the workflow is started manually.
 
 ## Deployment workflow
 
