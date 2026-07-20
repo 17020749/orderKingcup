@@ -1344,7 +1344,7 @@ tr:hover td {
   min-height: 42px;
   padding: 9px 11px;
   border-radius: 10px;
-  color: #9eafc5;
+  color: #d5e0ee;
   font-size: 13px;
   font-weight: 650;
   transition: background 150ms ease, color 150ms ease, transform 150ms ease;
@@ -1362,7 +1362,7 @@ tr:hover td {
 .nav-icon {
   width: 21px;
   flex: 0 0 21px;
-  color: #7f93ae;
+  color: #aebed2;
   font-size: 17px;
   font-weight: 800;
   line-height: 1;
@@ -1375,7 +1375,7 @@ tr:hover td {
 .nav-group-toggle {
   border-radius: 9px;
   padding: 8px 11px;
-  color: #7f93ae;
+  color: #b8c7d9;
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.14em;
