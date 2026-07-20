@@ -1,4 +1,4 @@
-name: Phase 4 Admin Aggregate Diagnostic
+name: Phase 4 Dashboard Rules Diagnostic
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   diagnostic:
-    name: Test admin aggregate Rules fast-path
+    name: Test minimal Dashboard admin Rules path
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -37,7 +37,7 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Reconstruct source and add Rules fast-path
+      - name: Reconstruct source and add minimal Dashboard Rules path
         shell: bash
         run: |
           cat .phase4-transfer/chunk-00 .phase4-transfer/rest-00 .phase4-transfer/rest-01-* .phase4-transfer/rest-02 .phase4-transfer/rest-03-00 .phase4-transfer/rest-03-01 .phase4-transfer/rest-03-02-* > /tmp/phase4.b64
@@ -46,13 +46,57 @@ jobs:
           tar -xzf /tmp/phase4.tar.gz -C .
           python - <<'PY'
           from pathlib import Path
+
           path = Path('firestore.rules')
           source = path.read_text(encoding='utf-8')
-          old = "    match /orders/{docId} {\n      allow read: if hasPerm('orders.view_all')"
-          new = "    match /orders/{docId} {\n      // Admin aggregation queries need a short authorization path to stay\n      // below the Firestore Rules 1,000-expression evaluation budget.\n      allow read: if isAdmin()\n        || hasPerm('orders.view_all')"
-          if old not in source:
-              raise SystemExit('orders read rule not found')
-          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          marker = """    function hasPerm(permission) {
+          """
+          helper = """    // Minimal, fail-closed path for server aggregation queries. The app's
+              // canonical administrator source is the wildcard in permissions_flat.
+              function dashboardAggregateAdmin() {
+                let path = userPath();
+                let user = get(path).data;
+                return signedIn()
+                  && exists(path)
+                  && activeUserData(user)
+                  && user.get('permissions_flat', []) is list
+                  && '*' in user.get('permissions_flat', []);
+              }
+
+          """.replace('\n              ', '\n    ').replace('\n                ', '\n      ').replace('\n                  ', '\n        ')
+          if marker not in source:
+              raise SystemExit('hasPerm marker not found')
+          source = source.replace(marker, helper + marker, 1)
+
+          replacements = {
+            "      allow read: if isAdmin()\n        || (\n          hasPerm('customers.view')":
+              "      allow read: if dashboardAggregateAdmin()\n        || isAdmin()\n        || (\n          hasPerm('customers.view')",
+            "      allow read: if hasAnyPerm(['products.view', 'inventory.view', 'printing.view']);":
+              "      allow read: if dashboardAggregateAdmin()\n        || hasAnyPerm(['products.view', 'inventory.view', 'printing.view']);",
+            "      allow read: if hasPerm('orders.view_all')":
+              "      allow read: if dashboardAggregateAdmin()\n        || hasPerm('orders.view_all')",
+            "      allow read: if hasPerm('payments.view_all')":
+              "      allow read: if dashboardAggregateAdmin()\n        || hasPerm('payments.view_all')",
+            "      allow read: if hasAnyPerm([\n          'page.warehouse_export_requests',":
+              "      allow read: if dashboardAggregateAdmin()\n        || hasAnyPerm([\n          'page.warehouse_export_requests',",
+          }
+          for old, new in replacements.items():
+              if old not in source:
+                  raise SystemExit(f'Rules block not found: {old[:60]}')
+              source = source.replace(old, new, 1)
+
+          # The orders.view_all pattern occurs first in /orders and then /order_items.
+          order_items_old = """    match /order_items/{docId} {
+              allow read: if hasPerm('orders.view_all')
+          """.replace('\n              ', '\n      ')
+          order_items_new = """    match /order_items/{docId} {
+              allow read: if dashboardAggregateAdmin()
+                || hasPerm('orders.view_all')
+          """.replace('\n              ', '\n      ').replace('\n                ', '\n        ')
+          if order_items_old not in source:
+              raise SystemExit('order_items read block not found')
+          source = source.replace(order_items_old, order_items_new, 1)
+          path.write_text(source, encoding='utf-8')
           PY
           git diff --check
 
@@ -63,7 +107,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          npx firebase emulators:exec --only firestore "node --test --test-concurrency=1 tests/dashboard-aggregation.rules.test.mjs" 2>&1 | tee .phase4-transfer/admin-fast-path.log
+          npx firebase emulators:exec --only firestore "node --test --test-concurrency=1 tests/dashboard-aggregation.rules.test.mjs" 2>&1 | tee .phase4-transfer/minimal-dashboard-admin.log
           echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
           exit 0
 
@@ -72,8 +116,8 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f .phase4-transfer/admin-fast-path.log
-          git commit -m 'test(phase4): capture admin aggregate fast-path result'
+          git add -f .phase4-transfer/minimal-dashboard-admin.log
+          git commit -m 'test(phase4): capture minimal Dashboard admin result'
           git push origin HEAD:fix/phase-4-completion
 
       - name: Report failure
