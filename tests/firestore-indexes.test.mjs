@@ -80,10 +80,12 @@ test('records dynamic query calls for explicit review without inventing an index
   assert.equal(inventory.unresolved.length, 1)
 })
 
-test('repository deploy workflow is manual, guarded and never uses force', () => {
+test('repository deploy workflow validates PRs and guards manual deployment', () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/firestore-indexes.yml'), 'utf8')
+  assert.match(workflow, /pull_request:/)
   assert.match(workflow, /workflow_dispatch:/)
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch'/)
   assert.match(workflow, /environment:/)
   assert.match(workflow, /confirm_project_id/)
   assert.match(workflow, /--only firestore:indexes/)
