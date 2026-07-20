@@ -26,6 +26,21 @@ type SaveOptions = {
   log?: boolean
 }
 
+const MAX_ACTIVITY_JSON_LENGTH = 100_000
+
+function serializeActivityJson(value: any) {
+  let serialized: string
+  try {
+    serialized = JSON.stringify(value || {})
+  } catch {
+    throw new Error('Dữ liệu Activity Log không thể chuyển thành JSON.')
+  }
+  if (serialized.length > MAX_ACTIVITY_JSON_LENGTH) {
+    throw new Error('Dữ liệu Activity Log vượt giới hạn 100.000 ký tự.')
+  }
+  return serialized
+}
+
 export function useRepo() {
   const { db } = useFirebaseServices()
   const { appUser } = useAuth()
@@ -77,7 +92,7 @@ export function useRepo() {
       item_code: itemCode,
       item_name: after.customer_name || after.product_name || after.order_code || after.name || itemCode,
       changed_by: email,
-      after_json: JSON.stringify(after || {}),
+      after_json: serializeActivityJson(after),
       created_at: serverTimestamp(),
       active: true,
       deleted: false

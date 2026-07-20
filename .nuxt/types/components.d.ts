@@ -17,6 +17,11 @@ interface _GlobalComponents {
   AppShell: typeof import("../../components/AppShell.vue")['default']
   BaseModal: typeof import("../../components/BaseModal.vue")['default']
   ConfirmModal: typeof import("../../components/ConfirmModal.vue")['default']
+  CursorLoadMore: typeof import("../../components/CursorLoadMore.vue")['default']
+  ExportOrderPrintModal: typeof import("../../components/ExportOrderPrintModal.vue")['default']
+  ExportRequestPrintActionsBridge: typeof import("../../components/ExportRequestPrintActionsBridge.vue")['default']
+  ExportRequestPrintModal: typeof import("../../components/ExportRequestPrintModal.vue")['default']
+  FilterToolbar: typeof import("../../components/FilterToolbar.vue")['default']
   GlobalLoading: typeof import("../../components/GlobalLoading.vue")['default']
   LoadingState: typeof import("../../components/LoadingState.vue")['default']
   NotificationCenter: typeof import("../../components/NotificationCenter.vue")['default']
@@ -51,6 +56,11 @@ interface _GlobalComponents {
   LazyAppShell: LazyComponent<typeof import("../../components/AppShell.vue")['default']>
   LazyBaseModal: LazyComponent<typeof import("../../components/BaseModal.vue")['default']>
   LazyConfirmModal: LazyComponent<typeof import("../../components/ConfirmModal.vue")['default']>
+  LazyCursorLoadMore: LazyComponent<typeof import("../../components/CursorLoadMore.vue")['default']>
+  LazyExportOrderPrintModal: LazyComponent<typeof import("../../components/ExportOrderPrintModal.vue")['default']>
+  LazyExportRequestPrintActionsBridge: LazyComponent<typeof import("../../components/ExportRequestPrintActionsBridge.vue")['default']>
+  LazyExportRequestPrintModal: LazyComponent<typeof import("../../components/ExportRequestPrintModal.vue")['default']>
+  LazyFilterToolbar: LazyComponent<typeof import("../../components/FilterToolbar.vue")['default']>
   LazyGlobalLoading: LazyComponent<typeof import("../../components/GlobalLoading.vue")['default']>
   LazyLoadingState: LazyComponent<typeof import("../../components/LoadingState.vue")['default']>
   LazyNotificationCenter: LazyComponent<typeof import("../../components/NotificationCenter.vue")['default']>

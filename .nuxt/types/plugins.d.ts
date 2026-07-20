@@ -14,6 +14,7 @@ type NuxtAppInjections =
   InjectionType<typeof import("../../node_modules/nuxt/dist/app/plugins/revive-payload.server.js")> &
   InjectionType<typeof import("../../node_modules/nuxt/dist/app/plugins/chunk-reload.client.js")> &
   InjectionType<typeof import("../../node_modules/nuxt/dist/pages/runtime/plugins/prefetch.client.js")> &
+  InjectionType<typeof import("../../plugins/authorization-refresh.client")> &
   InjectionType<typeof import("../../plugins/firebase.client")> &
   InjectionType<typeof import("../../node_modules/nuxt/dist/pages/runtime/plugins/prerender.server.js")>
 

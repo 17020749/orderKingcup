@@ -88,3 +88,15 @@ firebase deploy --only firestore:rules
 - Thêm các helper chuyên biệt cho `order_export_requests.create`, `order_export_requests.update` và `orders.update` dạng warehouse summary để tránh gọi lồng `hasPerm()` / `isAdmin()` / `ownsOrderById()` nhiều lần.
 - `activity_logs.create` chỉ kiểm tra email người thao tác khớp Firebase Auth, tránh thêm một lần đọc user document trong cùng batch. Log vẫn không được coi là audit tuyệt đối nếu không có backend tin cậy.
 - Không thay đổi code Nuxt; bản vá này chỉ thay `firestore.rules` và tài liệu ghi chú.
+
+
+## Phase 5 - Activity Log and Notification hardening
+
+- `activity_logs.create` now requires an active account, authenticated actor identity, server time, bounded string fields and bounded JSON text fields.
+- Client Activity Logs are append-only: client update and delete are denied, including for admins. This remains a client-generated trace and is not an absolute audit trail; a trusted backend is required for that guarantee.
+- Direct reads of `activity_logs` require `activity_logs.view` (absolute admins inherit it through the existing permission helper).
+- Notification types, routes and `entity_collection` are allowlisted for the existing `order_export_requests` workflow.
+- Direct recipients must match the Sale/owner identity stored on the referenced export request; audience notifications are limited to the exact Warehouse permission set.
+- Notification creation requires an active creator, a matching business permission and a request state/actor compatible with the notification type.
+- Recipients and admins may only advance read/seen fields. Normal users cannot delete notifications; admins retain explicit delete access.
+- Firestore emulator tests cover allow/deny cases for disabled and anonymous users, forged actors/recipients, timestamps, payload limits, append-only logs, read permissions, immutable notification fields and role-specific notification creation.

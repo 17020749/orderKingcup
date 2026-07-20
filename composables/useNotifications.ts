@@ -20,6 +20,43 @@ export const WAREHOUSE_NOTIFICATION_PERMISSIONS = [
   'export_requests.process',
 ]
 
+export const WAREHOUSE_NOTIFICATION_TYPES = [
+  'warehouse_export_request_created',
+  'warehouse_export_request_updated',
+  'warehouse_export_request_accepted',
+  'warehouse_export_request_rejected',
+  'warehouse_export_request_released',
+  'warehouse_export_request_cancelled',
+] as const
+
+const AUDIENCE_NOTIFICATION_TYPES = new Set([
+  'warehouse_export_request_created',
+  'warehouse_export_request_updated',
+])
+const DIRECT_NOTIFICATION_TYPES = new Set([
+  'warehouse_export_request_accepted',
+  'warehouse_export_request_rejected',
+  'warehouse_export_request_released',
+  'warehouse_export_request_cancelled',
+])
+const NOTIFICATION_ENTITY_COLLECTION = 'order_export_requests'
+const AUDIENCE_ROUTE = '/warehouse-export-requests'
+const DIRECT_ROUTE = '/export-requests'
+const MAX_NOTIFICATION_METADATA_LENGTH = 20_000
+
+function boundedNotificationText(value: any, label: string, maxLength: number) {
+  const text = String(value || '').trim()
+  if (!text) throw new Error(`${label} không được để trống.`)
+  if (text.length > maxLength) throw new Error(`${label} vượt quá ${maxLength} ký tự.`)
+  return text
+}
+
+function exactWarehousePermissions(value: string[]) {
+  const permissions = Array.from(new Set(value.filter(Boolean)))
+  return permissions.length === WAREHOUSE_NOTIFICATION_PERMISSIONS.length
+    && WAREHOUSE_NOTIFICATION_PERMISSIONS.every(permission => permissions.includes(permission))
+}
+
 export interface NotificationPayloadInput {
   type: string
   title: string
@@ -53,19 +90,63 @@ export function resolveSaleNotificationRecipients(input: SaleNotificationRecipie
 }
 
 export function buildNotificationPayload(input: NotificationPayloadInput) {
+  const type = String(input.type || '').trim()
+  const audienceType = AUDIENCE_NOTIFICATION_TYPES.has(type)
+  const directType = DIRECT_NOTIFICATION_TYPES.has(type)
+  if (!audienceType && !directType) throw new Error('Loại thông báo không được phép.')
+
+  const title = boundedNotificationText(input.title, 'Tiêu đề thông báo', 200)
+  const message = boundedNotificationText(input.message, 'Nội dung thông báo', 2_000)
+  const route = String(input.route || '').trim()
+  const entityCollection = String(input.entity_collection || '').trim()
+  const entityId = String(input.entity_id || '').trim()
+  const entityCode = String(input.entity_code || '').trim()
+  const createdBy = normalizeEmail(input.created_by)
+  const toEmail = normalizeEmail(input.to_email || '')
+  const audience = String(input.audience || '').trim()
+  const audiencePermissions = Array.from(new Set((input.audience_permissions || []).filter(Boolean)))
+
+  if (!createdBy) throw new Error('Không xác định được người tạo thông báo.')
+  if (entityCollection !== NOTIFICATION_ENTITY_COLLECTION) throw new Error('Collection đích của thông báo không hợp lệ.')
+  if (!/^[A-Za-z0-9._:-]{1,200}$/.test(entityId)) throw new Error('ID đối tượng của thông báo không hợp lệ.')
+  if (entityCode.length > 200) throw new Error('Mã đối tượng của thông báo quá dài.')
+
+  if (audienceType) {
+    if (route !== AUDIENCE_ROUTE) throw new Error('Route thông báo tới Kho không hợp lệ.')
+    if (toEmail) throw new Error('Thông báo audience không được chỉ định recipient trực tiếp.')
+    if (audience !== 'warehouse_export') throw new Error('Audience thông báo không hợp lệ.')
+    if (!exactWarehousePermissions(audiencePermissions)) throw new Error('Danh sách quyền audience không hợp lệ.')
+  }
+
+  if (directType) {
+    if (route !== DIRECT_ROUTE) throw new Error('Route thông báo tới Sale không hợp lệ.')
+    if (!toEmail) throw new Error('Thông báo trực tiếp phải có recipient.')
+    if (audience || audiencePermissions.length) throw new Error('Thông báo trực tiếp không được chứa audience.')
+  }
+
+  let metadataJson = '{}'
+  try {
+    metadataJson = JSON.stringify(input.metadata || {})
+  } catch {
+    throw new Error('Metadata thông báo không thể chuyển thành JSON.')
+  }
+  if (metadataJson.length > MAX_NOTIFICATION_METADATA_LENGTH) {
+    throw new Error('Metadata thông báo vượt giới hạn cho phép.')
+  }
+
   return {
-    type: input.type,
-    title: input.title,
-    message: input.message,
-    route: input.route || '',
-    entity_collection: input.entity_collection || '',
-    entity_id: input.entity_id || '',
-    entity_code: input.entity_code || '',
-    created_by: normalizeEmail(input.created_by),
-    to_email: normalizeEmail(input.to_email || ''),
-    audience: String(input.audience || '').trim(),
-    audience_permissions: Array.from(new Set((input.audience_permissions || []).filter(Boolean))),
-    metadata_json: JSON.stringify(input.metadata || {}),
+    type,
+    title,
+    message,
+    route,
+    entity_collection: entityCollection,
+    entity_id: entityId,
+    entity_code: entityCode,
+    created_by: createdBy,
+    to_email: toEmail,
+    audience,
+    audience_permissions: audiencePermissions,
+    metadata_json: metadataJson,
     status: 'unread',
     read: false,
     active: true,

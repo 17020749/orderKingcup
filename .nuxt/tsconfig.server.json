@@ -124,6 +124,8 @@
   },
   "include": [
     "./types/nitro-nuxt.d.ts",
+    "../modules/runtime/server",
+    "../modules/dist/runtime/server",
     "../node_modules/runtime/server",
     "../node_modules/dist/runtime/server",
     "../server/**/*",
