@@ -37,7 +37,7 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Reconstruct source and apply fast-path
+      - name: Reconstruct source and add Rules fast-path
         shell: bash
         run: |
           cat .phase4-transfer/chunk-00 .phase4-transfer/rest-00 .phase4-transfer/rest-01-* .phase4-transfer/rest-02 .phase4-transfer/rest-03-00 .phase4-transfer/rest-03-01 .phase4-transfer/rest-03-02-* > /tmp/phase4.b64
@@ -46,77 +46,15 @@ jobs:
           tar -xzf /tmp/phase4.tar.gz -C .
           python - <<'PY'
           from pathlib import Path
-          from textwrap import dedent
-
-          path = Path('composables/useScopedQueries.ts')
+          path = Path('firestore.rules')
           source = path.read_text(encoding='utf-8')
-          start = source.find("    const active = [where('active', '==', true), where('deleted', '==', false)]")
-          marker = "        exportRequests: requestCount.data().count,\n      },"
-          end = source.find(marker, start)
-          if start < 0 or end < 0: raise SystemExit('aggregate block not found')
-          end += len(marker)
-          replacement = dedent("""\
-              const active = [where('active', '==', true), where('deleted', '==', false)]
-              const activeOrders = query(collection(db, 'orders'), ...active)
-              const [orderCount, orderRevenue, orderDebt, customerCount, productCount, paymentAggregate, itemAggregate, requestCount, orderPage, paymentPage] = await Promise.all([
-                getCountFromServer(activeOrders),
-                getAggregateFromServer(activeOrders, { revenue: sum('actual_revenue') }),
-                getAggregateFromServer(activeOrders, { debt: sum('debt_amount') }),
-                getCountFromServer(query(collection(db, 'customers'), ...active)),
-                getCountFromServer(query(collection(db, 'products'), ...active)),
-                getAggregateFromServer(query(collection(db, 'payments'), ...active, where('payment_status', '==', 'Đã nhận')), { paid: sum('amount') }),
-                getAggregateFromServer(query(collection(db, 'order_items'), ...active), { profit: sum('line_profit') }),
-                getCountFromServer(query(collection(db, 'order_export_requests'), ...active)),
-                fetchOrderedPage<OrderDoc>('orders', 'created_at', null, 50),
-                fetchOrderedPage<PaymentDoc>('payments', 'payment_date', null, 50),
-              ])
-
-              return {
-                stats: {
-                  orders: orderCount.data().count,
-                  customers: customerCount.data().count,
-                  products: productCount.data().count,
-                  revenue: Number(orderRevenue.data().revenue || 0),
-                  paid: Number(paymentAggregate.data().paid || 0),
-                  debt: Number(orderDebt.data().debt || 0),
-                  profit: Number(itemAggregate.data().profit || 0),
-                  exportRequests: requestCount.data().count,
-                },
-          """)
-          path.write_text(source[:start] + replacement + source[end:], encoding='utf-8')
-
-          path = Path('tests/dashboard-aggregation.rules.test.mjs')
-          source = path.read_text(encoding='utf-8')
-          start = source.find("  const orders = await assertSucceeds(getAggregateFromServer(query(collection(db, 'orders'), ...active), {")
-          marker = "  assert.equal(orders.data().debt, 800)"
-          end = source.find(marker, start)
-          if start < 0 or end < 0: raise SystemExit('test block not found')
-          end += len(marker)
-          replacement = dedent("""\
-            const activeOrders = query(collection(db, 'orders'), ...active)
-            const orderCount = await assertSucceeds(getCountFromServer(activeOrders))
-            const orderRevenue = await assertSucceeds(getAggregateFromServer(activeOrders, { revenue: sum('actual_revenue') }))
-            const orderDebt = await assertSucceeds(getAggregateFromServer(activeOrders, { debt: sum('debt_amount') }))
-            assert.equal(orderCount.data().count, 2)
-            assert.equal(orderRevenue.data().revenue, 3000)
-            assert.equal(orderDebt.data().debt, 800)
-          """)
-          path.write_text(source[:start] + replacement + source[end:], encoding='utf-8')
-
-          rules_path = Path('firestore.rules')
-          rules = rules_path.read_text(encoding='utf-8')
-          old = """    match /orders/{docId} {
-              allow read: if hasPerm('orders.view_all')
-          """.replace('\n              ', '\n      ')
-          new = """    match /orders/{docId} {
-              // Admin aggregation queries need a short authorization path to stay
-              // below the Firestore Rules 1,000-expression evaluation budget.
-              allow read: if isAdmin()
-                || hasPerm('orders.view_all')
-          """.replace('\n              ', '\n      ').replace('\n                ', '\n        ')
-          if old not in rules: raise SystemExit('orders read rule not found')
-          rules_path.write_text(rules.replace(old, new, 1), encoding='utf-8')
+          old = "    match /orders/{docId} {\n      allow read: if hasPerm('orders.view_all')"
+          new = "    match /orders/{docId} {\n      // Admin aggregation queries need a short authorization path to stay\n      // below the Firestore Rules 1,000-expression evaluation budget.\n      allow read: if isAdmin()\n        || hasPerm('orders.view_all')"
+          if old not in source:
+              raise SystemExit('orders read rule not found')
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
           PY
+          git diff --check
 
       - run: npm ci --ignore-scripts --no-audit --no-fund
 
