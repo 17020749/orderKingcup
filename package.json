@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "npm@10.9.2",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0 <23",
+    "npm": ">=10.9.0 <11"
+  },
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
