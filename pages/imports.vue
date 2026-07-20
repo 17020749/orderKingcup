@@ -14,10 +14,12 @@ import {
   todayKey,
 } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 
 const {
-  loadImportOrders,
-  loadImportOrderItems,
+  loadImportOrdersPage,
+  loadImportOrderItemsForOrders,
   loadProducts,
   loadWarehouses,
   loadSuppliers,
@@ -36,6 +38,11 @@ const supplierFilter = ref('')
 const warehouseFilter = ref('')
 const statusFilter = ref('')
 const rows = ref<ImportOrderDoc[]>([])
+const PAGE_SIZE = 50
+const pageCursor = shallowRef<any>(null)
+const hasMoreRows = ref(false)
+const pageMode = ref<'cursor' | 'full'>('cursor')
+const loadingMore = ref(false)
 const items = ref<ImportOrderItemDoc[]>([])
 const products = ref<ProductDoc[]>([])
 const warehouses = ref<WarehouseDoc[]>([])
@@ -341,27 +348,36 @@ async function saveImportOrder() {
   }
 }
 
-async function loadRows(force = false) {
-  loading.value = true
+async function loadRows(force = false, append = false) {
+  if (append && (!hasMoreRows.value || loadingMore.value)) return
+  if (append) loadingMore.value = true
+  else loading.value = true
   try {
-    const [orderRows, itemRows, productRows, warehouseRows, supplierRows] = await Promise.all([
-      loadImportOrders(force),
-      loadImportOrderItems(force),
-      loadProducts(force),
-      loadWarehouses(force),
-      loadSuppliers(force),
-    ])
-    rows.value = orderRows
-    items.value = itemRows
-    products.value = productRows
-    warehouses.value = warehouseRows
-    suppliers.value = supplierRows
+    const pagePromise = loadImportOrdersPage(append ? pageCursor.value : null, PAGE_SIZE)
+    const referencesPromise = append
+      ? Promise.resolve([products.value, warehouses.value, suppliers.value] as const)
+      : Promise.all([loadProducts(force), loadWarehouses(force), loadSuppliers(force)])
+    const [page, [productRows, warehouseRows, supplierRows]] = await Promise.all([pagePromise, referencesPromise])
+    const itemRows = await loadImportOrderItemsForOrders(page.rows)
+    rows.value = append ? appendUniqueRows(rows.value, page.rows) : page.rows
+    items.value = append ? appendUniqueRows(items.value, itemRows) : itemRows
+    if (!append) {
+      products.value = productRows
+      warehouses.value = warehouseRows
+      suppliers.value = supplierRows
+    }
+    pageCursor.value = page.cursor
+    hasMoreRows.value = page.hasMore
+    pageMode.value = page.mode
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được phiếu nhập kho.'), 'error')
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
 }
+
+async function loadMoreRows() { await loadRows(false, true) }
 
 onMounted(() => loadRows())
 </script>
@@ -427,6 +443,7 @@ onMounted(() => loadRows())
           </tbody>
         </table>
       </div>
+      <CursorLoadMore :loaded-count="rows.length" :has-more="hasMoreRows" :loading="loadingMore" :mode="pageMode" @load-more="loadMoreRows" />
     </div>
 
     <BaseModal
