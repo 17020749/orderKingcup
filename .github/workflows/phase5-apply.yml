@@ -47,6 +47,20 @@ jobs:
           ref: security/phase-5-activity-notifications
           fetch-depth: 0
 
+      - name: Align exact regression fixture count
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('.phase5-apply/apply.py')
+          text = path.read_text(encoding='utf-8')
+          old = '    2,\n    f"{path} activity timestamps",'
+          new = '    4,\n    f"{path} activity timestamps",'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one fixture-count marker, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Apply exact source patch
         id: apply
         continue-on-error: true
