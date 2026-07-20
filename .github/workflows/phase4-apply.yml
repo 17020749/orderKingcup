@@ -120,29 +120,27 @@ jobs:
       - name: Firestore Rules and concurrency tests
         run: npm run test:rules
 
-      - name: Commit verified safe Phase 4 completion
+      - name: Commit verified safe Phase 4 source
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm -rf .phase4-transfer
-          rm -f .github/workflows/phase4-apply.yml
-          git add -A
+          git add \
+            components/CursorLoadMore.vue \
+            composables/useScopedQueries.ts \
+            docs/cursor-pagination-dashboard.md \
+            package.json \
+            pages/orders.vue \
+            pages/payments.vue \
+            pages/invoices.vue \
+            pages/shipments.vue \
+            pages/imports.vue \
+            pages/exports.vue \
+            pages/inventory-adjustments.vue \
+            tests/cursor-pagination.test.mjs \
+            tests/order-items-by-order.client.test.mjs \
+            utils/cursorPagination.mjs
           git diff --cached --check
-
-          unexpected=0
-          while IFS= read -r path; do
-            case "$path" in
-              components/CursorLoadMore.vue|composables/useScopedQueries.ts|docs/cursor-pagination-dashboard.md|package.json|pages/orders.vue|pages/payments.vue|pages/invoices.vue|pages/shipments.vue|pages/imports.vue|pages/exports.vue|pages/inventory-adjustments.vue|tests/cursor-pagination.test.mjs|tests/order-items-by-order.client.test.mjs|utils/cursorPagination.mjs|.github/workflows/phase4-apply.yml|.phase4-transfer/*)
-                ;;
-              *)
-                echo "Unexpected Phase 4 path: $path"
-                unexpected=1
-                ;;
-            esac
-          done < <(git diff --cached --name-only)
-          test "$unexpected" -eq 0
           test -z "$(git diff --cached --name-only -- firestore.rules firestore.indexes.json package-lock.json pages/dashboard.vue)"
-
           git commit -m 'perf(firestore): complete cursor pagination rollout'
           git push origin HEAD:fix/phase-4-completion
