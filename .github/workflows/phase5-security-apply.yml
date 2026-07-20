@@ -1,0 +1,414 @@
+name: Phase 5 Security Apply
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened]
+    paths: [.phase5-trigger]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase5-security-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Verify and commit logs/notifications hardening
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      NUXT_PUBLIC_FIREBASE_API_KEY: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ci.invalid
+      NUXT_PUBLIC_FIREBASE_PROJECT_ID: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+      NUXT_PUBLIC_FIREBASE_APP_ID: '1:000000000000:web:0000000000000000000000'
+      NUXT_PUBLIC_APP_NAME: KINGCUP CI
+
+    steps:
+      - name: Checkout Phase 5 branch
+        uses: actions/checkout@v4
+        with:
+          ref: security/phase-5-logs-notifications
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Pin npm
+        run: npm install --global npm@10.9.2 --no-audit --no-fund
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Apply Phase 5 Rules hardening
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          rules_path = Path('firestore.rules')
+          rules = rules_path.read_text(encoding='utf-8')
+
+          old_helper = re.compile(
+              r"    function notificationCreateTargetIsValid\(\) \{.*?\n    \}\n",
+              re.S,
+          )
+          new_helper = r'''    function notificationRequestRecipientMatches(data) {
+              let requestId = data.get('entity_id', '');
+              let directEmail = data.get('to_email', '');
+              let path = /databases/$(database)/documents/order_export_requests/$(requestId);
+              let requestData = get(path).data;
+              return data.get('entity_collection', '') == 'order_export_requests'
+                && requestId is string
+                && requestId != ''
+                && directEmail is string
+                && directEmail != ''
+                && directEmail == directEmail.lower()
+                && exists(path)
+                && (
+                  emailFieldEquals(requestData, 'requested_by', directEmail)
+                  || emailFieldEquals(requestData, 'created_by', directEmail)
+                  || emailFieldEquals(requestData, 'order_sale_email', directEmail)
+                );
+            }
+
+            function notificationDirectCreatorAllowed(data) {
+              let type = data.get('type', '');
+              return (
+                  type == 'warehouse_export_request_accepted'
+                  && hasPerm('export_requests.accept')
+                )
+                || (
+                  type == 'warehouse_export_request_rejected'
+                  && hasPerm('export_requests.reject')
+                )
+                || (
+                  type == 'warehouse_export_request_released'
+                  && hasPerm('export_requests.release')
+                )
+                || (
+                  type == 'warehouse_export_request_cancelled'
+                  && hasAnyPerm(['export_requests.release', 'export_requests.process'])
+                );
+            }
+
+            function notificationDirectTargetIsValid(data) {
+              return data.get('audience', '') == ''
+                && data.get('audience_permissions', []) is list
+                && data.get('audience_permissions', []).size() == 0
+                && notificationDirectCreatorAllowed(data)
+                && notificationRequestRecipientMatches(data);
+            }
+
+            function notificationBroadcastTargetIsValid(data) {
+              let type = data.get('type', '');
+              return data.get('to_email', '') == ''
+                && data.get('audience', '') == 'warehouse_export'
+                && data.get('audience_permissions', []) == [
+                  'export_requests.accept',
+                  'export_requests.reject',
+                  'export_requests.release',
+                  'export_requests.process'
+                ]
+                && [
+                  'warehouse_export_request_created',
+                  'warehouse_export_request_updated'
+                ].hasAny([type])
+                && hasPerm('orders.warehouse_export');
+            }
+
+            function notificationCreatePayloadIsValid(data) {
+              return data.get('type', '') is string
+                && data.get('type', '') != ''
+                && data.get('title', '') is string
+                && data.get('title', '') != ''
+                && data.get('message', '') is string
+                && data.get('message', '') != ''
+                && ownEmailField(data, 'created_by')
+                && data.get('status', 'unread') == 'unread'
+                && data.get('read', false) != true
+                && data.get('is_read', false) != true
+                && data.get('seen', false) != true
+                && data.get('active', true) == true
+                && data.get('deleted', false) != true;
+            }
+
+            function notificationCreateTargetIsValid() {
+              return notificationCreatePayloadIsValid(request.resource.data)
+                && (
+                  notificationDirectTargetIsValid(request.resource.data)
+                  || notificationBroadcastTargetIsValid(request.resource.data)
+                );
+            }
+
+            function notificationVisibleToCurrentUser(data) {
+              return activeUser()
+                && (
+                  ownEmailField(data, 'to_email')
+                  || notificationAudienceMatches(data)
+                );
+            }
+
+            function notificationIsRead(data) {
+              return data.get('read', false) == true
+                || data.get('is_read', false) == true
+                || data.get('seen', false) == true
+                || ['read', 'seen'].hasAny([data.get('status', '')]);
+            }
+
+            function notificationReadUpdateIsValid() {
+              return unchanged([
+                  'type',
+                  'title',
+                  'message',
+                  'route',
+                  'entity_collection',
+                  'entity_id',
+                  'entity_code',
+                  'created_by',
+                  'to_email',
+                  'audience',
+                  'audience_permissions',
+                  'metadata_json',
+                  'created_at',
+                  'active',
+                  'deleted'
+                ])
+                && onlyChanged([
+                  'read',
+                  'is_read',
+                  'read_at',
+                  'seen',
+                  'seen_at',
+                  'status',
+                  'updated_at'
+                ])
+                && notificationIsRead(request.resource.data);
+            }
+
+            function notificationReadMarkerTargetsVisibleNotification(docId) {
+              let notificationId = request.resource.data.get('notification_id', '');
+              let path = /databases/$(database)/documents/notifications/$(notificationId);
+              return notificationId is string
+                && notificationId != ''
+                && request.resource.data.get('id', '') == docId
+                && request.resource.data.get('user_email', '') == email()
+                && docId == notificationId + '__' + email()
+                && exists(path)
+                && notificationVisibleToCurrentUser(get(path).data);
+            }
+'''
+          rules, count = old_helper.subn(new_helper, rules, count=1)
+          if count != 1:
+              raise SystemExit('notificationCreateTargetIsValid helper block not found exactly once')
+
+          old_activity = '''    match /activity_logs/{docId} {
+              allow read: if hasPerm('activity_logs.view');
+
+              // Rules can guarantee the authenticated actor email. A fully tamper-
+              // proof audit trail still requires a trusted backend trigger.
+              allow create: if signedIn()
+                && ownEmailField(request.resource.data, 'changed_by');
+
+              allow update, delete: if isAdmin();
+            }
+'''.replace('\n              ', '\n      ').replace('\n                ', '\n        ')
+          new_activity = '''    match /activity_logs/{docId} {
+              allow read: if hasPerm('activity_logs.view');
+
+              // Client audit entries are append-only. Rules bind the actor and
+              // require the core audit shape; a backend trigger remains the only
+              // way to prove that every business mutation emitted a log.
+              allow create: if activeUser()
+                && ownEmailField(request.resource.data, 'changed_by')
+                && request.resource.data.get('module', '') is string
+                && request.resource.data.get('module', '') != ''
+                && request.resource.data.get('action', '') is string
+                && request.resource.data.get('action', '') != ''
+                && request.resource.data.get('created_at', null) != null
+                && request.resource.data.get('active', true) == true
+                && request.resource.data.get('deleted', false) != true;
+
+              allow update, delete: if false;
+            }
+'''.replace('\n              ', '\n      ').replace('\n                ', '\n        ')
+          if old_activity not in rules:
+              raise SystemExit('activity_logs match block not found')
+          rules = rules.replace(old_activity, new_activity, 1)
+
+          old_notifications = '''    match /notifications/{docId} {
+              allow read: if isAdmin()
+                || (
+                  activeUser()
+                  && (
+                    ownEmailField(resource.data, 'to_email')
+                    || notificationAudienceMatches(resource.data)
+                  )
+                );
+
+              allow create: if activeUser()
+                && ownEmailField(request.resource.data, 'created_by')
+                && notificationCreateTargetIsValid();
+
+              // Direct recipients may still update legacy read fields. Broadcast
+              // notifications use notification_reads so each warehouse user has an
+              // independent read state.
+              allow update: if isAdmin()
+                || (
+                  activeUser()
+                  && ownEmailField(resource.data, 'to_email')
+                  && unchanged(['to_email', 'audience', 'audience_permissions', 'created_by', 'created_at'])
+                  && onlyChanged([
+                    'read',
+                    'is_read',
+                    'read_at',
+                    'seen',
+                    'seen_at',
+                    'status',
+                    'updated_at'
+                  ])
+                );
+
+              allow delete: if isAdmin();
+            }
+'''.replace('\n              ', '\n      ').replace('\n                ', '\n        ').replace('\n                  ', '\n          ')
+          new_notifications = '''    match /notifications/{docId} {
+              allow read: if isAdmin()
+                || notificationVisibleToCurrentUser(resource.data);
+
+              allow create: if activeUser()
+                && notificationCreateTargetIsValid();
+
+              // Notification content and routing are immutable after creation.
+              // A direct recipient or admin may only move the read state forward.
+              allow update: if notificationReadUpdateIsValid()
+                && (
+                  isAdmin()
+                  || (
+                    activeUser()
+                    && ownEmailField(resource.data, 'to_email')
+                  )
+                );
+
+              allow delete: if isAdmin();
+            }
+'''.replace('\n              ', '\n      ').replace('\n                ', '\n        ').replace('\n                  ', '\n          ')
+          if old_notifications not in rules:
+              raise SystemExit('notifications match block not found')
+          rules = rules.replace(old_notifications, new_notifications, 1)
+
+          old_reads = '''    match /notification_reads/{docId} {
+              allow read: if activeUser()
+                && ownEmailField(resource.data, 'user_email');
+
+              allow create: if activeUser()
+                && ownEmailField(request.resource.data, 'user_email')
+                && request.resource.data.get('notification_id', '') is string
+                && request.resource.data.get('notification_id', '') != '';
+
+              allow update: if activeUser()
+                && ownEmailField(resource.data, 'user_email')
+                && ownEmailField(request.resource.data, 'user_email')
+                && unchanged(['notification_id', 'user_email'])
+                && onlyChanged(['read_at', 'created_at', 'updated_at', 'active', 'deleted']);
+
+              allow delete: if isAdmin();
+            }
+'''.replace('\n              ', '\n      ').replace('\n                ', '\n        ')
+          new_reads = '''    match /notification_reads/{docId} {
+              allow read: if activeUser()
+                && ownEmailField(resource.data, 'user_email');
+
+              allow create: if activeUser()
+                && ownEmailField(request.resource.data, 'user_email')
+                && notificationReadMarkerTargetsVisibleNotification(docId)
+                && request.resource.data.get('active', true) == true
+                && request.resource.data.get('deleted', false) != true;
+
+              allow update: if activeUser()
+                && ownEmailField(resource.data, 'user_email')
+                && ownEmailField(request.resource.data, 'user_email')
+                && notificationReadMarkerTargetsVisibleNotification(docId)
+                && unchanged(['id', 'notification_id', 'user_email'])
+                && onlyChanged(['read_at', 'created_at', 'updated_at', 'active', 'deleted'])
+                && request.resource.data.get('active', true) == true
+                && request.resource.data.get('deleted', false) != true;
+
+              allow delete: if isAdmin();
+            }
+'''.replace('\n              ', '\n      ').replace('\n                ', '\n        ')
+          if old_reads not in rules:
+              raise SystemExit('notification_reads match block not found')
+          rules = rules.replace(old_reads, new_reads, 1)
+          rules_path.write_text(rules, encoding='utf-8')
+
+          tests_path = Path('tests/firestore.rules.test.mjs')
+          tests = tests_path.read_text(encoding='utf-8')
+          old_permissions = "['export_requests.accept', 'export_requests.reject', 'export_requests.release']"
+          new_permissions = "['export_requests.accept', 'export_requests.reject', 'export_requests.release', 'export_requests.process']"
+          if tests.count(old_permissions) < 2:
+              raise SystemExit('Expected warehouse audience permission fixtures were not found')
+          tests = tests.replace(old_permissions, new_permissions)
+
+          marker_start = "test('Mỗi user chỉ được tạo và đọc trạng thái đã đọc của chính mình'"
+          marker_end = "\n\ntest('Sale sửa yêu cầu được gửi broadcast cập nhật cho đúng nhóm Kho xử lý'"
+          start = tests.find(marker_start)
+          end = tests.find(marker_end, start)
+          if start < 0 or end < 0:
+              raise SystemExit('notification_reads regression test block not found')
+          block = tests[start:end]
+          block = block.replace('notification-warehouse-a', 'notification-a')
+          tests = tests[:start] + block + tests[end:]
+          tests_path.write_text(tests, encoding='utf-8')
+
+          package_path = Path('package.json')
+          package = json.loads(package_path.read_text(encoding='utf-8'))
+          token = ' tests/logs-notifications-security.rules.test.mjs'
+          if token not in package['scripts']['test:rules']:
+              package['scripts']['test:rules'] = package['scripts']['test:rules'].replace(
+                  ' tests/firestore.rules.test.mjs',
+                  ' tests/firestore.rules.test.mjs' + token,
+                  1,
+              )
+          package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+          git diff --check
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Prepare Nuxt
+        run: npx --no-install nuxi prepare
+
+      - name: Build
+        run: npm run build
+
+      - name: Generate static site
+        run: npm run generate
+
+      - name: Firestore Rules and concurrency tests
+        run: npm run test:rules
+
+      - name: Commit verified Phase 5 source
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add firestore.rules package.json tests/firestore.rules.test.mjs tests/logs-notifications-security.rules.test.mjs
+          git diff --cached --check
+          test -z "$(git diff --cached --name-only -- firestore.indexes.json package-lock.json)"
+          git commit -m 'security(firestore): harden logs and notifications rules'
+          git push origin HEAD:security/phase-5-logs-notifications
