@@ -24,6 +24,20 @@ const selectedDetail = ref<ShipmentDoc | null>(null)
 const editing = ref<ShipmentDoc | null>(null)
 const form = reactive<any>({})
 
+const filterValues = computed(() => ({ status: shippingStatusFilter.value, carrier: carrierFilter.value, from: dateFrom.value, to: dateTo.value }))
+const toolbarFilters = computed(() => [
+  { key: 'status', label: 'Trạng thái giao', allLabel: 'Tất cả trạng thái', options: ['Chờ giao', 'Đang giao', 'Đã giao', 'Giao thất bại', 'Hoàn hàng'].map(value => ({ label: value, value })) },
+  { key: 'carrier', label: 'Nhà vận chuyển', allLabel: 'Tất cả nhà vận chuyển', options: carrierOptions.value.map(value => ({ label: value, value })) },
+  { key: 'from', label: 'Từ ngày', type: 'date' as const },
+  { key: 'to', label: 'Đến ngày', type: 'date' as const },
+])
+function updateFilter(key: string, value: string) {
+  if (key === 'status') shippingStatusFilter.value = value
+  if (key === 'carrier') carrierFilter.value = value
+  if (key === 'from') dateFrom.value = value
+  if (key === 'to') dateTo.value = value
+}
+
 function dateKey(value: any) {
   return String(value || '').slice(0, 10)
 }
@@ -174,7 +188,8 @@ onMounted(() => loadRows())
       <button v-if="hasPermission('shipments.create') || hasPermission('*')" class="btn primary" @click="openModal()">+ Thêm vận chuyển</button>
     </PageHeader>
     <div class="card" style="margin: 24px;">
-      <div class="toolbar">
+      <FilterToolbar v-model:search="search" search-placeholder="Tìm đơn, nhà vận chuyển, mã vận đơn..." :filters="toolbarFilters" :values="filterValues" :result-count="filtered.length" :loading="loading" show-refresh @update:filter="updateFilter" @reset="resetFilters" @refresh="loadRows(true)" />
+      <div v-if="false" class="toolbar">
         <input v-model="search" class="input" placeholder="Tìm đơn, nhà vận chuyển, mã vận đơn..." />
         <select v-model="shippingStatusFilter" class="select"><option value="">Tất cả trạng thái</option><option>Chờ giao</option><option>Đang giao</option><option>Đã giao</option><option>Giao thất bại</option><option>Hoàn hàng</option></select>
         <select v-model="carrierFilter" class="select"><option value="">Tất cả nhà vận chuyển</option><option v-for="value in carrierOptions" :key="value" :value="value">{{ value }}</option></select>

@@ -20,7 +20,7 @@ defineEmits<{ close: []; save: [] }>();
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="$emit('close')">
+  <div class="modal-backdrop">
     <div class="modal" :class="`modal-${size}`">
       <div class="modal-header">
         <h3 style="margin: 0">{{ title }}</h3>
