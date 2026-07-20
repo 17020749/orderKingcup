@@ -24,18 +24,15 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
 
-      - name: Normalize npm lockfile and CI workflow
+      - name: Normalize npm lockfile registry
         shell: bash
         run: |
           node <<'NODE'
           const fs = require('node:fs')
 
           const lockPath = 'package-lock.json'
-          const workflowPath = '.github/workflows/warehouse-ci.yml'
-          const bootstrapPath = '.github/workflows/phase1-npm-bootstrap.yml'
           const internalPrefix = 'https://packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/npm/npm-public/'
           const registryPrefix = 'https://registry.npmjs.org/'
-
           const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'))
           const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
           const versionsBefore = new Map(
@@ -62,44 +59,20 @@ jobs:
             }
           }
 
-          let workflow = fs.readFileSync(workflowPath, 'utf8')
-          workflow = workflow.replaceAll(
-            "          node-version: '20.19.4'\n",
-            "          node-version: '20.19.4'\n          cache: npm\n          cache-dependency-path: package-lock.json\n",
-          )
-          workflow = workflow.replaceAll(
-            "      - name: Setup pnpm\n        uses: pnpm/action-setup@v4\n        with:\n          version: '9.15.9'\n          run_install: false\n\n",
-            "      - name: Pin npm\n        run: npm install --global npm@10.9.2 --no-audit --no-fund\n\n",
-          )
-          workflow = workflow.replaceAll(
-            'pnpm install --no-frozen-lockfile --ignore-scripts',
-            'npm ci --ignore-scripts --no-audit --no-fund',
-          )
-          workflow = workflow.replaceAll('pnpm exec nuxi prepare', 'npx --no-install nuxi prepare')
-          workflow = workflow.replaceAll('pnpm run ', 'npm run ')
-          workflow = workflow.replaceAll('pnpm exec firebase deploy', 'npx --no-install firebase deploy')
-
-          if (workflow.includes('pnpm')) {
-            throw new Error('warehouse-ci.yml still contains pnpm references')
-          }
-          fs.writeFileSync(workflowPath, workflow)
-          fs.rmSync(bootstrapPath)
-
           console.log(`Normalized ${replacements} internal registry URLs`)
           NODE
 
-      - name: Verify generated diff
+      - name: Verify generated lockfile
         shell: bash
         run: |
           test "$(grep -c 'applied-caas-gateway1.internal.api.openai.org' package-lock.json || true)" = '0'
-          test "$(grep -c 'pnpm' .github/workflows/warehouse-ci.yml || true)" = '0'
           git diff --check
 
-      - name: Commit normalized npm toolchain
+      - name: Commit normalized lockfile
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package-lock.json .github/workflows/warehouse-ci.yml .github/workflows/phase1-npm-bootstrap.yml
-          git commit -m 'chore(deps): normalize npm lockfile and CI'
+          git add package-lock.json
+          git commit -m 'chore(deps): normalize npm lockfile registry'
           git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
