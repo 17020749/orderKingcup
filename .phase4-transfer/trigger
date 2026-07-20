@@ -1,1 +1,1 @@
-apply safe phase 4 cursor completion
+rerun safe completion with corrected cursor tests
