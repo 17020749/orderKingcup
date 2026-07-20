@@ -1352,9 +1352,9 @@ tr:hover td {
 .nav a.router-link-active,
 .nav a:hover { background: #1d2d46; color: #fff; }
 .nav a.router-link-active {
-  background: linear-gradient(90deg, #f59e0b 0%, #e98708 100%);
-  color: #152238;
-  box-shadow: 0 6px 16px rgba(245, 158, 11, 0.18);
+  background: linear-gradient(90deg, #2563eb 0%, #1d4ed8 100%);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.28);
   font-weight: 800;
 }
 .nav a:hover { transform: translateX(2px); }
@@ -1368,7 +1368,7 @@ tr:hover td {
   line-height: 1;
   text-align: center;
 }
-.nav a.router-link-active .nav-icon { color: #152238; }
+.nav a.router-link-active .nav-icon { color: #fff; }
 .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-section { padding: 4px 0; border-radius: 11px; }
 .nav-section.active { border-color: rgba(148, 163, 184, 0.12); background: rgba(30, 45, 70, 0.34); }
