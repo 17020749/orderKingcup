@@ -70,7 +70,7 @@ jobs:
         if: steps.apply.outcome == 'failure'
         run: |
           cat .phase5-apply/last-run.log
-          git config user.name "github-actions[bot]]"
+          git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f .phase5-apply/last-run.log
           git commit -m "chore: capture phase 5 apply failure"
@@ -133,6 +133,12 @@ jobs:
               "    status: 'read', read_at: 'now', updated_at: 'now'",
               "    status: 'read', read_at: serverTimestamp(), updated_at: serverTimestamp()",
               'notification read timestamp fixture',
+          )
+          test_text = replace_once(
+              test_text,
+              "    changed_by: PRINTING, created_at: 'now', active: true, deleted: false",
+              "    changed_by: PRINTING, created_at: serverTimestamp(), active: true, deleted: false",
+              'printing activity timestamp fixture',
           )
 
           old_created = '''  await assertSucceeds(setDoc(doc(saleDb, 'notifications', 'notification-sale-created'), {
