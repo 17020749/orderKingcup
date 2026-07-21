@@ -2181,7 +2181,6 @@ service cloud.firestore {
             )
           )
         );
-
       allow create: if hasPerm('shipments.create')
         && relationCreateBase(request.resource.data.order_id)
         && relationParentMarkerMatches(
