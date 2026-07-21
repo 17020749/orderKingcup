@@ -2,12 +2,6 @@ name: Apply Background Order Lock Reconciliation
 # One-shot guarded runner; removed after successful verification.
 
 on:
-  push:
-    branches:
-      - fix/background-order-lock-reconciliation
-    paths:
-      - scripts/apply-background-order-lock-reconciliation.mjs
-      - .github/workflows/apply-background-order-lock-reconciliation.yml
   pull_request:
     branches:
       - dev
@@ -19,8 +13,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-background-order-lock-reconciliation
-  cancel-in-progress: false
+  group: apply-background-order-lock-reconciliation-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   apply:
