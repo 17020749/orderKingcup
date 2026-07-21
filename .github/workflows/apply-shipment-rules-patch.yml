@@ -31,38 +31,42 @@ jobs:
 
           path = Path('firestore.rules')
           source = path.read_text(encoding='utf-8')
-          old = """    match /shipments/{docId} {
-            allow read: if isAdmin()
-              || (
-                hasPerm('shipments.view')
-                && (
-                  ownsOrderChildData(resource.data)
-                  || (
-                    resource.data.order_id is string
-                    && ownsOrderById(resource.data.order_id)
-                  )
-                )
-              );
-          """
-          new = """    match /shipments/{docId} {
-            allow read: if hasPerm('shipments.view_all')
-              || (
-                hasAnyPerm([
-                  'shipments.view',
-                  'shipments.create',
-                  'shipments.edit',
-                  'shipments.delete'
-                ])
-                && (
-                  hasPerm('orders.view_all')
-                  || ownsOrderChildData(resource.data)
-                  || (
-                    resource.data.order_id is string
-                    && ownsOrderById(resource.data.order_id)
-                  )
-                )
-              );
-          """
+          old = '\n'.join([
+            "    match /shipments/{docId} {",
+            "      allow read: if isAdmin()",
+            "        || (",
+            "          hasPerm('shipments.view')",
+            "          && (",
+            "            ownsOrderChildData(resource.data)",
+            "            || (",
+            "              resource.data.order_id is string",
+            "              && ownsOrderById(resource.data.order_id)",
+            "            )",
+            "          )",
+            "        );",
+            "",
+          ])
+          new = '\n'.join([
+            "    match /shipments/{docId} {",
+            "      allow read: if hasPerm('shipments.view_all')",
+            "        || (",
+            "          hasAnyPerm([",
+            "            'shipments.view',",
+            "            'shipments.create',",
+            "            'shipments.edit',",
+            "            'shipments.delete'",
+            "          ])",
+            "          && (",
+            "            hasPerm('orders.view_all')",
+            "            || ownsOrderChildData(resource.data)",
+            "            || (",
+            "              resource.data.order_id is string",
+            "              && ownsOrderById(resource.data.order_id)",
+            "            )",
+            "          )",
+            "        );",
+            "",
+          ])
           if old not in source:
             if new in source:
               raise SystemExit(0)
