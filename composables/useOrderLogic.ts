@@ -78,11 +78,15 @@ export function useOrderLogic() {
     const subtotal_no_vat = round2(subtotal)
     const vat_amount = round2(subtotal_no_vat * toNumber(order.vat_rate) / 100)
     const total_vat = round2(subtotal_no_vat + vat_amount)
+    const discount_amount = round2(Math.max(0, toNumber(order.discount_amount)))
+    const payable_amount = round2(Math.max(0, total_vat - discount_amount))
     return {
       items: normalized,
       subtotal_no_vat,
       vat_amount,
       total_vat,
+      discount_amount,
+      payable_amount,
       actual_revenue: total_vat,
       shipping_fee: 0,
       adjustment_amount: 0
@@ -90,9 +94,10 @@ export function useOrderLogic() {
   }
 
   function getOrderDebtBase(order: Partial<OrderDoc> = {}) {
-    const actual = toNumber(order.actual_revenue)
-    if (actual > 0) return actual
-    return toNumber(order.total_vat) || toNumber(order.subtotal_no_vat)
+    const gross = toNumber(order.actual_revenue) > 0
+      ? toNumber(order.actual_revenue)
+      : toNumber(order.total_vat) || toNumber(order.subtotal_no_vat)
+    return round2(Math.max(0, gross - Math.max(0, toNumber(order.discount_amount))))
   }
 
   function computePaymentStatus(totalOrOrder: number | Partial<OrderDoc>, payments: Partial<PaymentDoc>[]) {

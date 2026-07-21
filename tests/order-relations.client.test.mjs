@@ -38,6 +38,14 @@ test('tạo thanh toán đã nhận cập nhật count, công nợ và revision'
   assert.equal(patch.relation_updated_by, 'sale@example.com')
 })
 
+test('công nợ trừ số tiền giảm giá trước khi trừ thanh toán', () => {
+  const summary = computePaymentRelationSummary({ ...readyOrder, discount_amount: 150 }, [
+    { id: 'pay-a', payment_status: 'Đã nhận', amount: 300 },
+  ])
+  assert.equal(summary.paid_amount, 300)
+  assert.equal(summary.debt_amount, 550)
+})
+
 test('sửa trạng thái thanh toán tính lại tổng hợp từ toàn bộ phiếu hoạt động', () => {
   const summary = computePaymentRelationSummary(readyOrder, [
     { id: 'pay-a', payment_type: 'Cọc', payment_status: 'Đã nhận', amount: 200 },
@@ -139,4 +147,9 @@ test('source thật dùng transaction nguyên tử và không còn saveDoc/softD
   assert.match(orders, /orderRelationDeleteBlocker/)
   assert.match(orders, /Đồng bộ khóa liên kết đơn/)
   assert.match(orders, /relation_lock_version: 1/)
+  assert.match(orders, /discount_amount/)
+  assert.match(shipments, /SearchableSelect/)
+  assert.match(shipments, /customer_pays_shipping/)
+  assert.match(shipments, /company_shipping_revenue_mode/)
+  assert.match(shipments, /receiver_address/)
 })

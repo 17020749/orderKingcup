@@ -117,6 +117,8 @@ export interface OrderDoc {
   subtotal_no_vat?: number
   vat_amount?: number
   total_vat?: number
+  discount_amount?: number
+  payable_amount?: number
   shipping_fee?: number
   adjustment_amount?: number
   actual_revenue?: number
@@ -273,6 +275,10 @@ export interface ShipmentDoc {
   tracking_code?: string
   shipping_fee?: number
   cod_amount?: number
+  customer_pays_shipping?: boolean
+  company_pays_shipping?: boolean
+  company_shipping_revenue_mode?: 'Tính doanh thu' | 'Không tính doanh thu' | ''
+  shipping_revenue_amount?: number
   shipping_status?: string
   shipped_date?: string
   delivered_date?: string
