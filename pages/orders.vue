@@ -17,7 +17,7 @@ import { orderRelationDeleteBlocker } from '~/utils/orderRelationState.mjs'
 import { validateOrderItemEdit } from '~/utils/orderItemDependencies.mjs'
 
 const { db } = useFirebaseServices()
-const { appUser, hasPermission, isAdmin } = useAuth()
+const { appUser, hasPermission } = useAuth()
 const { calcItems, computePaymentStatus, parseLogoLines } = useOrderLogic()
 const { invalidateScopedCache } = useRepo()
 const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
@@ -30,7 +30,6 @@ const {
   loadProducts,
 } = useScopedQueries()
 const { saveOrderAtomic } = useAtomicOrderSave()
-const { reconcileOrderRelationLocks } = useAtomicOrderRelations()
 const { loadPrintingDependenciesForOrders, loadPrintingProgressForOrder } = useOrderPrintingDeleteGuard()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
@@ -798,24 +797,6 @@ async function saveOrder() {
   })
 }
 
-async function reconcileRelationLocks() {
-  if (!isAdmin.value) return showToast('Chỉ quản trị viên được đồng bộ khóa liên kết đơn.', 'error')
-  const confirmed = await askConfirm({
-    title: 'Đồng bộ khóa liên kết đơn',
-    message: 'Hệ thống sẽ đếm lại thanh toán, hóa đơn và vận chuyển đang hoạt động của tất cả đơn hàng. Dữ liệu mồ côi sẽ được báo riêng và không tự động xóa.',
-    confirmLabel: 'Đồng bộ'
-  })
-  if (!confirmed) return
-  await withLoading(async () => {
-    const result = await reconcileOrderRelationLocks()
-    await loadRows(true)
-    const orphanNote = result.orphanCount
-      ? ` Phát hiện ${result.orphanCount} chứng từ mồ côi cần quản trị viên xử lý riêng.`
-      : ''
-    showToast(`Đã đồng bộ ${result.updatedOrders} đơn hàng.${orphanNote}`, result.orphanCount ? 'info' : 'success')
-  }).catch(error => showToast(reportFirebaseError(error, 'Không đồng bộ được khóa liên kết đơn.'), 'error'))
-}
-
 async function softDeleteOrder(row: OrderDoc) {
   if (!hasPermission('orders.delete')) return showToast('Bạn không có quyền xóa đơn hàng.', 'error')
   const initialBlocker = orderDeleteBlocker(row)
@@ -912,7 +893,6 @@ onMounted(loadRows)
 <template>
   <AppShell>
     <PageHeader title="Đơn hàng" subtitle="Đơn hàng và chi tiết sản phẩm">
-      <button v-if="isAdmin" class="btn" @click="reconcileRelationLocks">Đồng bộ khóa liên kết đơn</button>
       <button v-if="hasPermission('orders.create')" class="btn primary" @click="openModal()">+ Tạo đơn hàng</button>
     </PageHeader>
 
