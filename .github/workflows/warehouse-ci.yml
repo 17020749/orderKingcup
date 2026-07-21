@@ -2,6 +2,20 @@ name: Warehouse CI
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Run tests only or deploy a Firebase environment
+        required: true
+        default: verify
+        type: choice
+        options:
+          - verify
+          - staging
+          - production
+      confirm_project_id:
+        description: For deploy, type the exact Firebase project ID; leave blank for verify
+        required: false
+        type: string
 
   pull_request:
     branches:
@@ -21,7 +35,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: warehouse-ci-${{ github.event.pull_request.number || github.ref }}
+  group: warehouse-ci-${{ github.event.pull_request.number || inputs.target || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -230,15 +244,18 @@ jobs:
   deploy_live:
     name: Deploy live Hosting and Rules
     if: >-
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.target == 'staging' || inputs.target == 'production'))
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
-      name: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
+      name: ${{ ((github.event_name == 'workflow_dispatch' && inputs.target == 'production') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'production' || 'dev' }}
     env:
-      EXPECTED_FIREBASE_PROJECT_ID: ${{ github.ref == 'refs/heads/main' && 'orderfirestore-501909' || 'kingcupmanagerstaging' }}
+      DEPLOY_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}
+      EXPECTED_FIREBASE_PROJECT_ID: ${{ ((github.event_name == 'workflow_dispatch' && inputs.target == 'production') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'orderfirestore-501909' || 'kingcupmanagerstaging' }}
 
     steps:
       - name: Checkout source
@@ -265,6 +282,36 @@ jobs:
 
       - name: Prepare Nuxt
         run: npx --no-install nuxi prepare
+
+      - name: Validate manual deployment request
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          CONFIRMED_PROJECT_ID: ${{ inputs.confirm_project_id }}
+        run: |
+          node <<'NODE'
+          const target = process.env.DEPLOY_TARGET || ''
+          const expectedProjectId = process.env.EXPECTED_FIREBASE_PROJECT_ID || ''
+          const confirmedProjectId = String(process.env.CONFIRMED_PROJECT_ID || '').trim()
+          const expectedRef = target === 'production'
+            ? 'refs/heads/main'
+            : 'refs/heads/dev'
+
+          if (process.env.GITHUB_REF !== expectedRef) {
+            console.error(
+              `::error::Manual ${target} deployment must run from ${expectedRef}; ` +
+              `selected ${process.env.GITHUB_REF || 'unknown'}`
+            )
+            process.exit(1)
+          }
+
+          if (!expectedProjectId || confirmedProjectId !== expectedProjectId) {
+            console.error(
+              `::error::Project confirmation mismatch. Expected exactly: ${expectedProjectId}`
+            )
+            process.exit(1)
+          }
+          NODE
 
       - name: Load and validate Firebase web configuration
         id: firebase_config
