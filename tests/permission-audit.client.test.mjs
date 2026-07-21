@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
   PERMISSION_SCHEMA_VERSION,
@@ -173,4 +174,13 @@ test('tổng hợp báo cáo nêu user lệch và quyền catalog chưa được
     'export_requests.view',
     'page.export_requests',
   ])
+})
+
+test('plugin tự đối soát quyền chạy ngầm, chỉ ghi các user lệch an toàn', () => {
+  const plugin = readFileSync('plugins/permission-reconciliation.client.ts', 'utf8')
+  assert.match(plugin, /auditPermissionAssignments/)
+  assert.match(plugin, /buildPermissionSyncPatch/)
+  assert.match(plugin, /row => !row\.isInSync && row\.safeToAutoSync/)
+  assert.match(plugin, /onSnapshot\(\s*collection\(db, 'roles'\)/)
+  assert.match(plugin, /if \(!authReady\.value \|\| !isAdmin\.value\) return/)
 })
