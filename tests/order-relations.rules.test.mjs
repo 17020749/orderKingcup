@@ -15,6 +15,8 @@ import {
 
 const projectId = 'demo-order-relations-step7'
 const SALE = 'sale@example.com'
+const FINANCE = 'finance@example.com'
+const SCOPED = 'scoped@example.com'
 let env
 
 function baseOrder(id = 'order-a') {
@@ -60,13 +62,13 @@ function ownership() {
   }
 }
 
-function relationMeta(module, action, documentId) {
+function relationMeta(module, action, documentId, actor = SALE) {
   return {
     relation_lock_version: 1,
     relation_last_module: module,
     relation_last_action: action,
     relation_last_document_id: documentId,
-    relation_updated_by: SALE,
+    relation_updated_by: actor,
     relation_updated_at: 'now',
     updated_at: 'now',
   }
@@ -86,6 +88,21 @@ async function seed() {
           'invoices.view', 'invoices.create', 'invoices.edit', 'invoices.delete',
           'shipments.view', 'shipments.create', 'shipments.edit', 'shipments.delete',
         ],
+      }),
+      setDoc(doc(db, 'users', FINANCE), {
+        email: FINANCE,
+        active: true,
+        deleted: false,
+        permissions_flat: [
+          'orders.view_all',
+          'payments.view_all', 'payments.create', 'payments.edit', 'payments.delete',
+        ],
+      }),
+      setDoc(doc(db, 'users', SCOPED), {
+        email: SCOPED,
+        active: true,
+        deleted: false,
+        permissions_flat: ['orders.view', 'payments.create'],
       }),
       setDoc(doc(db, 'orders', 'order-a'), baseOrder('order-a')),
       setDoc(doc(db, 'orders', 'order-zero'), baseOrder('order-zero')),
@@ -132,6 +149,52 @@ test('payment create phải ghi child và summary parent trong cùng batch', asy
     collect_count: 0,
   })
   await assertSucceeds(batch.commit())
+})
+
+test('người dùng xem toàn bộ đơn và có quyền thanh toán được thêm thanh toán cho đơn của người khác', async () => {
+  const db = env.authenticatedContext(FINANCE, { email: FINANCE }).firestore()
+  const batch = writeBatch(db)
+  batch.set(doc(db, 'payments', 'pay-finance'), {
+    id: 'pay-finance', order_id: 'order-a', order_code: 'order-a',
+    payment_type: 'Cọc', payment_status: 'Đã nhận', amount: 250,
+    created_by: FINANCE, ...ownership(), active: true, deleted: false, status: 'active',
+  })
+  batch.update(doc(db, 'orders', 'order-a'), {
+    ...relationMeta('payments', 'create', 'pay-finance', FINANCE),
+    payment_record_count: 1,
+    payment_relation_revision: 1,
+    paid_amount: 250,
+    debt_amount: 750,
+    payment_status: 'Đã cọc',
+    computed_payment_status: 'Đã cọc',
+    payment_count: 1,
+    deposit_count: 1,
+    collect_count: 0,
+  })
+  await assertSucceeds(batch.commit())
+})
+
+test('người dùng chỉ xem đơn của mình không được thêm thanh toán cho đơn người khác', async () => {
+  const db = env.authenticatedContext(SCOPED, { email: SCOPED }).firestore()
+  const batch = writeBatch(db)
+  batch.set(doc(db, 'payments', 'pay-scoped'), {
+    id: 'pay-scoped', order_id: 'order-a', order_code: 'order-a',
+    payment_type: 'Cọc', payment_status: 'Đã nhận', amount: 100,
+    created_by: SCOPED, ...ownership(), active: true, deleted: false, status: 'active',
+  })
+  batch.update(doc(db, 'orders', 'order-a'), {
+    ...relationMeta('payments', 'create', 'pay-scoped', SCOPED),
+    payment_record_count: 1,
+    payment_relation_revision: 1,
+    paid_amount: 100,
+    debt_amount: 900,
+    payment_status: 'Đã cọc',
+    computed_payment_status: 'Đã cọc',
+    payment_count: 1,
+    deposit_count: 1,
+    collect_count: 0,
+  })
+  await assertFails(batch.commit())
 })
 
 test('payment child hoặc parent summary ghi riêng đều bị từ chối', async () => {
