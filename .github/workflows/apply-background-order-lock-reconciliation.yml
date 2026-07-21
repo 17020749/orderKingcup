@@ -73,7 +73,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add background-reconciliation-test.log
+          git add -f background-reconciliation-test.log
           git commit -m "chore: capture background reconciliation test failure" || exit 0
           git push origin HEAD:fix/background-order-lock-reconciliation
 
