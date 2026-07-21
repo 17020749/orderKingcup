@@ -9,6 +9,7 @@ import {
   doc,
   getDoc,
   runTransaction,
+  serverTimestamp,
   setDoc,
 } from 'firebase/firestore'
 import assert from 'node:assert/strict'
@@ -226,7 +227,7 @@ async function atomicCreate(db, { invalidSecondItem = false } = {}) {
       operation_id: 'operation-create',
       active: true,
       deleted: false,
-      created_at: '2026-07-19T01:00:00.000Z',
+      created_at: serverTimestamp(),
     })
   })
 }
@@ -321,7 +322,7 @@ async function atomicEdit(db, { invalidNewItem = false } = {}) {
       operation_id: 'operation-edit',
       active: true,
       deleted: false,
-      created_at: '2026-07-19T02:00:00.000Z',
+      created_at: serverTimestamp(),
     })
   })
 }

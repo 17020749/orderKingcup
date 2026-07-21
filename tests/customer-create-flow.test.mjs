@@ -10,6 +10,7 @@ import {
   doc,
   getDoc,
   runTransaction,
+  serverTimestamp,
   setDoc
 } from 'firebase/firestore'
 
@@ -99,7 +100,7 @@ test('Tài khoản được phân quyền tạo khách bằng transaction nhưng
       changed_by: CREATOR,
       active: true,
       deleted: false,
-      created_at: 'now'
+      created_at: serverTimestamp()
     })
   }))
 
