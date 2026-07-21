@@ -130,6 +130,7 @@ export const PERMISSION_DEPENDENCIES = {
 
   'page.shipments': ['shipments.view', 'orders.view'],
   'shipments.view': ['page.shipments', 'orders.view'],
+  'shipments.view_all': ['page.shipments', 'orders.view_all'],
   'shipments.create': ['page.shipments', 'shipments.view', 'orders.view'],
   'shipments.edit': ['page.shipments', 'shipments.view', 'orders.view'],
   'shipments.delete': ['page.shipments', 'shipments.view', 'orders.view'],

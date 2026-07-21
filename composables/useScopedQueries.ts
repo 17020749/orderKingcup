@@ -559,7 +559,7 @@ export function useScopedQueries() {
     pageSize = 50,
     force = false,
   ): Promise<CursorPage<ShipmentDoc>> {
-    if (!isAdminUser()) return fullCursorPage(await loadScopedShipments(force))
+    if (!canAll('shipments.view_all')) return fullCursorPage(await loadScopedShipments(force))
     const page = await fetchOrderedPage<ShipmentDoc>('shipments', 'shipped_date', cursor, pageSize)
     return { ...page, rows: page.rows.filter(isActive) as ShipmentDoc[] }
   }
@@ -594,11 +594,9 @@ export function useScopedQueries() {
   async function loadScopedPaymentsForOrders(orders: OrderDoc[], force = false) {
     const orderIds = cleanIds(orders)
     if (!orderIds.length) return [] as PaymentDoc[]
-    if (!canAll('payments.view_all')) {
-      const visible = await loadScopedPayments(orders, force)
-      const allowedOrderIds = new Set(orderIds)
-      return visible.filter(payment => allowedOrderIds.has(payment.order_id))
-    }
+    const canReadForRelation = canAll('payments.view_all')
+      || ['payments.view', 'payments.create', 'payments.edit', 'payments.delete'].some(key => hasPermission(key))
+    if (!canReadForRelation) return [] as PaymentDoc[]
     return sortNewest(
       (await fetchByFieldValues<PaymentDoc>('payments', 'order_id', orderIds)).filter(isActive) as PaymentDoc[],
       'payment_date',
@@ -732,7 +730,7 @@ export function useScopedQueries() {
       ),
       publish,
       error => {
-        if (['failed-precondition', 'invalid-argument', 'unimplemented'].includes(listenerErrorCode(error))) {
+        if (['failed-precondition', 'invalid-argument', 'permission-denied', 'unimplemented'].includes(listenerErrorCode(error))) {
           startFallback()
           return
         }
@@ -871,12 +869,17 @@ export function useScopedQueries() {
   }
 
   async function loadScopedShipments(force = false) {
-    if (isAdminUser()) {
-      return (await listCollection<ShipmentDoc>('shipments', [], {
-        cacheKey: 'all', ttlMs: 20_000, force
-      })).filter(isActive)
+    if (canAll('shipments.view_all')) {
+      return sortNewest(
+        (await listCollection<ShipmentDoc>('shipments', [], {
+          cacheKey: 'all', ttlMs: 20_000, force
+        })).filter(isActive) as ShipmentDoc[],
+        'shipped_date'
+      )
     }
-    if (!hasPermission('shipments.view')) return []
+    const canReadForRelation = ['shipments.view', 'shipments.create', 'shipments.edit', 'shipments.delete']
+      .some(key => hasPermission(key))
+    if (!canReadForRelation) return []
     return sortNewest(
       await listByEmailFields<ShipmentDoc>('shipments', [
         'created_by', 'order_owner_email', 'order_created_by', 'order_sale_email'

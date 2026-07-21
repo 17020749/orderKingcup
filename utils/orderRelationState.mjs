@@ -174,7 +174,7 @@ export function relationLockReady(order = {}) {
 
 export function orderRelationDeleteBlocker(order = {}) {
   if (!relationLockReady(order)) {
-    return 'Đơn hàng cũ chưa được đồng bộ khóa thanh toán, hóa đơn và vận chuyển. Quản trị viên cần chạy “Đồng bộ khóa liên kết đơn”.'
+    return 'Đơn hàng cũ chưa hoàn tất đồng bộ khóa thanh toán, hóa đơn và vận chuyển. Vui lòng tải lại sau khi hệ thống xử lý.'
   }
   const payments = number(order.payment_record_count)
   const invoices = number(order.invoice_record_count)
@@ -197,6 +197,25 @@ export function relationRecordsByOrder(records = []) {
     map.get(orderId).push(record)
   }
   return map
+}
+
+const RELATION_RECONCILE_FIELDS = [
+  'relation_lock_version',
+  'payment_record_count', 'invoice_record_count', 'shipment_record_count',
+  'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
+  'payment_count', 'deposit_count', 'collect_count',
+  'invoice_status', 'shipment_status', 'shipping_fee_total', 'cod_amount_total',
+  'payment_relation_revision', 'invoice_relation_revision', 'shipment_relation_revision',
+]
+
+export function relationReconcileNeeded(order = {}, patch = {}) {
+  return RELATION_RECONCILE_FIELDS.some(field => {
+    if (!Object.prototype.hasOwnProperty.call(order, field)) return true
+    const current = order[field]
+    const next = patch[field]
+    if (typeof next === 'number') return Number(current) !== next
+    return text(current) !== text(next)
+  })
 }
 
 export function buildReconciledOrderRelationPatch({ order, payments = [], invoices = [], shipments = [], actor, updatedAt }) {

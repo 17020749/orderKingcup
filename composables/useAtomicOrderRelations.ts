@@ -2,8 +2,10 @@ import {
   collection,
   doc,
   getDocs,
+  query,
   runTransaction,
   serverTimestamp,
+  where,
   writeBatch,
   type DocumentData,
 } from 'firebase/firestore'
@@ -18,6 +20,7 @@ import {
   relationCountField,
   relationLockReady,
   relationRecordsByOrder,
+  relationReconcileNeeded,
   relationRevisionField,
   removeRelationRecord,
   replaceRelationRecord,
@@ -82,14 +85,14 @@ export function useAtomicOrderRelations() {
   const { appUser, isAdmin } = useAuth()
 
   async function mutateOrderRelation(input: MutateRelationInput): Promise<MutateRelationResult> {
-    const { module, mode, order, existingRecords } = input
+    const { module, mode, order } = input
     const actor = normalizeEmail(input.actor || appUser.value?.email || '')
     const recordId = String(input.record?.id || '').trim()
     if (!actor) throw new Error('Không xác định được người thao tác.')
     if (!order?.id) throw new Error('Thiếu đơn hàng cha.')
     if (!recordId) throw new Error('Thiếu ID chứng từ liên kết.')
     if (!relationLockReady(order)) {
-      throw new Error('Đơn hàng cũ chưa được đồng bộ khóa thanh toán, hóa đơn và vận chuyển. Quản trị viên cần chạy “Đồng bộ khóa liên kết đơn”.')
+      throw new Error('Đơn hàng cũ chưa hoàn tất đồng bộ khóa thanh toán, hóa đơn và vận chuyển. Vui lòng tải lại sau khi hệ thống xử lý.')
     }
     if (mode !== 'create' && String(input.record.order_id || '') !== String(order.id)) {
       throw new Error('Không được chuyển chứng từ sang đơn hàng khác.')
@@ -101,34 +104,45 @@ export function useAtomicOrderRelations() {
     const orderRef = doc(db, 'orders', order.id)
     const childRef = doc(db, collectionName(module), recordId)
     const activityRef = doc(collection(db, 'activity_logs'))
+
+    // The list rendered on a page may be cursor-paginated or scoped. Relation
+    // summaries must always be calculated from every document of the selected
+    // order, otherwise Firestore correctly rejects the parent count transition.
+    const relationSnapshot = await getDocs(query(
+      collection(db, collectionName(module)),
+      where('order_id', '==', order.id),
+    ))
+    const authoritativeRecords = relationSnapshot.docs.map(snapshot => ({
+      ...snapshot.data(),
+      id: snapshot.id,
+    }) as RelationRecord)
+
     let localRecord: RelationRecord = { ...input.record }
     let localOrderPatch: Record<string, any> = {}
 
     await runTransaction(db, async transaction => {
-      const [orderSnap, childSnap] = await Promise.all([
-        transaction.get(orderRef),
-        transaction.get(childRef),
-      ])
+      // A new relation document does not exist yet, and ownership-based read
+      // rules cannot authorize reading a missing child. Read the child only for
+      // update/delete; the atomic parent marker still protects create collisions.
+      const orderSnap = await transaction.get(orderRef)
+      const childSnap = mode === 'create' ? null : await transaction.get(childRef)
       if (!orderSnap.exists()) throw new Error('Không tìm thấy đơn hàng cha.')
       const currentOrder = { ...orderSnap.data(), id: orderSnap.id } as OrderDoc
       if (currentOrder.deleted === true || currentOrder.active === false) {
         throw new Error('Đơn hàng cha đã bị xóa hoặc ngừng hoạt động.')
       }
       if (!relationLockReady(currentOrder)) {
-        throw new Error('Đơn hàng cũ chưa được đồng bộ khóa thanh toán, hóa đơn và vận chuyển.')
+        throw new Error('Đơn hàng cũ chưa hoàn tất đồng bộ khóa thanh toán, hóa đơn và vận chuyển.')
       }
       const currentRevision = toNumber((currentOrder as any)[revisionField])
       if (currentRevision !== expectedRevision) {
         throw new Error('Dữ liệu liên kết của đơn đã thay đổi ở phiên khác. Vui lòng tải lại trang trước khi thao tác.')
       }
 
-      if (mode === 'create' && childSnap.exists() && isActiveOrderRelation(childSnap.data())) {
-        throw new Error('Chứng từ đã tồn tại.')
-      }
-      if (mode !== 'create' && !childSnap.exists()) {
+      if (mode !== 'create' && !childSnap?.exists()) {
         throw new Error('Không tìm thấy chứng từ cần cập nhật.')
       }
-      if (mode !== 'create' && String(childSnap.data()?.order_id || '') !== String(order.id)) {
+      if (mode !== 'create' && String(childSnap?.data()?.order_id || '') !== String(order.id)) {
         throw new Error('Chứng từ không thuộc đơn hàng đã chọn.')
       }
 
@@ -138,9 +152,9 @@ export function useAtomicOrderRelations() {
 
       if (mode === 'delete') {
         transaction.update(childRef, softDeletePayload())
-        nextRecords = removeRelationRecord(existingRecords, recordId)
+        nextRecords = removeRelationRecord(authoritativeRecords, recordId)
         localRecord = {
-          ...(childSnap.data() || input.record),
+          ...(childSnap?.data() || input.record),
           id: recordId,
           deleted: true,
           active: false,
@@ -159,8 +173,8 @@ export function useAtomicOrderRelations() {
           ...(mode === 'create' ? { created_at: timestamp } : {}),
         }
         if (mode !== 'create') delete firestorePayload.created_at
-        transaction.set(childRef, firestorePayload, { merge: true })
-        nextRecords = replaceRelationRecord(existingRecords, {
+        transaction.set(childRef, firestorePayload, { merge: mode !== 'create' })
+        nextRecords = replaceRelationRecord(authoritativeRecords, {
           ...payload,
           id: recordId,
           relation_revision: nextRevision,
@@ -265,6 +279,7 @@ export function useAtomicOrderRelations() {
         actor,
         updatedAt: serverTimestamp(),
       })
+      if (!relationReconcileNeeded(order, patch)) continue
       batch.update(doc(db, 'orders', order.id), patch)
       writes += 1
       updatedOrders += 1

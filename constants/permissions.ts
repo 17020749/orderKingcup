@@ -100,12 +100,16 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'printing.orders_view', group: 'Tiến độ in ấn', name: 'Người tạo đơn xem tiến độ đơn của mình', emphasis: 'scope' },
   { key: 'printing.view_all', group: 'Tiến độ in ấn', name: 'Xem tất cả tiến độ in ấn', emphasis: 'scope' },
 
-  ...['shipments', 'invoices'].flatMap(module => [
-    { key: `${module}.view`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Xem dữ liệu' },
-    { key: `${module}.create`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Thêm dữ liệu' },
-    { key: `${module}.edit`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Sửa dữ liệu' },
-    { key: `${module}.delete`, group: module === 'shipments' ? 'Vận chuyển' : 'Hóa đơn', name: 'Xóa dữ liệu' }
-  ]),
+  { key: 'shipments.view', group: 'Vận chuyển', name: 'Xem vận chuyển của mình' },
+  { key: 'shipments.view_all', group: 'Vận chuyển', name: 'Xem tất cả vận chuyển', emphasis: 'scope' },
+  { key: 'shipments.create', group: 'Vận chuyển', name: 'Thêm vận chuyển' },
+  { key: 'shipments.edit', group: 'Vận chuyển', name: 'Sửa vận chuyển' },
+  { key: 'shipments.delete', group: 'Vận chuyển', name: 'Xóa vận chuyển' },
+
+  { key: 'invoices.view', group: 'Hóa đơn', name: 'Xem dữ liệu' },
+  { key: 'invoices.create', group: 'Hóa đơn', name: 'Thêm dữ liệu' },
+  { key: 'invoices.edit', group: 'Hóa đơn', name: 'Sửa dữ liệu' },
+  { key: 'invoices.delete', group: 'Hóa đơn', name: 'Xóa dữ liệu' },
   {
     key: 'users.view',
     group: 'Cài đặt',

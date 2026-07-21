@@ -26,6 +26,7 @@ const {
   loadScopedOrderItems,
   loadScopedPaymentsForOrders,
   loadScopedExportRequestsForOrders,
+  loadScopedExportRequests,
   loadScopedCustomers,
   loadProducts,
 } = useScopedQueries()
@@ -69,6 +70,7 @@ const editing = ref<OrderDoc | null>(null)
 const form = reactive<any>({})
 const formItems = ref<any[]>([])
 const customerForm = reactive<any>({})
+let relationReconciledForUser = ''
 
 const ownerOptions = computed(() => Array.from(new Set(rows.value.flatMap(row => [row.owner_email, row.sale_email, row.created_by]).map(value => String(value || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')))
 
@@ -260,6 +262,7 @@ async function loadRows(force = false, append = false) {
     pageCursor.value = page.cursor
     hasMoreRows.value = page.hasMore
     pageMode.value = page.mode
+    if (!append) setTimeout(() => { void reconcileRelationLocksInBackground() }, 0)
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được danh sách đơn hàng.'), 'error')
   } finally {
@@ -763,6 +766,29 @@ async function saveOrder() {
       ...(editing.value || {}),
       ...baseOrder,
       ...localPaymentSummary,
+      ...(!editing.value ? {
+        printing_progress_count: 0,
+        printing_lock_version: 1,
+        printing_last_action: 'reconcile',
+        printing_last_print_order_id: '',
+        printing_lock_updated_by: createdBy,
+        printing_lock_updated_at: now,
+        relation_lock_version: 1,
+        payment_record_count: 0,
+        invoice_record_count: 0,
+        shipment_record_count: 0,
+        payment_relation_revision: 0,
+        invoice_relation_revision: 0,
+        shipment_relation_revision: 0,
+        relation_last_module: 'all',
+        relation_last_action: 'reconcile',
+        relation_last_document_id: '',
+        relation_updated_by: createdBy,
+        relation_updated_at: now,
+        shipment_status: '',
+        shipping_fee_total: 0,
+        cod_amount_total: 0,
+      } : {}),
       id: form.id,
       order_code: result.orderCode,
       order_sequence: result.orderSequence,
@@ -803,22 +829,20 @@ async function saveOrder() {
   })
 }
 
-async function reconcileRelationLocks() {
-  if (!isAdmin.value) return showToast('Chỉ quản trị viên được đồng bộ khóa liên kết đơn.', 'error')
-  const confirmed = await askConfirm({
-    title: 'Đồng bộ khóa liên kết đơn',
-    message: 'Hệ thống sẽ đếm lại thanh toán, hóa đơn và vận chuyển đang hoạt động của tất cả đơn hàng. Dữ liệu mồ côi sẽ được báo riêng và không tự động xóa.',
-    confirmLabel: 'Đồng bộ'
-  })
-  if (!confirmed) return
-  await withLoading(async () => {
+async function reconcileRelationLocksInBackground() {
+  const actor = String(appUser.value?.email || '').trim().toLowerCase()
+  if (!isAdmin.value || !actor || relationReconciledForUser === actor) return
+  relationReconciledForUser = actor
+  try {
     const result = await reconcileOrderRelationLocks()
-    await loadRows(true)
-    const orphanNote = result.orphanCount
-      ? ` Phát hiện ${result.orphanCount} chứng từ mồ côi cần quản trị viên xử lý riêng.`
-      : ''
-    showToast(`Đã đồng bộ ${result.updatedOrders} đơn hàng.${orphanNote}`, result.orphanCount ? 'info' : 'success')
-  }).catch(error => showToast(reportFirebaseError(error, 'Không đồng bộ được khóa liên kết đơn.'), 'error'))
+    if (result.updatedOrders > 0) await loadRows(true)
+    if (result.orphanCount > 0) {
+      showToast(`Hệ thống phát hiện ${result.orphanCount} chứng từ mồ côi cần quản trị viên kiểm tra.`, 'info')
+    }
+  } catch (error) {
+    relationReconciledForUser = ''
+    showToast(reportFirebaseError(error, 'Hệ thống chưa đồng bộ được khóa liên kết đơn.'), 'error')
+  }
 }
 
 async function softDeleteOrder(row: OrderDoc) {
@@ -917,7 +941,6 @@ onMounted(loadRows)
 <template>
   <AppShell>
     <PageHeader title="Đơn hàng" subtitle="Đơn hàng và chi tiết sản phẩm">
-      <button v-if="isAdmin" class="btn" @click="reconcileRelationLocks">Đồng bộ khóa liên kết đơn</button>
       <button v-if="hasPermission('orders.create')" class="btn primary" @click="openModal()">+ Tạo đơn hàng</button>
     </PageHeader>
 

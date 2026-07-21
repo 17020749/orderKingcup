@@ -847,7 +847,7 @@ service cloud.firestore {
       return orderId is string
         && exists(path)
         && orderDataIsActive(order)
-        && (ownsOrderData(order) || isAdmin())
+        && (ownsOrderData(order) || hasPerm('orders.view_all') || isAdmin())
         && requestMatchesOrderData(order)
         && ownEmailField(request.resource.data, 'created_by');
     }
@@ -858,7 +858,7 @@ service cloud.firestore {
       return orderId is string
         && exists(path)
         && orderDataIsActive(order)
-        && (ownsOrderData(order) || isAdmin())
+        && (ownsOrderData(order) || hasPerm('orders.view_all') || isAdmin())
         && request.resource.data.order_id == resource.data.order_id
         && childIdentityUnchanged()
         && childOwnershipSafe(orderId);
@@ -926,7 +926,7 @@ service cloud.firestore {
     function orderPaymentSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return ownsOrderData(resource.data)
+      return (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
         && orderIdentityUnchanged()
         && onlyChanged([
           'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
@@ -949,7 +949,7 @@ service cloud.firestore {
     function orderInvoiceSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return ownsOrderData(resource.data)
+      return (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
         && orderIdentityUnchanged()
         && onlyChanged([
           'invoice_status', 'invoice_record_count', 'invoice_relation_revision',
@@ -970,7 +970,7 @@ service cloud.firestore {
     function orderShipmentSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return ownsOrderData(resource.data)
+      return (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
         && orderIdentityUnchanged()
         && onlyChanged([
           'shipment_status', 'shipping_fee_total', 'cod_amount_total',
@@ -1174,6 +1174,17 @@ service cloud.firestore {
             && getAfter(path).data.get('active', true) == false
           )
         );
+    }
+
+    function orderPrintingReconcileAllowed() {
+      return isAdmin()
+        && onlyPrintingLockChanged()
+        && request.resource.data.get('printing_last_action', '') == 'reconcile'
+        && request.resource.data.get('printing_last_print_order_id', '') == ''
+        && request.resource.data.get('printing_lock_version', 0) == 1
+        && request.resource.data.get('printing_progress_count', -1) is int
+        && request.resource.data.get('printing_progress_count', -1) >= 0
+        && ownEmailField(request.resource.data, 'printing_lock_updated_by');
     }
 
     function printCreateHasParentLock(printOrderId, data) {
@@ -1868,6 +1879,10 @@ service cloud.firestore {
           request.resource.data.get('relation_last_module', '') == 'shipments'
           && orderShipmentSummaryUpdateAllowed(docId)
         )
+        || (
+          request.resource.data.get('printing_last_action', '') == 'reconcile'
+          && orderPrintingReconcileAllowed()
+        )
         || orderPrintingSummaryUpdateAllowed(docId)
         || (
           isAdmin()
@@ -1971,9 +1986,15 @@ service cloud.firestore {
     match /payments/{docId} {
       allow read: if hasPerm('payments.view_all')
         || (
-          hasPerm('payments.view')
+          hasAnyPerm([
+            'payments.view',
+            'payments.create',
+            'payments.edit',
+            'payments.delete'
+          ])
           && (
-            ownsOrderChildData(resource.data)
+            hasPerm('orders.view_all')
+            || ownsOrderChildData(resource.data)
             || (
               resource.data.order_id is string
               && ownsOrderById(resource.data.order_id)
@@ -2143,18 +2164,23 @@ service cloud.firestore {
     }
 
     match /shipments/{docId} {
-      allow read: if isAdmin()
+      allow read: if hasPerm('shipments.view_all')
         || (
-          hasPerm('shipments.view')
+          hasAnyPerm([
+            'shipments.view',
+            'shipments.create',
+            'shipments.edit',
+            'shipments.delete'
+          ])
           && (
-            ownsOrderChildData(resource.data)
+            hasPerm('orders.view_all')
+            || ownsOrderChildData(resource.data)
             || (
               resource.data.order_id is string
               && ownsOrderById(resource.data.order_id)
             )
           )
         );
-
       allow create: if hasPerm('shipments.create')
         && relationCreateBase(request.resource.data.order_id)
         && relationParentMarkerMatches(
