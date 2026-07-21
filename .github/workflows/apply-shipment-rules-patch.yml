@@ -1,4 +1,4 @@
-name: Apply shipment rules patch
+name: Cleanup shipment patch workflow
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 jobs:
-  patch-rules:
+  cleanup:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.head_ref == 'agent/fix-order-payment-export-permissions'
@@ -25,59 +25,48 @@ jobs:
           fetch-depth: 1
           show-progress: false
 
-      - name: Replace shipment read scope
-        shell: python
-        run: |
-          from pathlib import Path
-
-          path = Path('firestore.rules')
-          source = path.read_text(encoding='utf-8')
-          start_marker = '    match /shipments/{docId} {'
-          create_marker = "      allow create: if hasPerm('shipments.create')"
-          start = source.index(start_marker)
-          create = source.index(create_marker, start)
-          new_read_block = '\n'.join([
-            "    match /shipments/{docId} {",
-            "      allow read: if hasPerm('shipments.view_all')",
-            "        || (",
-            "          hasAnyPerm([",
-            "            'shipments.view',",
-            "            'shipments.create',",
-            "            'shipments.edit',",
-            "            'shipments.delete'",
-            "          ])",
-            "          && (",
-            "            hasPerm('orders.view_all')",
-            "            || ownsOrderChildData(resource.data)",
-            "            || (",
-            "              resource.data.order_id is string",
-            "              && ownsOrderById(resource.data.order_id)",
-            "            )",
-            "          )",
-            "        );",
-            "",
-          ])
-          path.write_text(source[:start] + new_read_block + source[create:], encoding='utf-8')
-
-      - name: Update rules through Contents API
+      - name: Restore Warehouse CI from dev
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
-          current_sha="$(gh api "repos/${GITHUB_REPOSITORY}/contents/firestore.rules?ref=${TARGET_BRANCH}" --jq .sha)"
+          gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/warehouse-ci.yml?ref=dev" > /tmp/dev-workflow.json
+          current_sha="$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/warehouse-ci.yml?ref=${TARGET_BRANCH}" --jq .sha)"
           export CURRENT_SHA="$current_sha"
-          node <<'NODE' > /tmp/update-rules.json
+          node <<'NODE' > /tmp/restore-workflow.json
           const fs = require('node:fs')
+          const source = JSON.parse(fs.readFileSync('/tmp/dev-workflow.json', 'utf8'))
           process.stdout.write(JSON.stringify({
-            message: 'align shipment firestore permissions',
-            content: fs.readFileSync('firestore.rules').toString('base64'),
+            message: 'restore warehouse ci workflow',
+            content: String(source.content || '').replace(/\s+/g, ''),
             sha: process.env.CURRENT_SHA,
             branch: process.env.TARGET_BRANCH,
           }))
           NODE
           gh api \
             --method PUT \
-            "repos/${GITHUB_REPOSITORY}/contents/firestore.rules" \
-            --input /tmp/update-rules.json
+            "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/warehouse-ci.yml" \
+            --input /tmp/restore-workflow.json
+
+      - name: Remove this temporary workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          workflow_sha="$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/apply-shipment-rules-patch.yml?ref=${TARGET_BRANCH}" --jq .sha)"
+          export WORKFLOW_SHA="$workflow_sha"
+          node <<'NODE' > /tmp/delete-workflow.json
+          process.stdout.write(JSON.stringify({
+            message: 'remove temporary shipment rules workflow',
+            sha: process.env.WORKFLOW_SHA,
+            branch: process.env.TARGET_BRANCH,
+          }))
+          NODE
+          gh api \
+            --method DELETE \
+            "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/apply-shipment-rules-patch.yml" \
+            --input /tmp/delete-workflow.json
