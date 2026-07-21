@@ -559,7 +559,7 @@ export function useScopedQueries() {
     pageSize = 50,
     force = false,
   ): Promise<CursorPage<ShipmentDoc>> {
-    if (!isAdminUser()) return fullCursorPage(await loadScopedShipments(force))
+    if (!canAll('shipments.view_all')) return fullCursorPage(await loadScopedShipments(force))
     const page = await fetchOrderedPage<ShipmentDoc>('shipments', 'shipped_date', cursor, pageSize)
     return { ...page, rows: page.rows.filter(isActive) as ShipmentDoc[] }
   }
@@ -869,12 +869,17 @@ export function useScopedQueries() {
   }
 
   async function loadScopedShipments(force = false) {
-    if (isAdminUser()) {
-      return (await listCollection<ShipmentDoc>('shipments', [], {
-        cacheKey: 'all', ttlMs: 20_000, force
-      })).filter(isActive)
+    if (canAll('shipments.view_all')) {
+      return sortNewest(
+        (await listCollection<ShipmentDoc>('shipments', [], {
+          cacheKey: 'all', ttlMs: 20_000, force
+        })).filter(isActive) as ShipmentDoc[],
+        'shipped_date'
+      )
     }
-    if (!hasPermission('shipments.view')) return []
+    const canReadForRelation = ['shipments.view', 'shipments.create', 'shipments.edit', 'shipments.delete']
+      .some(key => hasPermission(key))
+    if (!canReadForRelation) return []
     return sortNewest(
       await listByEmailFields<ShipmentDoc>('shipments', [
         'created_by', 'order_owner_email', 'order_created_by', 'order_sale_email'
