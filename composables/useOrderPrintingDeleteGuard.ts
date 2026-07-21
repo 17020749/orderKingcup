@@ -20,8 +20,18 @@ function chunks<T>(values: T[], size = 30) {
 
 export function useOrderPrintingDeleteGuard() {
   const { db } = useFirebaseServices()
+  const { hasPermission } = useAuth()
+
+  function canReadOrderPrintingDependencies() {
+    return hasPermission('*')
+      || hasPermission('orders.edit')
+      || hasPermission('orders.delete')
+      || hasPermission('printing.orders_view')
+      || hasPermission('printing.view_all')
+  }
 
   async function fetchGroup(orderIds: string[]) {
+    if (!canReadOrderPrintingDependencies()) return [] as PrintOrderDoc[]
     const snapshot = await getDocs(query(
       collection(db, 'print_orders'),
       where('order_id', 'in', orderIds),
@@ -34,6 +44,7 @@ export function useOrderPrintingDeleteGuard() {
   }
 
   async function loadPrintingProgressForOrders(orders: OrderDoc[]) {
+    if (!canReadOrderPrintingDependencies()) return [] as PrintOrderDoc[]
     const ids = cleanIds(orders)
     if (!ids.length) return [] as PrintOrderDoc[]
     const groups = await Promise.all(chunks(ids).map(fetchGroup))
@@ -43,12 +54,16 @@ export function useOrderPrintingDeleteGuard() {
   }
 
   async function loadPrintingProgressForOrder(orderId: string) {
+    if (!canReadOrderPrintingDependencies()) return [] as PrintOrderDoc[]
     const id = String(orderId || '').trim()
     if (!id) return [] as PrintOrderDoc[]
     return fetchGroup([id])
   }
 
   async function loadPrintingDependenciesForOrders(orders: OrderDoc[]) {
+    if (!canReadOrderPrintingDependencies()) {
+      return { printOrders: [] as PrintOrderDoc[], printItems: [] as PrintOrderItemDoc[] }
+    }
     // Child Rules intentionally deny items whose parent progress was deleted.
     // Excluding inactive parents before building the `in` query keeps one
     // historical soft-delete from rejecting the entire order-list load.
