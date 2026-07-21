@@ -2,15 +2,22 @@
 import type { OrderDoc, ShipmentDoc } from '~/types/models'
 import { formatDateTime, isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 import { toDateKey } from '~/utils/listFilters'
 
 const { mutateOrderRelation } = useAtomicOrderRelations()
-const { loadScopedOrders, loadScopedShipments } = useScopedQueries()
+const { loadScopedOrders, loadScopedShipmentsPage } = useScopedQueries()
 const { appUser, hasPermission } = useAuth()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
 const rows = ref<ShipmentDoc[]>([])
+const PAGE_SIZE = 50
+const pageCursor = shallowRef<any>(null)
+const hasMoreRows = ref(false)
+const pageMode = ref<'cursor' | 'full'>('cursor')
+const loadingMore = ref(false)
 const orders = ref<OrderDoc[]>([])
 const loading = ref(false)
 const saving = ref(false)
@@ -64,21 +71,27 @@ function resetFilters() {
 
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id))
 
-async function loadRows(force = false) {
-  loading.value = true
+async function loadRows(force = false, append = false) {
+  if (append && (!hasMoreRows.value || loadingMore.value)) return
+  if (append) loadingMore.value = true
+  else loading.value = true
   try {
-    const [loadedOrders, loadedRows] = await Promise.all([
-      loadScopedOrders(force),
-      loadScopedShipments(force)
-    ])
-    orders.value = loadedOrders
-    rows.value = loadedRows.filter(isActive)
+    if (!append) orders.value = await loadScopedOrders(force)
+    const page = await loadScopedShipmentsPage(append ? pageCursor.value : null, PAGE_SIZE, force)
+    const loadedRows = page.rows.filter(isActive)
+    rows.value = append ? appendUniqueRows(rows.value, loadedRows) : loadedRows
+    pageCursor.value = page.cursor
+    hasMoreRows.value = page.hasMore
+    pageMode.value = page.mode
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được dữ liệu vận chuyển.'), 'error')
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
 }
+
+async function loadMoreRows() { await loadRows(false, true) }
 
 function chooseOrder() {
   const order = selectedOrder.value
@@ -208,6 +221,7 @@ onMounted(() => loadRows())
           </tbody>
         </table>
       </div>
+      <CursorLoadMore :loaded-count="rows.length" :has-more="hasMoreRows" :loading="loadingMore" :mode="pageMode" @load-more="loadMoreRows" />
     </div>
 
     <BaseModal v-if="showModal" :title="editing ? 'Sửa vận chuyển' : 'Thêm vận chuyển'" size="lg" :loading="saving" @close="showModal=false" @save="save">

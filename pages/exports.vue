@@ -14,7 +14,7 @@ import {
 } from "~/utils/format";
 import { reportFirebaseError } from "~/utils/firebaseErrors";
 
-const { loadExportOrders, loadExportOrderItems, loadProducts, loadWarehouses } =
+const { loadExportOrdersPage, loadExportOrderItemsForOrders, loadProducts, loadWarehouses } =
   useScopedQueries();
 const { createExportOrder, updateExportOrder, deleteExportOrder } = useWarehouseTransactions();
 const { hasPermission } = useAuth();
@@ -30,6 +30,11 @@ const fromWarehouseFilter = ref("");
 const statusFilter = ref("");
 const destinationFilter = ref("");
 const rows = ref<ExportOrderDoc[]>([]);
+const PAGE_SIZE = 50;
+const pageCursor = shallowRef<any>(null);
+const hasMoreRows = ref(false);
+const pageMode = ref<'cursor' | 'full'>('cursor');
+const loadingMore = ref(false);
 const items = ref<ExportOrderItemDoc[]>([]);
 const products = ref<ProductDoc[]>([]);
 const warehouses = ref<WarehouseDoc[]>([]);
@@ -467,21 +472,26 @@ async function saveExportOrder() {
   }
 }
 
-async function loadRows(force = false) {
-  loading.value = true;
+async function loadRows(force = false, append = false) {
+  if (append && (!hasMoreRows.value || loadingMore.value)) return;
+  if (append) loadingMore.value = true;
+  else loading.value = true;
   try {
-    const [orderRows, itemRows, productRows, warehouseRows] = await Promise.all(
-      [
-        loadExportOrders(force),
-        loadExportOrderItems(force),
-        loadProducts(force),
-        loadWarehouses(force),
-      ],
-    );
-    rows.value = orderRows;
-    items.value = itemRows;
-    products.value = productRows;
-    warehouses.value = warehouseRows;
+    const pagePromise = loadExportOrdersPage(append ? pageCursor.value : null, PAGE_SIZE);
+    const referencesPromise = append
+      ? Promise.resolve([products.value, warehouses.value] as const)
+      : Promise.all([loadProducts(force), loadWarehouses(force)]);
+    const [page, [productRows, warehouseRows]] = await Promise.all([pagePromise, referencesPromise]);
+    const itemRows = await loadExportOrderItemsForOrders(page.rows);
+    rows.value = append ? appendUniqueRows(rows.value, page.rows) : page.rows;
+    items.value = append ? appendUniqueRows(items.value, itemRows) : itemRows;
+    if (!append) {
+      products.value = productRows;
+      warehouses.value = warehouseRows;
+    }
+    pageCursor.value = page.cursor;
+    hasMoreRows.value = page.hasMore;
+    pageMode.value = page.mode;
   } catch (error) {
     showToast(
       reportFirebaseError(error, "Không tải được phiếu xuất kho thật."),
@@ -489,8 +499,11 @@ async function loadRows(force = false) {
     );
   } finally {
     loading.value = false;
+    loadingMore.value = false;
   }
 }
+
+async function loadMoreRows() { await loadRows(false, true); }
 
 onMounted(() => loadRows());
 </script>
@@ -570,6 +583,7 @@ onMounted(() => loadRows());
           </tbody>
         </table>
       </div>
+      <CursorLoadMore :loaded-count="rows.length" :has-more="hasMoreRows" :loading="loadingMore" :mode="pageMode" @load-more="loadMoreRows" />
     </div>
 
     <BaseModal

@@ -13,7 +13,7 @@ import {
 } from "~/utils/format";
 import { reportFirebaseError } from "~/utils/firebaseErrors";
 
-const { loadInventoryAdjustments, loadWarehouses, loadProducts } =
+const { loadInventoryAdjustmentsPage, loadWarehouses, loadProducts } =
   useScopedQueries();
 const { createInventoryAdjustment } = useWarehouseTransactions();
 const { hasPermission } = useAuth();
@@ -28,6 +28,11 @@ const dateTo = ref("");
 const quantityTypeFilter = ref("");
 const productFilter = ref("");
 const rows = ref<InventoryAdjustmentDoc[]>([]);
+const PAGE_SIZE = 50;
+const pageCursor = shallowRef<any>(null);
+const hasMoreRows = ref(false);
+const pageMode = ref<'cursor' | 'full'>('cursor');
+const loadingMore = ref(false);
 const warehouses = ref<WarehouseDoc[]>([]);
 const products = ref<ProductDoc[]>([]);
 const selected = ref<InventoryAdjustmentDoc | null>(null);
@@ -206,17 +211,24 @@ async function saveAdjustment() {
   }
 }
 
-async function loadRows(force = false) {
-  loading.value = true;
+async function loadRows(force = false, append = false) {
+  if (append && (!hasMoreRows.value || loadingMore.value)) return;
+  if (append) loadingMore.value = true;
+  else loading.value = true;
   try {
-    const [adjustmentRows, warehouseRows, productRows] = await Promise.all([
-      loadInventoryAdjustments(force),
-      loadWarehouses(force),
-      loadProducts(force),
-    ]);
-    rows.value = adjustmentRows;
-    warehouses.value = warehouseRows;
-    products.value = productRows;
+    const pagePromise = loadInventoryAdjustmentsPage(append ? pageCursor.value : null, PAGE_SIZE);
+    const referencesPromise = append
+      ? Promise.resolve([warehouses.value, products.value] as const)
+      : Promise.all([loadWarehouses(force), loadProducts(force)]);
+    const [page, [warehouseRows, productRows]] = await Promise.all([pagePromise, referencesPromise]);
+    rows.value = append ? appendUniqueRows(rows.value, page.rows) : page.rows;
+    if (!append) {
+      warehouses.value = warehouseRows;
+      products.value = productRows;
+    }
+    pageCursor.value = page.cursor;
+    hasMoreRows.value = page.hasMore;
+    pageMode.value = page.mode;
   } catch (error) {
     showToast(
       reportFirebaseError(error, "Không tải được điều chỉnh tồn."),
@@ -224,8 +236,11 @@ async function loadRows(force = false) {
     );
   } finally {
     loading.value = false;
+    loadingMore.value = false;
   }
 }
+
+async function loadMoreRows() { await loadRows(false, true); }
 
 onMounted(() => loadRows());
 </script>
@@ -349,6 +364,7 @@ onMounted(() => loadRows());
           </tbody>
         </table>
       </div>
+      <CursorLoadMore :loaded-count="rows.length" :has-more="hasMoreRows" :loading="loadingMore" :mode="pageMode" @load-more="loadMoreRows" />
     </div>
 
     <BaseModal
