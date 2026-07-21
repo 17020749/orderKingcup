@@ -18,6 +18,7 @@ import {
   relationCountField,
   relationLockReady,
   relationRecordsByOrder,
+  relationReconcileNeeded,
   relationRevisionField,
   removeRelationRecord,
   replaceRelationRecord,
@@ -89,7 +90,7 @@ export function useAtomicOrderRelations() {
     if (!order?.id) throw new Error('Thiếu đơn hàng cha.')
     if (!recordId) throw new Error('Thiếu ID chứng từ liên kết.')
     if (!relationLockReady(order)) {
-      throw new Error('Đơn hàng cũ chưa được đồng bộ khóa thanh toán, hóa đơn và vận chuyển. Quản trị viên cần chạy “Đồng bộ khóa liên kết đơn”.')
+      throw new Error('Đơn hàng cũ chưa hoàn tất đồng bộ khóa thanh toán, hóa đơn và vận chuyển. Vui lòng tải lại sau khi hệ thống xử lý.')
     }
     if (mode !== 'create' && String(input.record.order_id || '') !== String(order.id)) {
       throw new Error('Không được chuyển chứng từ sang đơn hàng khác.')
@@ -115,7 +116,7 @@ export function useAtomicOrderRelations() {
         throw new Error('Đơn hàng cha đã bị xóa hoặc ngừng hoạt động.')
       }
       if (!relationLockReady(currentOrder)) {
-        throw new Error('Đơn hàng cũ chưa được đồng bộ khóa thanh toán, hóa đơn và vận chuyển.')
+        throw new Error('Đơn hàng cũ chưa hoàn tất đồng bộ khóa thanh toán, hóa đơn và vận chuyển.')
       }
       const currentRevision = toNumber((currentOrder as any)[revisionField])
       if (currentRevision !== expectedRevision) {
@@ -265,6 +266,7 @@ export function useAtomicOrderRelations() {
         actor,
         updatedAt: serverTimestamp(),
       })
+      if (!relationReconcileNeeded(order, patch)) continue
       batch.update(doc(db, 'orders', order.id), patch)
       writes += 1
       updatedOrders += 1

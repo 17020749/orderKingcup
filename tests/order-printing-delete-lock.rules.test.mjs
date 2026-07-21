@@ -19,13 +19,14 @@ import {
 const projectId = 'demo-order-printing-delete-lock'
 const OWNER = 'owner@example.com'
 const PRINTER = 'printer@example.com'
+const ADMIN = 'admin@example.com'
 let env
 
 function user(email, permissions) {
   return { email, active: true, deleted: false, permissions_flat: permissions }
 }
 
-function sourceOrder(id, { legacy = false } = {}) {
+function sourceOrder(id, { legacy = false, fulfillment = 'chua_xuat' } = {}) {
   return {
     id,
     order_code: `SALE1-ABC001-${id === 'order-ready' ? '0001' : '0002'}`,
@@ -37,7 +38,7 @@ function sourceOrder(id, { legacy = false } = {}) {
     owner_email: OWNER,
     created_by: OWNER,
     sale_email: OWNER,
-    warehouse_fulfillment_status: 'chua_xuat',
+    warehouse_fulfillment_status: fulfillment,
     warehouse_request_status: '',
     status: 'active',
     active: true,
@@ -82,13 +83,13 @@ function printOrder(id, orderId, orderCode) {
   }
 }
 
-function printingPatch(count, action, printOrderId) {
+function printingPatch(count, action, printOrderId, actor = PRINTER) {
   return {
     printing_progress_count: count,
     printing_lock_version: 1,
     printing_last_action: action,
     printing_last_print_order_id: printOrderId,
-    printing_lock_updated_by: PRINTER,
+    printing_lock_updated_by: actor,
     printing_lock_updated_at: 'later',
   }
 }
@@ -115,6 +116,7 @@ async function seed() {
         'printing.edit',
         'printing.delete',
       ])),
+      setDoc(doc(db, 'users', ADMIN), user(ADMIN, ['*'])),
       setDoc(doc(db, 'customers', 'customer-a'), {
         id: 'customer-a',
         customer_code: 'ABC001',
@@ -125,6 +127,7 @@ async function seed() {
       }),
       setDoc(doc(db, 'orders', 'order-ready'), sourceOrder('order-ready')),
       setDoc(doc(db, 'orders', 'order-legacy'), sourceOrder('order-legacy', { legacy: true })),
+      setDoc(doc(db, 'orders', 'order-fulfilled'), sourceOrder('order-fulfilled', { legacy: true, fulfillment: 'da_xuat_du' })),
     ])
   })
 }
@@ -206,6 +209,22 @@ test('xóa tiến độ phải giảm khóa parent; sau đó owner mới xóa đ
 
   const ownerDb = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
   await assertSucceeds(updateDoc(doc(ownerDb, 'orders', 'order-ready'), softDeletePatch()))
+})
+
+test('admin đối soát khóa in ngầm được cả đơn legacy đã xuất đủ', async () => {
+  const db = env.authenticatedContext(ADMIN, { email: ADMIN }).firestore()
+  await assertSucceeds(updateDoc(
+    doc(db, 'orders', 'order-fulfilled'),
+    printingPatch(0, 'reconcile', '', ADMIN),
+  ))
+})
+
+test('người dùng in không được tự giả mạo thao tác đối soát admin', async () => {
+  const db = env.authenticatedContext(PRINTER, { email: PRINTER }).firestore()
+  await assertFails(updateDoc(
+    doc(db, 'orders', 'order-legacy'),
+    printingPatch(0, 'reconcile', '', PRINTER),
+  ))
 })
 
 test('đơn legacy thiếu lock version bị fail closed', async () => {

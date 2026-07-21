@@ -31,7 +31,7 @@ test('tiến độ đã xóa mềm không còn khóa đơn', () => {
 
 test('đơn legacy thiếu phiên bản khóa bị fail closed', () => {
   const message = printingDeleteBlocker({ id: 'legacy-order' }, [])
-  assert.match(message, /chưa được đồng bộ khóa tiến độ in/)
+  assert.match(message, /chưa hoàn tất đồng bộ khóa tiến độ in/)
   assert.equal(printingLockReady({ id: 'legacy-order' }), false)
 })
 
@@ -100,13 +100,15 @@ test('luồng in cập nhật khóa parent khi tạo, xóa và có đối soát 
   assert.match(progress, /action: 'create'/)
   assert.match(progress, /action: 'delete'/)
   assert.match(progress, /reconcilePrintingLocks/)
-  assert.match(printingPage, /Đồng bộ khóa xóa đơn/)
+  assert.match(printingPage, /reconcilePrintingLocksInBackground/)
+  assert.doesNotMatch(printingPage, /syncOrderPrintingLocks/)
+  assert.doesNotMatch(printingPage, />Đồng bộ khóa xóa đơn</)
 })
 
 test('Rules ưu tiên nhánh rẻ để không vượt giới hạn biểu thức', () => {
   const rules = readFileSync('firestore.rules', 'utf8')
   assert.match(rules, /Soft-delete is evaluated first/)
-  assert.match(rules, /allow update: if \(\s*softDeleteOnly\(\)[\s\S]*?\|\| orderPrintingSummaryUpdateAllowed\(docId\)/)
+  assert.match(rules, /allow update: if \(\s*softDeleteOnly\(\)[\s\S]*?orderPrintingReconcileAllowed\(\)[\s\S]*?\|\| orderPrintingSummaryUpdateAllowed\(docId\)/)
   assert.match(rules, /Normal edits are evaluated before the more expensive atomic delete path/)
   assert.match(rules, /Normal item edits are evaluated before the atomic soft-delete path/)
   assert.match(rules, /lifecycle_status'[\s\S]*?exportRequestReleaseAllowed\(docId\)[\s\S]*?\|\| exportSoftDeleteAllowed\(\)/)

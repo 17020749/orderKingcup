@@ -9,6 +9,7 @@ import {
   computeShipmentRelationSummary,
   orderRelationDeleteBlocker,
   relationLockReady,
+  relationReconcileNeeded,
   removeRelationRecord,
   replaceRelationRecord,
 } from '../utils/orderRelationState.mjs'
@@ -97,7 +98,7 @@ test('vận chuyển tổng hợp phí, COD và trạng thái bản ghi mới nh
 })
 
 test('khóa xóa fail-closed cho đơn legacy và nêu từng dữ liệu còn hoạt động', () => {
-  assert.match(orderRelationDeleteBlocker({ id: 'legacy' }), /chưa được đồng bộ khóa/)
+  assert.match(orderRelationDeleteBlocker({ id: 'legacy' }), /chưa hoàn tất đồng bộ khóa/)
   assert.equal(relationLockReady(readyOrder), true)
   assert.equal(orderRelationDeleteBlocker(readyOrder), '')
   assert.match(orderRelationDeleteBlocker({
@@ -124,6 +125,16 @@ test('đối soát khởi tạo đủ ba count và giữ revision không âm', (
   assert.equal(patch.payment_relation_revision, 0)
 })
 
+test('đối soát chạy ngầm chỉ ghi khi dữ liệu khóa thực sự lệch', () => {
+  const patch = buildReconciledOrderRelationPatch({
+    order: readyOrder,
+    actor: 'admin@example.com',
+    updatedAt: 'now',
+  })
+  assert.equal(relationReconcileNeeded(readyOrder, patch), true)
+  assert.equal(relationReconcileNeeded({ ...readyOrder, ...patch }, patch), false)
+})
+
 test('thay chứng từ theo ID không làm trùng dữ liệu client', () => {
   const next = replaceRelationRecord([{ id: 'a', amount: 1 }, { id: 'b', amount: 2 }], { id: 'a', amount: 3 })
   assert.deepEqual(next, [{ id: 'b', amount: 2 }, { id: 'a', amount: 3 }])
@@ -145,7 +156,10 @@ test('source thật dùng transaction nguyên tử và không còn saveDoc/softD
     assert.doesNotMatch(source, /softDeleteDoc\(/)
   }
   assert.match(orders, /orderRelationDeleteBlocker/)
-  assert.match(orders, /Đồng bộ khóa liên kết đơn/)
+  assert.match(orders, /reconcileRelationLocksInBackground/)
+  assert.doesNotMatch(orders, /@click="reconcileRelationLocks"/)
+  assert.doesNotMatch(orders, />Đồng bộ khóa liên kết đơn</)
+  assert.match(composable, /relationReconcileNeeded/)
   assert.match(orders, /relation_lock_version: 1/)
   assert.match(orders, /discount_amount/)
   assert.match(shipments, /SearchableSelect/)
