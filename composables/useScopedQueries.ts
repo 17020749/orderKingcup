@@ -730,7 +730,7 @@ export function useScopedQueries() {
       ),
       publish,
       error => {
-        if (['failed-precondition', 'invalid-argument', 'unimplemented'].includes(listenerErrorCode(error))) {
+        if (['failed-precondition', 'invalid-argument', 'permission-denied', 'unimplemented'].includes(listenerErrorCode(error))) {
           startFallback()
           return
         }
