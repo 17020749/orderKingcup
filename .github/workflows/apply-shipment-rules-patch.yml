@@ -1,22 +1,27 @@
 name: Apply shipment rules patch
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/fix-order-payment-export-permissions
-    paths:
-      - .github/workflows/apply-shipment-rules-patch.yml
+      - dev
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: write
 
 jobs:
   patch-rules:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'agent/fix-order-payment-export-permissions'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent/fix-order-payment-export-permissions
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
       - name: Replace shipment read scope
@@ -73,4 +78,4 @@ jobs:
           git add firestore.rules
           git diff --cached --quiet && exit 0
           git commit -m "align shipment firestore permissions"
-          git push origin HEAD:agent/fix-order-payment-export-permissions
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
