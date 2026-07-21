@@ -781,6 +781,9 @@ service cloud.firestore {
     function orderCanBeDeleted() {
       return fulfillmentStatus() != 'da_xuat_1_phan'
         && fulfillmentStatus() != 'da_xuat_du'
+        && resource.data.get('warehouse_request_status', '') != 'da_tiep_nhan'
+        && resource.data.get('warehouse_request_status', '') != 'cho_xuat_kho'
+        && resource.data.get('warehouse_request_status', '') != 'da_xuat'
         && printingLockReadyData(resource.data)
         && resource.data.get('printing_progress_count', -1) == 0
         && relationLockReadyData(resource.data)
@@ -794,8 +797,14 @@ service cloud.firestore {
     }
 
     function exportRequestCanBeDeleted() {
-      return resource.data.get('status', '') in ['cho_xu_ly', 'dang_xu_ly', 'pending']
-        && resource.data.get('warehouse_export_code', '') == '';
+      return resource.data.get('status', '') in [
+          'cho_xu_ly', 'dang_xu_ly', 'pending', 'processing', 'tu_choi', 'rejected'
+        ]
+        && resource.data.get('warehouse_export_code', '') == ''
+        && resource.data.get('active_export_order_id', '') == ''
+        && resource.data.get('export_order_id', '') == ''
+        && resource.data.get('warehouse_export_order_id', '') == ''
+        && resource.data.get('warehouse_export_id', '') == '';
     }
 
 
@@ -2049,7 +2058,7 @@ service cloud.firestore {
         ])
         || hasPerm('export_requests.view_all')
         || (
-          hasAnyPerm(['export_requests.view', 'orders.warehouse_export', 'orders.edit'])
+          hasAnyPerm(['export_requests.view', 'orders.warehouse_export', 'orders.edit', 'orders.delete'])
           && (
             ownsOrderChildData(resource.data)
             || (
