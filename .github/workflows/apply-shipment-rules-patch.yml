@@ -58,20 +58,26 @@ jobs:
             "",
           ])
           path.write_text(source[:start] + new_read_block + source[create:], encoding='utf-8')
-          marker = Path('.agent/shipment-rules-patched.txt')
-          marker.parent.mkdir(parents=True, exist_ok=True)
-          marker.write_text('shipment rules patch applied\n', encoding='utf-8')
 
-      - name: Commit rules change
+      - name: Update rules through Contents API
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
-          set -euxo pipefail
-          git status --short
-          git diff --stat
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add firestore.rules
-          git add -f .agent/shipment-rules-patched.txt
-          git status --short
-          git commit -m "align shipment firestore permissions"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          set -euo pipefail
+          current_sha="$(gh api "repos/${GITHUB_REPOSITORY}/contents/firestore.rules?ref=${TARGET_BRANCH}" --jq .sha)"
+          export CURRENT_SHA="$current_sha"
+          node <<'NODE' > /tmp/update-rules.json
+          const fs = require('node:fs')
+          process.stdout.write(JSON.stringify({
+            message: 'align shipment firestore permissions',
+            content: fs.readFileSync('firestore.rules').toString('base64'),
+            sha: process.env.CURRENT_SHA,
+            branch: process.env.TARGET_BRANCH,
+          }))
+          NODE
+          gh api \
+            --method PUT \
+            "repos/${GITHUB_REPOSITORY}/contents/firestore.rules" \
+            --input /tmp/update-rules.json
