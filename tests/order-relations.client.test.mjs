@@ -146,6 +146,7 @@ test('source thật dùng transaction nguyên tử và không còn saveDoc/softD
   const invoices = readFileSync('pages/invoices.vue', 'utf8')
   const shipments = readFileSync('pages/shipments.vue', 'utf8')
   const orders = readFileSync('pages/orders.vue', 'utf8')
+  const scopedQueries = readFileSync('composables/useScopedQueries.ts', 'utf8')
 
   assert.match(composable, /runTransaction/)
   assert.match(composable, /transaction\.update\(orderRef/)
@@ -162,6 +163,8 @@ test('source thật dùng transaction nguyên tử và không còn saveDoc/softD
   assert.match(composable, /relationReconcileNeeded/)
   assert.match(orders, /relation_lock_version: 1/)
   assert.match(orders, /discount_amount/)
+  assert.match(orders, /loadScopedExportRequestsForOrders,\s*loadScopedExportRequests,/)
+  assert.match(scopedQueries, /payments\.create[\s\S]*fetchByFieldValues<PaymentDoc>\('payments', 'order_id', orderIds\)/)
   assert.match(shipments, /SearchableSelect/)
   assert.match(shipments, /customer_pays_shipping/)
   assert.match(shipments, /company_shipping_revenue_mode/)

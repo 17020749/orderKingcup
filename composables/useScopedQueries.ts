@@ -594,11 +594,9 @@ export function useScopedQueries() {
   async function loadScopedPaymentsForOrders(orders: OrderDoc[], force = false) {
     const orderIds = cleanIds(orders)
     if (!orderIds.length) return [] as PaymentDoc[]
-    if (!canAll('payments.view_all')) {
-      const visible = await loadScopedPayments(orders, force)
-      const allowedOrderIds = new Set(orderIds)
-      return visible.filter(payment => allowedOrderIds.has(payment.order_id))
-    }
+    const canReadForRelation = canAll('payments.view_all')
+      || ['payments.view', 'payments.create', 'payments.edit', 'payments.delete'].some(key => hasPermission(key))
+    if (!canReadForRelation) return [] as PaymentDoc[]
     return sortNewest(
       (await fetchByFieldValues<PaymentDoc>('payments', 'order_id', orderIds)).filter(isActive) as PaymentDoc[],
       'payment_date',

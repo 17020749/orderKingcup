@@ -1986,9 +1986,15 @@ service cloud.firestore {
     match /payments/{docId} {
       allow read: if hasPerm('payments.view_all')
         || (
-          hasPerm('payments.view')
+          hasAnyPerm([
+            'payments.view',
+            'payments.create',
+            'payments.edit',
+            'payments.delete'
+          ])
           && (
-            ownsOrderChildData(resource.data)
+            hasPerm('orders.view_all')
+            || ownsOrderChildData(resource.data)
             || (
               resource.data.order_id is string
               && ownsOrderById(resource.data.order_id)
