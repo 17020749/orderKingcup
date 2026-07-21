@@ -1,4 +1,5 @@
 name: Apply Background Order Lock Reconciliation
+# One-shot guarded runner; removed after successful verification.
 
 on:
   push:
