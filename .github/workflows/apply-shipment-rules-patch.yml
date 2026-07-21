@@ -65,6 +65,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add firestore.rules .agent/shipment-rules-patched.txt
+          git add firestore.rules
+          git add -f .agent/shipment-rules-patched.txt
           git commit -m "align shipment firestore permissions"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
