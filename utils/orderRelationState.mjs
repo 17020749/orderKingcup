@@ -45,9 +45,10 @@ export function computePaymentRelationSummary(order = {}, records = []) {
   const active = records.filter(isActiveOrderRelation)
   const received = active.filter(record => text(record.payment_status) === 'Đã nhận')
   const paid = round2(received.reduce((sum, record) => sum + number(record.amount), 0))
-  const debtBase = number(order.actual_revenue) > 0
+  const gross = number(order.actual_revenue) > 0
     ? number(order.actual_revenue)
     : number(order.total_vat) || number(order.subtotal_no_vat)
+  const debtBase = round2(Math.max(0, gross - Math.max(0, number(order.discount_amount))))
   const debt = round2(debtBase - paid)
   let depositCount = 0
   let collectCount = 0

@@ -188,7 +188,8 @@ const orderDetailLabels: Record<string, string> = {
   order_status: 'Trạng thái đơn', operation_status: 'Trạng thái vận hành',
   expected_delivery_date: 'Ngày giao dự kiến', completed_date: 'Ngày hoàn thành',
   subtotal_no_vat: 'Tạm tính chưa VAT', vat_rate: 'VAT (%)', vat_amount: 'Tiền VAT',
-  total_vat: 'Tổng sau VAT', actual_revenue: 'Tổng tiền đơn', paid_amount: 'Đã thu',
+  total_vat: 'Tổng sau VAT', discount_amount: 'Số tiền giảm giá', payable_amount: 'Giá trị sau giảm giá',
+  actual_revenue: 'Tổng tiền đơn', paid_amount: 'Đã thu',
   debt_amount: 'Công nợ', payment_status: 'Trạng thái thanh toán', invoice_status: 'Trạng thái hóa đơn',
   warehouse_fulfillment_status: 'Trạng thái xuất kho', warehouse_request_status: 'Trạng thái yêu cầu kho',
   items_count: 'Số dòng sản phẩm'
@@ -523,6 +524,7 @@ function openModal(row?: OrderDoc) {
     order_classification: 'Chăm sóc',
     invoice_status: 'Không xuất',
     vat_rate: 0,
+    discount_amount: 0,
     note: '',
     status: 'active'
   })
@@ -646,6 +648,9 @@ async function saveOrder() {
     }
     const totals = calcItems(saveItems, form)
     if (!totals.items.length) throw new Error('Thiếu sản phẩm hợp lệ')
+    const requestedDiscount = toNumber(form.discount_amount)
+    if (requestedDiscount < 0) throw new Error('Số tiền giảm giá không được âm.')
+    if (requestedDiscount > totals.actual_revenue) throw new Error('Số tiền giảm giá không được lớn hơn tổng tiền đơn.')
 
     const baseOrder: any = { ...form, ...totals }
     if (editing.value) {
@@ -659,9 +664,8 @@ async function saveOrder() {
       protectedFields.forEach(key => delete baseOrder[key])
     }
 
-    const paymentSummary = editing.value
-      ? {}
-      : computePaymentStatus(baseOrder, paymentsByOrder.value[form.id] || [])
+    const localPaymentSummary = computePaymentStatus(baseOrder, paymentsByOrder.value[form.id] || [])
+    const paymentSummary = editing.value ? {} : localPaymentSummary
     const existingItems = itemsByOrder.value[form.id] || []
     const orderPayload = {
       ...baseOrder,
@@ -758,7 +762,7 @@ async function saveOrder() {
     const localOrder = {
       ...(editing.value || {}),
       ...baseOrder,
-      ...paymentSummary,
+      ...localPaymentSummary,
       id: form.id,
       order_code: result.orderCode,
       order_sequence: result.orderSequence,
@@ -1084,11 +1088,11 @@ onMounted(loadRows)
 </div>
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
-        <table style="min-width:1420px">
+        <table style="min-width:1510px">
           <thead>
             <tr>
               <th>Mã / Ngày</th><th>Khách / SĐT</th><th>Phân loại</th><th>Trạng thái</th><th>Thanh toán</th><th>Hóa đơn</th>
-              <th>Tạm tính</th><th>VAT</th><th>Tổng tiền</th><th>Đã thu</th><th>Công nợ</th><th>Xuất kho</th><th>Thao tác</th>
+              <th>Tạm tính</th><th>VAT</th><th>Tổng tiền</th><th>Giảm giá</th><th>Đã thu</th><th>Công nợ</th><th>Xuất kho</th><th>Thao tác</th>
             </tr>
           </thead>
           <tbody>
@@ -1102,6 +1106,7 @@ onMounted(loadRows)
               <td>{{ money(row.subtotal_no_vat) }}</td>
               <td>{{ money(row.vat_amount) }}</td>
               <td>{{ money(row.actual_revenue || row.total_vat) }}</td>
+              <td>{{ money(row.discount_amount) }}</td>
               <td>{{ money(row.paid_amount) }}</td>
               <td>{{ money(row.debt_amount) }}</td>
               <td>
@@ -1175,6 +1180,7 @@ onMounted(loadRows)
           <div v-if="!canManageInvoiceStatus" class="small subtle">Bạn không có quyền thay đổi trạng thái hóa đơn.</div>
         </div>
         <div class="form-group"><label>VAT %</label><select v-model.number="form.vat_rate" class="select"><option v-for="s in VAT_RATE_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
+        <div class="form-group"><label>Số tiền giảm giá</label><input v-model.number="form.discount_amount" class="input" type="number" min="0" /></div>
       </div>
       <div class="form-group" style="margin-top:12px"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
 
@@ -1226,6 +1232,8 @@ onMounted(loadRows)
       <button type="button" class="btn" @click="addItem()">+ Thêm sản phẩm</button>
       <div class="order-grand-total"><span>Tạm tính</span><span>{{ money(modalTotals.subtotal_no_vat) }}</span></div>
       <div class="order-grand-total"><span>Tổng sau VAT</span><span>{{ money(modalTotals.actual_revenue) }}</span></div>
+      <div class="order-grand-total"><span>Giảm giá</span><span>-{{ money(modalTotals.discount_amount) }}</span></div>
+      <div class="order-grand-total"><span>Giá trị sau giảm giá</span><span>{{ money(modalTotals.payable_amount) }}</span></div>
     </BaseModal>
 
     <BaseModal
@@ -1264,10 +1272,10 @@ onMounted(loadRows)
         'id','order_code','order_sequence','user_code','customer_code','order_classification','order_date','customer_id','customer_name','phone','sale_name','sale_email',
         'owner_email','created_by','created_at','updated_at','order_status','operation_status',
         'expected_delivery_date','completed_date','items_count','subtotal_no_vat','vat_rate','vat_amount',
-        'total_vat','actual_revenue','paid_amount','debt_amount','payment_status','invoice_status',
+        'total_vat','discount_amount','payable_amount','actual_revenue','paid_amount','debt_amount','payment_status','invoice_status',
         'warehouse_fulfillment_status','warehouse_request_status','note','status','active','deleted'
       ]"
-      :money-fields="['subtotal_no_vat','vat_amount','total_vat','actual_revenue','paid_amount','debt_amount']"
+      :money-fields="['subtotal_no_vat','vat_amount','total_vat','discount_amount','payable_amount','actual_revenue','paid_amount','debt_amount']"
       @close="showDetailModal = false"
     >
       <h3 style="margin-top:20px">Chi tiết sản phẩm và tiến độ xuất</h3>
