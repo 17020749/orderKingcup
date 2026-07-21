@@ -2164,11 +2164,17 @@ service cloud.firestore {
     }
 
     match /shipments/{docId} {
-      allow read: if isAdmin()
+      allow read: if hasPerm('shipments.view_all')
         || (
-          hasPerm('shipments.view')
+          hasAnyPerm([
+            'shipments.view',
+            'shipments.create',
+            'shipments.edit',
+            'shipments.delete'
+          ])
           && (
-            ownsOrderChildData(resource.data)
+            hasPerm('orders.view_all')
+            || ownsOrderChildData(resource.data)
             || (
               resource.data.order_id is string
               && ownsOrderById(resource.data.order_id)
