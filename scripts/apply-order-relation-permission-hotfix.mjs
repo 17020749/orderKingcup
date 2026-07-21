@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 
+// Trigger the guarded patch after the workflow exists on the hotfix branch.
 function read(path) {
   return readFileSync(path, 'utf8')
 }
