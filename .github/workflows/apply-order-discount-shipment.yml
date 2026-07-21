@@ -1,0 +1,37 @@
+name: Apply order discount and shipment changes
+
+on:
+  push:
+    branches:
+      - agent/order-discount-shipment
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply requested changes
+        run: node scripts/apply-order-discount-shipment.mjs
+
+      - name: Remove temporary patch files
+        run: |
+          rm scripts/apply-order-discount-shipment.mjs
+          rm .github/workflows/apply-order-discount-shipment.yml
+
+      - name: Commit feature implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: add order discounts and shipment payer flow"
+          git push origin HEAD:agent/order-discount-shipment
+
+      - name: Test debt and relation logic
+        run: node --test tests/order-relations.client.test.mjs
