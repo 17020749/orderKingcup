@@ -102,7 +102,27 @@ export function useOrderLogic() {
 
   function computePaymentStatus(totalOrOrder: number | Partial<OrderDoc>, payments: Partial<PaymentDoc>[]) {
     const order = typeof totalOrOrder === 'number' ? { actual_revenue: totalOrOrder } : totalOrOrder
-    const received = (payments || []).filter(p => String(p.payment_status || '').trim() === 'Đã nhận')
+    const paymentRows = payments || []
+    const hasStoredRelationSummary = typeof totalOrOrder !== 'number'
+      && toNumber((order as any).relation_lock_version) === 1
+      && Number.isInteger(Number((order as any).payment_record_count))
+
+    // Pages such as Vận chuyển may not have permission to read payment documents.
+    // In that case the atomic summary stored on the order remains the source of truth;
+    // an empty scoped result must not reset the UI to "Chưa thanh toán".
+    if (!paymentRows.length && hasStoredRelationSummary) {
+      return {
+        paid_amount: toNumber(order.paid_amount),
+        debt_amount: toNumber(order.debt_amount),
+        payment_status: String(order.payment_status || order.computed_payment_status || 'Chưa thanh toán'),
+        computed_payment_status: String(order.computed_payment_status || order.payment_status || 'Chưa thanh toán'),
+        payment_count: toNumber((order as any).payment_count),
+        deposit_count: toNumber((order as any).deposit_count),
+        collect_count: toNumber((order as any).collect_count)
+      }
+    }
+
+    const received = paymentRows.filter(p => String(p.payment_status || '').trim() === 'Đã nhận')
     const paid = round2(received.reduce((sum, p) => sum + toNumber(p.amount), 0))
     const debt = round2(getOrderDebtBase(order) - paid)
     let deposit_count = 0
