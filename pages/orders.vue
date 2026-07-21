@@ -14,6 +14,11 @@ import { printingDeleteBlocker } from '~/utils/orderPrintingDeleteLock.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { orderRelationDeleteBlocker } from '~/utils/orderRelationState.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import {
+  warehouseOrderDeleteBlocker,
+  warehouseRequestsForDeleteCascade,
+} from '~/utils/orderWarehouseDeleteLock.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { validateOrderItemEdit } from '~/utils/orderItemDependencies.mjs'
 
 const { db } = useFirebaseServices()
@@ -456,22 +461,12 @@ function validateNotBelowExported(nextItems: any[]) {
   return ''
 }
 
-function orderHasWarehouseExport(row: OrderDoc) {
-  const requests = exportRequests.value.filter(request => request.order_id === row.id && isActive(request))
-  const progress = buildFulfillmentRows(itemsByOrder.value[row.id] || [], requests)
-  const exportedByQuantity = progress.some(line => toNumber(line.exported_qty) > 0)
-  const exportedByRequest = requests.some(request => {
-    const status = normalizeText(request.status).replace(/\s+/g, '_')
-    return ['da_xuat', 'da_xuat_kho', 'da_xuat_du', 'exported', 'completed', 'hoan_thanh'].includes(status)
-      || !!String(request.warehouse_export_code || '').trim()
-  })
-  return exportedByQuantity || exportedByRequest
-}
-
-function orderDeleteBlocker(row: OrderDoc) {
-  if (orderHasWarehouseExport(row)) {
-    return 'Đơn hàng đã có số lượng xuất kho hoặc mã phiếu Warehouse nên không thể xóa.'
-  }
+function orderDeleteBlocker(
+  row: OrderDoc,
+  requests = exportRequests.value.filter(request => request.order_id === row.id && isActive(request)),
+) {
+  const warehouseBlocker = warehouseOrderDeleteBlocker(row, requests)
+  if (warehouseBlocker) return warehouseBlocker
   const printingBlocker = printingDeleteBlocker(row, printingProgress.value)
   if (printingBlocker) return printingBlocker
   return orderRelationDeleteBlocker(row)
@@ -849,25 +844,40 @@ async function softDeleteOrder(row: OrderDoc) {
   if (!hasPermission('orders.delete')) return showToast('Bạn không có quyền xóa đơn hàng.', 'error')
   const initialBlocker = orderDeleteBlocker(row)
   if (initialBlocker) return showToast(initialBlocker, 'error')
+
+  let latestOrder = row
+  let latestRequests: any[] = []
+  try {
+    const [latestOrderSnap, loadedRequests] = await Promise.all([
+      getDoc(doc(db, 'orders', row.id)),
+      loadScopedExportRequests([row], true),
+    ])
+    if (!latestOrderSnap.exists()) throw new Error('Không tìm thấy đơn hàng cần xóa.')
+    latestOrder = { ...latestOrderSnap.data(), id: latestOrderSnap.id } as OrderDoc
+    latestRequests = loadedRequests.filter(request => request.order_id === row.id && isActive(request))
+  } catch (error) {
+    return showToast(reportFirebaseError(error, 'Không kiểm tra được trạng thái yêu cầu xuất kho của đơn.'), 'error')
+  }
+
+  const latestBlocker = orderDeleteBlocker(latestOrder, latestRequests)
+  if (latestBlocker) return showToast(latestBlocker, 'error')
+
   const confirmed = await askConfirm({
     title: 'Xóa đơn hàng',
-    message: `Bạn chắc chắn muốn xóa đơn hàng ${row.order_code}?\nCác dòng sản phẩm và phiếu xuất chưa thực hiện của đơn này cũng sẽ được xóa mềm.`,
+    message: `Bạn chắc chắn muốn xóa đơn hàng ${row.order_code}?\nCác dòng sản phẩm và yêu cầu xuất kho đang chờ hoặc đã từ chối cũng sẽ được xóa mềm.`,
     confirmLabel: 'Xóa đơn'
   })
   if (!confirmed) return
 
   await withLoading(async () => {
     const orderItems = itemsByOrder.value[row.id] || []
-    const orderRequests = exportRequests.value.filter(request => request.order_id === row.id && isActive(request))
-    if (orderHasWarehouseExport(row)) {
-      throw new Error('Đơn hàng đã có số lượng xuất kho hoặc mã phiếu Warehouse nên không thể xóa.')
-    }
+    const orderRequests = warehouseRequestsForDeleteCascade(latestRequests)
+    const warehouseBlocker = warehouseOrderDeleteBlocker(latestOrder, latestRequests)
+    if (warehouseBlocker) throw new Error(warehouseBlocker)
     const latestPrintingProgress = await loadPrintingProgressForOrder(row.id)
-    const latestPrintingBlocker = printingDeleteBlocker(row, latestPrintingProgress)
+    const latestPrintingBlocker = printingDeleteBlocker(latestOrder, latestPrintingProgress)
     if (latestPrintingBlocker) throw new Error(latestPrintingBlocker)
-    const latestOrderSnap = await getDoc(doc(db, 'orders', row.id))
-    if (!latestOrderSnap.exists()) throw new Error('Không tìm thấy đơn hàng cần xóa.')
-    const latestRelationBlocker = orderRelationDeleteBlocker({ ...latestOrderSnap.data(), id: latestOrderSnap.id })
+    const latestRelationBlocker = orderRelationDeleteBlocker(latestOrder)
     if (latestRelationBlocker) throw new Error(latestRelationBlocker)
 
     if (orderItems.length + orderRequests.length + 2 > 500) {
