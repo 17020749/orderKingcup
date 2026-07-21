@@ -44,7 +44,30 @@ jobs:
         run: npm install --global npm@10.9.2 --no-audit --no-fund
 
       - name: Apply guarded source patch
-        run: node scripts/apply-background-order-lock-reconciliation.mjs
+        shell: bash
+        run: |
+          node scripts/apply-background-order-lock-reconciliation.mjs
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = [
+              (
+                  Path('tests/order-printing-delete-lock.client.test.mjs'),
+                  '/chưa được đồng bộ khóa tiến độ in/',
+                  '/chưa hoàn tất đồng bộ khóa tiến độ in/',
+              ),
+              (
+                  Path('tests/order-relations.client.test.mjs'),
+                  '/chưa được đồng bộ khóa/',
+                  '/chưa hoàn tất đồng bộ khóa/',
+              ),
+          ]
+          for path, old, new in replacements:
+              source = path.read_text(encoding='utf-8')
+              if source.count(old) != 1:
+                  raise SystemExit(f'{path}: expected exactly one {old!r}')
+              path.write_text(source.replace(old, new), encoding='utf-8')
+          PY
 
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund --silent
