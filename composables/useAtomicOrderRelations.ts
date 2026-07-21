@@ -106,10 +106,11 @@ export function useAtomicOrderRelations() {
     let localOrderPatch: Record<string, any> = {}
 
     await runTransaction(db, async transaction => {
-      const [orderSnap, childSnap] = await Promise.all([
-        transaction.get(orderRef),
-        transaction.get(childRef),
-      ])
+      // A new relation document does not exist yet, and ownership-based read
+      // rules cannot authorize reading a missing child. Read the child only for
+      // update/delete; the atomic parent marker still protects create collisions.
+      const orderSnap = await transaction.get(orderRef)
+      const childSnap = mode === 'create' ? null : await transaction.get(childRef)
       if (!orderSnap.exists()) throw new Error('Không tìm thấy đơn hàng cha.')
       const currentOrder = { ...orderSnap.data(), id: orderSnap.id } as OrderDoc
       if (currentOrder.deleted === true || currentOrder.active === false) {
@@ -123,13 +124,10 @@ export function useAtomicOrderRelations() {
         throw new Error('Dữ liệu liên kết của đơn đã thay đổi ở phiên khác. Vui lòng tải lại trang trước khi thao tác.')
       }
 
-      if (mode === 'create' && childSnap.exists() && isActiveOrderRelation(childSnap.data())) {
-        throw new Error('Chứng từ đã tồn tại.')
-      }
-      if (mode !== 'create' && !childSnap.exists()) {
+      if (mode !== 'create' && !childSnap?.exists()) {
         throw new Error('Không tìm thấy chứng từ cần cập nhật.')
       }
-      if (mode !== 'create' && String(childSnap.data()?.order_id || '') !== String(order.id)) {
+      if (mode !== 'create' && String(childSnap?.data()?.order_id || '') !== String(order.id)) {
         throw new Error('Chứng từ không thuộc đơn hàng đã chọn.')
       }
 
@@ -141,7 +139,7 @@ export function useAtomicOrderRelations() {
         transaction.update(childRef, softDeletePayload())
         nextRecords = removeRelationRecord(existingRecords, recordId)
         localRecord = {
-          ...(childSnap.data() || input.record),
+          ...(childSnap?.data() || input.record),
           id: recordId,
           deleted: true,
           active: false,
@@ -160,7 +158,7 @@ export function useAtomicOrderRelations() {
           ...(mode === 'create' ? { created_at: timestamp } : {}),
         }
         if (mode !== 'create') delete firestorePayload.created_at
-        transaction.set(childRef, firestorePayload, { merge: true })
+        transaction.set(childRef, firestorePayload, { merge: mode !== 'create' })
         nextRecords = replaceRelationRecord(existingRecords, {
           ...payload,
           id: recordId,
