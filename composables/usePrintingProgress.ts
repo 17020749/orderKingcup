@@ -81,7 +81,7 @@ function printingCount(order: Record<string, any>) {
   if (Number(order?.printing_lock_version) !== ORDER_PRINTING_LOCK_VERSION
     || !Number.isInteger(count)
     || count < 0) {
-    throw new Error('Đơn hàng cũ chưa được đồng bộ khóa tiến độ in. Quản trị viên cần chạy “Đồng bộ khóa xóa đơn”.')
+    throw new Error('Đơn hàng cũ chưa hoàn tất đồng bộ khóa tiến độ in. Vui lòng tải lại sau khi hệ thống xử lý.')
   }
   return count
 }
@@ -297,7 +297,7 @@ export function usePrintingProgress() {
       }
       const currentCount = printingCount(sourceSnapshot.data())
       if (currentCount <= 0) {
-        throw new Error('Khóa tiến độ in đang sai lệch. Hãy chạy đồng bộ trước khi xóa tiến độ.')
+        throw new Error('Khóa tiến độ in đang sai lệch. Vui lòng tải lại sau khi hệ thống xử lý.')
       }
       transaction.update(sourceOrderRef, buildPrintingLockFields({
         count: currentCount - 1,

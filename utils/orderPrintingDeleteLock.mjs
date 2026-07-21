@@ -38,7 +38,7 @@ export function printingDeleteBlocker(order = {}, progressRows = []) {
   }
 
   if (!printingLockReady(order)) {
-    return 'Đơn hàng cũ chưa được đồng bộ khóa tiến độ in. Quản trị viên cần mở trang Tiến độ in ấn và chạy “Đồng bộ khóa xóa đơn”.'
+    return 'Đơn hàng cũ chưa hoàn tất đồng bộ khóa tiến độ in. Vui lòng tải lại sau khi hệ thống xử lý.'
   }
 
   const storedCount = normalizedPrintingProgressCount(order)

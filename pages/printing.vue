@@ -61,7 +61,6 @@ const sourceOrders = ref<OrderDoc[]>([])
 const sourceOrderItems = ref<OrderItemDoc[]>([])
 const loading = ref(false)
 const saving = ref(false)
-const reconciling = ref(false)
 const search = ref('')
 const statusFilter = ref('')
 const showFormModal = ref(false)
@@ -70,6 +69,7 @@ const editing = ref<PrintOrderDoc | null>(null)
 const selected = ref<PrintOrderDoc | null>(null)
 const statusTick = ref(Date.now())
 let statusTimer: ReturnType<typeof setInterval> | null = null
+let printingReconciledForUser = ''
 
 const form = reactive<{
   order_id: string
@@ -496,24 +496,16 @@ async function removeOrder(order: PrintOrderDoc) {
   }
 }
 
-async function syncOrderPrintingLocks() {
-  if (!isAdmin.value) return showToast('Chỉ quản trị viên được đồng bộ khóa xóa đơn.', 'error')
-  const confirmed = await askConfirm({
-    title: 'Đồng bộ khóa xóa đơn',
-    message: 'Hệ thống sẽ đếm lại toàn bộ tiến độ in còn hiệu lực và cập nhật khóa xóa trên từng đơn hàng. Tiếp tục?',
-    confirmLabel: 'Đồng bộ khóa',
-  })
-  if (!confirmed) return
-
-  reconciling.value = true
+async function reconcilePrintingLocksInBackground() {
+  const actor = currentEmail.value
+  if (!isAdmin.value || !actor || printingReconciledForUser === actor) return
+  printingReconciledForUser = actor
   try {
     const result = await reconcilePrintingLocks(sourceOrders.value, rows.value)
-    showToast('Đã kiểm tra ' + result.checked + ' đơn và cập nhật ' + result.changed + ' khóa in.', 'success')
-    await loadRows(true)
+    if (result.changed > 0) sourceOrders.value = await loadPrintingSourceOrders(true)
   } catch (error) {
-    showToast(reportFirebaseError(error, 'Không đồng bộ được khóa tiến độ in.'), 'error')
-  } finally {
-    reconciling.value = false
+    printingReconciledForUser = ''
+    showToast(reportFirebaseError(error, 'Hệ thống chưa đồng bộ được khóa tiến độ in.'), 'error')
   }
 }
 
@@ -534,6 +526,7 @@ async function loadRows(force = false) {
     sourceOrderItems.value = sourceItemRows
     products.value = productRows
     suppliers.value = supplierRows
+    setTimeout(() => { void reconcilePrintingLocksInBackground() }, 0)
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được tiến độ in ấn.'), 'error')
   } finally {
@@ -563,7 +556,6 @@ onBeforeUnmount(() => {
   <AppShell>
     <PageHeader title="Tiến độ in ấn" :subtitle="pageSubtitle">
       <button v-if="canCreate" class="btn primary" @click="openCreateModal">+ Thêm đơn in</button>
-      <button v-if="isAdmin" class="btn" :disabled="reconciling" @click="syncOrderPrintingLocks">{{ reconciling ? 'Đang đồng bộ...' : 'Đồng bộ khóa xóa đơn' }}</button>
       <button class="btn" @click="loadRows(true)">Làm mới</button>
     </PageHeader>
 

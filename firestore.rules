@@ -1176,6 +1176,17 @@ service cloud.firestore {
         );
     }
 
+    function orderPrintingReconcileAllowed() {
+      return isAdmin()
+        && onlyPrintingLockChanged()
+        && request.resource.data.get('printing_last_action', '') == 'reconcile'
+        && request.resource.data.get('printing_last_print_order_id', '') == ''
+        && request.resource.data.get('printing_lock_version', 0) == 1
+        && request.resource.data.get('printing_progress_count', -1) is int
+        && request.resource.data.get('printing_progress_count', -1) >= 0
+        && ownEmailField(request.resource.data, 'printing_lock_updated_by');
+    }
+
     function printCreateHasParentLock(printOrderId, data) {
       let orderId = data.get('order_id', '');
       let path = orderPath(orderId);
@@ -1867,6 +1878,10 @@ service cloud.firestore {
         || (
           request.resource.data.get('relation_last_module', '') == 'shipments'
           && orderShipmentSummaryUpdateAllowed(docId)
+        )
+        || (
+          request.resource.data.get('printing_last_action', '') == 'reconcile'
+          && orderPrintingReconcileAllowed()
         )
         || orderPrintingSummaryUpdateAllowed(docId)
         || (
