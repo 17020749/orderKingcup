@@ -53,15 +53,35 @@ jobs:
         run: node scripts/apply-background-order-lock-reconciliation.mjs
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund --silent
 
       - name: Prepare Nuxt
         run: npx --no-install nuxi prepare
 
       - name: Run focused rules and client regressions
+        shell: bash
         run: |
-          npx --no-install firebase emulators:exec --only firestore "node --test --test-concurrency=1 tests/order-printing-delete-lock.rules.test.mjs tests/order-relations.rules.test.mjs"
-          node --test tests/order-printing-delete-lock.client.test.mjs tests/order-relations.client.test.mjs
+          set -o pipefail
+          {
+            echo '### PRINTING RULES'
+            npx --no-install firebase emulators:exec --only firestore "node --test --test-concurrency=1 tests/order-printing-delete-lock.rules.test.mjs"
+            echo '### RELATION RULES'
+            npx --no-install firebase emulators:exec --only firestore "node --test --test-concurrency=1 tests/order-relations.rules.test.mjs"
+            echo '### PRINTING CLIENT'
+            node --test tests/order-printing-delete-lock.client.test.mjs
+            echo '### RELATION CLIENT'
+            node --test tests/order-relations.client.test.mjs
+          } 2>&1 | tee background-reconciliation-test.log
+
+      - name: Commit focused failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add background-reconciliation-test.log
+          git commit -m "chore: capture background reconciliation test failure" || exit 0
+          git push origin HEAD:fix/background-order-lock-reconciliation
 
       - name: Build application
         env:
@@ -77,9 +97,10 @@ jobs:
       - name: Commit verified background reconciliation
         shell: bash
         run: |
+          rm -f background-reconciliation-test.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add firestore.rules pages/orders.vue pages/printing.vue composables/useAtomicOrderRelations.ts composables/usePrintingProgress.ts utils/orderRelationState.mjs utils/orderPrintingDeleteLock.mjs tests/order-printing-delete-lock.rules.test.mjs tests/order-printing-delete-lock.client.test.mjs tests/order-relations.client.test.mjs scripts/apply-background-order-lock-reconciliation.mjs .github/workflows/apply-background-order-lock-reconciliation.yml
+          git add -A firestore.rules pages/orders.vue pages/printing.vue composables/useAtomicOrderRelations.ts composables/usePrintingProgress.ts utils/orderRelationState.mjs utils/orderPrintingDeleteLock.mjs tests/order-printing-delete-lock.rules.test.mjs tests/order-printing-delete-lock.client.test.mjs tests/order-relations.client.test.mjs scripts/apply-background-order-lock-reconciliation.mjs .github/workflows/apply-background-order-lock-reconciliation.yml background-reconciliation-test.log
           git diff --cached --check
           git commit -m "fix: reconcile order locks automatically in background"
           git push origin HEAD:fix/background-order-lock-reconciliation
