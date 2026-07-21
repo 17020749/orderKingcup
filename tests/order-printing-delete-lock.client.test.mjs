@@ -83,6 +83,7 @@ test('trang đơn tải print_orders theo order_id và kiểm tra lại ngay tr�
   assert.match(page, /printingDeleteBlocker/)
   assert.match(page, /printing_progress_count: 0/)
   assert.match(page, /printing_lock_version: 1/)
+  assert.match(page, /const localOrder = \{[\s\S]*printing_progress_count: 0[\s\S]*relation_lock_version: 1/)
   assert.match(loader, /where\('order_id', 'in', orderIds\)/)
   assert.match(loader, /where\('print_order_id', 'in', ids\)/)
   const activeParentFilter = loader.indexOf("(await loadPrintingProgressForOrders(orders)).filter(isActive)")
