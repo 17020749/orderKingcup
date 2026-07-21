@@ -2,8 +2,10 @@ import {
   collection,
   doc,
   getDocs,
+  query,
   runTransaction,
   serverTimestamp,
+  where,
   writeBatch,
   type DocumentData,
 } from 'firebase/firestore'
@@ -83,7 +85,7 @@ export function useAtomicOrderRelations() {
   const { appUser, isAdmin } = useAuth()
 
   async function mutateOrderRelation(input: MutateRelationInput): Promise<MutateRelationResult> {
-    const { module, mode, order, existingRecords } = input
+    const { module, mode, order } = input
     const actor = normalizeEmail(input.actor || appUser.value?.email || '')
     const recordId = String(input.record?.id || '').trim()
     if (!actor) throw new Error('Không xác định được người thao tác.')
@@ -102,6 +104,19 @@ export function useAtomicOrderRelations() {
     const orderRef = doc(db, 'orders', order.id)
     const childRef = doc(db, collectionName(module), recordId)
     const activityRef = doc(collection(db, 'activity_logs'))
+
+    // The list rendered on a page may be cursor-paginated or scoped. Relation
+    // summaries must always be calculated from every document of the selected
+    // order, otherwise Firestore correctly rejects the parent count transition.
+    const relationSnapshot = await getDocs(query(
+      collection(db, collectionName(module)),
+      where('order_id', '==', order.id),
+    ))
+    const authoritativeRecords = relationSnapshot.docs.map(snapshot => ({
+      ...snapshot.data(),
+      id: snapshot.id,
+    }) as RelationRecord)
+
     let localRecord: RelationRecord = { ...input.record }
     let localOrderPatch: Record<string, any> = {}
 
@@ -137,7 +152,7 @@ export function useAtomicOrderRelations() {
 
       if (mode === 'delete') {
         transaction.update(childRef, softDeletePayload())
-        nextRecords = removeRelationRecord(existingRecords, recordId)
+        nextRecords = removeRelationRecord(authoritativeRecords, recordId)
         localRecord = {
           ...(childSnap?.data() || input.record),
           id: recordId,
@@ -159,7 +174,7 @@ export function useAtomicOrderRelations() {
         }
         if (mode !== 'create') delete firestorePayload.created_at
         transaction.set(childRef, firestorePayload, { merge: mode !== 'create' })
-        nextRecords = replaceRelationRecord(existingRecords, {
+        nextRecords = replaceRelationRecord(authoritativeRecords, {
           ...payload,
           id: recordId,
           relation_revision: nextRevision,
