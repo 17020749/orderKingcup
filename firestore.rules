@@ -841,13 +841,18 @@ service cloud.firestore {
 
     // Reads the parent only once for child validation. Ownership fields must
     // match the active parent, and the relation summary must advance atomically.
+    function canManageOrderRelationsData(order) {
+      return ownsOrderData(order)
+        || hasPerm('orders.view_all');
+    }
+
     function relationCreateBase(orderId) {
       let path = orderPath(orderId);
       let order = get(path).data;
       return orderId is string
         && exists(path)
         && orderDataIsActive(order)
-        && (ownsOrderData(order) || isAdmin())
+        && canManageOrderRelationsData(order)
         && requestMatchesOrderData(order)
         && ownEmailField(request.resource.data, 'created_by');
     }
@@ -858,7 +863,7 @@ service cloud.firestore {
       return orderId is string
         && exists(path)
         && orderDataIsActive(order)
-        && (ownsOrderData(order) || isAdmin())
+        && canManageOrderRelationsData(order)
         && request.resource.data.order_id == resource.data.order_id
         && childIdentityUnchanged()
         && childOwnershipSafe(orderId);
@@ -926,7 +931,7 @@ service cloud.firestore {
     function orderPaymentSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return ownsOrderData(resource.data)
+      return canManageOrderRelationsData(resource.data)
         && orderIdentityUnchanged()
         && onlyChanged([
           'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
@@ -949,7 +954,7 @@ service cloud.firestore {
     function orderInvoiceSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return ownsOrderData(resource.data)
+      return canManageOrderRelationsData(resource.data)
         && orderIdentityUnchanged()
         && onlyChanged([
           'invoice_status', 'invoice_record_count', 'invoice_relation_revision',
@@ -970,7 +975,7 @@ service cloud.firestore {
     function orderShipmentSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return ownsOrderData(resource.data)
+      return canManageOrderRelationsData(resource.data)
         && orderIdentityUnchanged()
         && onlyChanged([
           'shipment_status', 'shipping_fee_total', 'cod_amount_total',
