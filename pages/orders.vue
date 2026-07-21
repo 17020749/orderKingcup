@@ -26,6 +26,7 @@ const {
   loadScopedOrderItems,
   loadScopedPaymentsForOrders,
   loadScopedExportRequestsForOrders,
+  loadScopedExportRequests,
   loadScopedCustomers,
   loadProducts,
 } = useScopedQueries()

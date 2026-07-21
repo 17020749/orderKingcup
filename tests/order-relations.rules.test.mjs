@@ -16,6 +16,7 @@ import {
 const projectId = 'demo-order-relations-step7'
 const SALE = 'sale@example.com'
 const MANAGER = 'manager@example.com'
+const CASHIER = 'cashier@example.com'
 let env
 
 function baseOrder(id = 'order-a') {
@@ -99,6 +100,15 @@ async function seed() {
           'shipments.view', 'shipments.create', 'shipments.edit', 'shipments.delete',
         ],
       }),
+      setDoc(doc(db, 'users', CASHIER), {
+        email: CASHIER,
+        active: true,
+        deleted: false,
+        permissions_flat: [
+          'orders.view_all',
+          'payments.create',
+        ],
+      }),
       setDoc(doc(db, 'orders', 'order-a'), baseOrder('order-a')),
       setDoc(doc(db, 'orders', 'order-zero'), baseOrder('order-zero')),
       setDoc(doc(db, 'orders', 'order-legacy'), {
@@ -142,6 +152,44 @@ test('non-admin có orders.view_all được thêm thanh toán cho đơn của s
     payment_count: 1,
     deposit_count: 1,
     collect_count: 0,
+  })
+  await assertSucceeds(batch.commit())
+})
+
+test('non-admin chỉ có payments.create vẫn đọc đủ payment của đơn được xem và thêm payment thứ hai', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore()
+    await setDoc(doc(db, 'payments', 'pay-existing'), {
+      id: 'pay-existing', order_id: 'order-a', order_code: 'order-a',
+      payment_type: 'Cọc', payment_status: 'Đã nhận', amount: 200,
+      created_by: SALE, ...ownership(), active: true, deleted: false, status: 'active',
+    })
+    await updateDoc(doc(db, 'orders', 'order-a'), {
+      payment_record_count: 1, payment_relation_revision: 1, paid_amount: 200, debt_amount: 800,
+      payment_status: 'Đã cọc', computed_payment_status: 'Đã cọc', payment_count: 1, deposit_count: 1, collect_count: 0,
+    })
+  })
+
+  const db = env.authenticatedContext(CASHIER, { email: CASHIER }).firestore()
+  await assertSucceeds(getDoc(doc(db, 'payments', 'pay-existing')))
+
+  const batch = writeBatch(db)
+  batch.set(doc(db, 'payments', 'pay-cashier'), {
+    id: 'pay-cashier', order_id: 'order-a', order_code: 'order-a',
+    payment_type: 'Thu 1', payment_status: 'Đã nhận', amount: 300,
+    created_by: CASHIER, ...ownership(), active: true, deleted: false, status: 'active',
+  })
+  batch.update(doc(db, 'orders', 'order-a'), {
+    ...relationMeta('payments', 'create', 'pay-cashier', CASHIER),
+    payment_record_count: 2,
+    payment_relation_revision: 2,
+    paid_amount: 500,
+    debt_amount: 500,
+    payment_status: 'Đã cọc + thanh toán 1 phần',
+    computed_payment_status: 'Đã cọc + thanh toán 1 phần',
+    payment_count: 2,
+    deposit_count: 1,
+    collect_count: 1,
   })
   await assertSucceeds(batch.commit())
 })
