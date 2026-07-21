@@ -9,6 +9,7 @@ import {
   printingLockReady,
 } from '../utils/orderPrintingDeleteLock.mjs'
 
+// Regression coverage for automatic printing and order-relation lock reconciliation.
 const readyOrder = {
   id: 'order-a',
   printing_lock_version: 1,
