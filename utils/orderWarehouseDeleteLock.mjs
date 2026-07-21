@@ -64,7 +64,7 @@ export function warehouseOrderDeleteBlocker(order = {}, requests = []) {
   const requestSummaryStatus = canonicalStatus(order?.warehouse_request_status)
 
   if (EXPORTED_FULFILLMENT_STATUSES.has(fulfillmentStatus) || requestSummaryStatus === 'da_xuat') {
-    return 'Đơn hàng đã cho xuất kho nên không thể xóa.'
+    return 'Đơn hàng đã xuất kho nên không thể xóa.'
   }
   if (ACCEPTED_REQUEST_STATUSES.has(requestSummaryStatus)) {
     return 'Yêu cầu xuất kho đã tiếp nhận hoặc đang chờ xuất nên không thể xóa đơn hàng.'
