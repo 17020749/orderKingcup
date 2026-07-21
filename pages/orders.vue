@@ -757,8 +757,7 @@ async function saveOrder() {
 
     const localOrder = {
       ...(editing.value || {}),
-      ...baseOrder,
-      ...paymentSummary,
+      ...result.orderPayload,
       id: form.id,
       order_code: result.orderCode,
       order_sequence: result.orderSequence,
