@@ -32,83 +32,13 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: warehouse-ci-${{ github.event.pull_request.number || inputs.target || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  patch_shipment_rules:
-    name: Apply scoped shipment rules patch
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.head_ref == 'agent/fix-order-payment-export-permissions'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout feature branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-
-      - name: Replace shipment read scope
-        shell: python
-        run: |
-          from pathlib import Path
-
-          path = Path('firestore.rules')
-          source = path.read_text(encoding='utf-8')
-          old = """    match /shipments/{docId} {
-      allow read: if isAdmin()
-        || (
-          hasPerm('shipments.view')
-          && (
-            ownsOrderChildData(resource.data)
-            || (
-              resource.data.order_id is string
-              && ownsOrderById(resource.data.order_id)
-            )
-          )
-        );
-"""
-          new = """    match /shipments/{docId} {
-      allow read: if hasPerm('shipments.view_all')
-        || (
-          hasAnyPerm([
-            'shipments.view',
-            'shipments.create',
-            'shipments.edit',
-            'shipments.delete'
-          ])
-          && (
-            hasPerm('orders.view_all')
-            || ownsOrderChildData(resource.data)
-            || (
-              resource.data.order_id is string
-              && ownsOrderById(resource.data.order_id)
-            )
-          )
-        );
-"""
-          if old not in source:
-            if new in source:
-              raise SystemExit(0)
-            raise SystemExit('Expected shipment rules block was not found')
-          if source.count(old) != 1:
-            raise SystemExit('Shipment rules block must occur exactly once')
-          path.write_text(source.replace(old, new), encoding='utf-8')
-
-      - name: Commit rules change
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add firestore.rules
-          git diff --cached --quiet && exit 0
-          git commit -m "align shipment firestore permissions"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
-
   verify:
     name: Build, generate and rules tests
     runs-on: ubuntu-latest
