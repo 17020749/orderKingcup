@@ -1,0 +1,39 @@
+name: Agent PR trigger
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.ref == 'agent/unify-view-all-actions' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/unify-view-all-actions
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Extract and run patch
+        run: |
+          awk '/^          python3 - <<'"'"'PY'"'"'/{capture=1; next} capture && /^          PY$/{exit} capture{sub(/^          /, ""); print}' .github/workflows/agent-unify-view-all.yml > /tmp/patch.py
+          python3 /tmp/patch.py
+      - run: npm ci
+      - run: node --test tests/permission-matrix.client.test.mjs tests/view-all-action-scopes.client.test.mjs
+      - run: npm run test:rules
+      - name: Commit final changes
+        run: |
+          rm .github/workflows/agent-unify-view-all.yml .github/workflows/agent-pr-trigger.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "unify view all action scopes"
+          git push origin HEAD:agent/unify-view-all-actions
