@@ -28,7 +28,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sed -n '32,326p' .github/workflows/agent-unify-view-all.yml | sed 's/^          //' > /tmp/patch.py
+          sed -n '30,324p' .github/workflows/agent-unify-view-all.yml | sed 's/^          //' > /tmp/patch.py
           set +e
           python3 /tmp/patch.py > /tmp/patch.log 2>&1
           status=$?
