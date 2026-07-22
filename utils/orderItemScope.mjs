@@ -2,6 +2,11 @@ function text(value) {
   return String(value || '').trim()
 }
 
+// Keep relation queries below Firestore Rules' per-request access-call limit.
+// A query can evaluate both the user's permission document and each parent
+// order, so using five IDs leaves room for those rule lookups.
+export const SAFE_RELATION_QUERY_CHUNK_SIZE = 5
+
 export function uniqueOrderIds(orders = []) {
   return Array.from(new Set(
     (Array.isArray(orders) ? orders : [])
@@ -10,9 +15,10 @@ export function uniqueOrderIds(orders = []) {
   )).sort((left, right) => left.localeCompare(right))
 }
 
-export function chunkOrderIds(orderIds = [], size = 10) {
+export function chunkOrderIds(orderIds = [], size = SAFE_RELATION_QUERY_CHUNK_SIZE) {
   const ids = Array.from(new Set((Array.isArray(orderIds) ? orderIds : []).map(text).filter(Boolean)))
-  const safeSize = Math.max(1, Math.min(30, Number(size) || 10))
+  const requestedSize = Number(size) || SAFE_RELATION_QUERY_CHUNK_SIZE
+  const safeSize = Math.max(1, Math.min(SAFE_RELATION_QUERY_CHUNK_SIZE, requestedSize))
   const chunks = []
   for (let index = 0; index < ids.length; index += safeSize) {
     chunks.push(ids.slice(index, index + safeSize))

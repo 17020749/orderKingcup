@@ -19,9 +19,14 @@ test('lấy danh sách order id duy nhất và ổn định từ các đơn đã
 
 test('chia query order_id thành nhóm an toàn cho Firestore in query', () => {
   const ids = Array.from({ length: 23 }, (_, index) => `order-${index + 1}`)
-  const chunks = chunkOrderIds(ids, 10)
-  assert.deepEqual(chunks.map(group => group.length), [10, 10, 3])
+  const chunks = chunkOrderIds(ids)
+  assert.deepEqual(chunks.map(group => group.length), [5, 5, 5, 5, 3])
   assert.deepEqual(chunks.flat(), ids)
+})
+
+test('relation query chunks are capped at the safe size', () => {
+  const chunks = chunkOrderIds(Array.from({ length: 11 }, (_, index) => `order-${index + 1}`), 30)
+  assert.deepEqual(chunks.map(group => group.length), [5, 5, 1])
 })
 
 test('dòng sản phẩm legacy không cần owner_email vẫn được giữ theo order_id', () => {
@@ -63,6 +68,9 @@ test('client thực tế query order_items theo order_id thay vì email sao ché
   const nuxtConfig = readFileSync('nuxt.config.ts', 'utf8')
 
   assert.match(source, /where\('order_id', 'in', group\)/)
+  assert.match(source, /Promise\.allSettled/)
+  assert.match(source, /SAFE_RELATION_QUERY_CHUNK_SIZE/)
+  assert.match(source, /failed_order_ids/)
   assert.match(source, /uniqueOrderIds\(orders\)/)
   assert.match(source, /filterItemsForVisibleOrders\(rows, orderIds\)/)
   assert.doesNotMatch(source, /listByEmailFields<OrderItemDoc>/)
@@ -78,4 +86,15 @@ test('màn hình đơn và yêu cầu xuất cùng dùng auto-import useScopedQu
 
   assert.match(ordersPage, /loadScopedOrderItems\(pageOrders, force\)/)
   assert.match(requestsPage, /loadScopedOrderItems\(orders\.value, force\)/)
+})
+
+test('related pages use the shared order_items loader', () => {
+  for (const page of [
+    'pages/dashboard.vue',
+    'pages/shipments.vue',
+    'pages/export-requests.vue',
+    'pages/warehouse-export-requests.vue',
+  ]) {
+    assert.match(readFileSync(page, 'utf8'), /loadScopedOrderItems/)
+  }
 })
