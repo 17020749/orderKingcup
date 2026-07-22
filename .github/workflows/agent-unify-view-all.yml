@@ -1,0 +1,344 @@
+name: Agent unify view-all permissions
+
+on:
+  push:
+    branches:
+      - agent/unify-view-all-actions
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/unify-view-all-actions
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Apply permission scope changes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, found {count}\n{old}')
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'constants/permissions.ts',
+              "  { key: 'invoices.view', group: 'Hóa đơn', name: 'Xem dữ liệu' },\n  { key: 'invoices.create', group: 'Hóa đơn', name: 'Thêm dữ liệu' },",
+              "  { key: 'invoices.view', group: 'Hóa đơn', name: 'Xem hóa đơn của mình' },\n  { key: 'invoices.view_all', group: 'Hóa đơn', name: 'Xem tất cả hóa đơn', emphasis: 'scope' },\n  { key: 'invoices.create', group: 'Hóa đơn', name: 'Thêm dữ liệu' },",
+          )
+
+          replace_once(
+              'constants/accessMatrix.mjs',
+              "  'export_requests.view_all': ['page.export_requests'],",
+              "  'export_requests.view_all': ['page.export_requests', 'orders.view_all'],",
+          )
+          replace_once(
+              'constants/accessMatrix.mjs',
+              "  'invoices.view': ['page.invoices', 'orders.view'],\n  'invoices.create': ['page.invoices', 'invoices.view', 'orders.view'],",
+              "  'invoices.view': ['page.invoices', 'orders.view'],\n  'invoices.view_all': ['page.invoices', 'orders.view_all'],\n  'invoices.create': ['page.invoices', 'invoices.view', 'orders.view'],",
+          )
+
+          replace_once(
+              'composables/useScopedQueries.ts',
+              "    if (!isAdminUser()) return fullCursorPage(await loadScopedInvoices(force))",
+              "    if (!canAll('invoices.view_all')) return fullCursorPage(await loadScopedInvoices(force))",
+          )
+          replace_once(
+              'composables/useScopedQueries.ts',
+              "  async function loadScopedInvoices(force = false) {\n    if (isAdminUser()) {",
+              "  async function loadScopedInvoices(force = false) {\n    if (canAll('invoices.view_all')) {",
+          )
+
+          rules = Path('firestore.rules')
+          text = rules.read_text()
+
+          old = """    function canMutateOrderById(orderId) {
+      let path = orderPath(orderId);
+      let order = get(path).data;
+      return orderId is string
+        && exists(path)
+        && orderDataIsActive(order)
+        && (
+          isAdmin()
+          || ownsOrderData(order)
+        );
+    }
+
+    function canMutateOrderAfterById(orderId) {
+      let path = orderPath(orderId);
+      let order = getAfter(path).data;
+      return orderId is string
+        && existsAfter(path)
+        && orderDataIsActive(order)
+        && (
+          isAdmin()
+          || ownsOrderData(order)
+        );
+    }
+"""
+          new = """    function canMutateOrderById(orderId) {
+      let path = orderPath(orderId);
+      let order = get(path).data;
+      return orderId is string
+        && exists(path)
+        && orderDataIsActive(order)
+        && (
+          isAdmin()
+          || hasPerm('orders.view_all')
+          || ownsOrderData(order)
+        );
+    }
+
+    function canMutateOrderAfterById(orderId) {
+      let path = orderPath(orderId);
+      let order = getAfter(path).data;
+      return orderId is string
+        && existsAfter(path)
+        && orderDataIsActive(order)
+        && (
+          isAdmin()
+          || hasPerm('orders.view_all')
+          || ownsOrderData(order)
+        );
+    }
+"""
+          if text.count(old) != 1:
+              raise SystemExit('firestore.rules: order mutation helper block mismatch')
+          text = text.replace(old, new, 1)
+
+          replacements = [
+              (
+                  """          && hasPerm('orders.delete')
+          && ownsOrderData(resource.data)
+          && orderIdentityUnchanged()""",
+                  """          && hasPerm('orders.delete')
+          && (
+            hasPerm('orders.view_all')
+            || ownsOrderData(resource.data)
+          )
+          && orderIdentityUnchanged()""",
+              ),
+              (
+                  """          hasPerm('orders.edit')
+          && ownsOrderData(resource.data)
+          && orderIdentityUnchanged()""",
+                  """          hasPerm('orders.edit')
+          && (
+            hasPerm('orders.view_all')
+            || ownsOrderData(resource.data)
+          )
+          && orderIdentityUnchanged()""",
+              ),
+              (
+                  """          hasPerm('orders.delete')
+          && ownsOrderData(resource.data)
+          && orderCanBeDeleted()""",
+                  """          hasPerm('orders.delete')
+          && (
+            hasPerm('orders.view_all')
+            || ownsOrderData(resource.data)
+          )
+          && orderCanBeDeleted()""",
+              ),
+              (
+                  """        && hasAnyPerm(['export_requests.delete', 'orders.delete'])
+        && ownsOrderChildData(resource.data);""",
+                  """        && hasAnyPerm(['export_requests.delete', 'orders.delete'])
+        && (
+          hasPerm('export_requests.view_all')
+          || ownsOrderChildData(resource.data)
+        );""",
+              ),
+              (
+                  """        && hasPerm('orders.warehouse_export')
+        && ownsOrderChildData(resource.data)
+        && ownEmailField(request.resource.data, 'updated_by');""",
+                  """        && hasPerm('orders.warehouse_export')
+        && (
+          hasPerm('export_requests.view_all')
+          || ownsOrderChildData(resource.data)
+        )
+        && ownEmailField(request.resource.data, 'updated_by');""",
+              ),
+              (
+                  """    match /invoices/{docId} {
+      allow read: if isAdmin()
+        || (
+          hasPerm('invoices.view')
+          && (
+            ownsOrderChildData(resource.data)
+            || (
+              resource.data.order_id is string
+              && ownsOrderById(resource.data.order_id)
+            )
+          )
+        );""",
+                  """    match /invoices/{docId} {
+      allow read: if hasPerm('invoices.view_all')
+        || (
+          hasAnyPerm([
+            'invoices.view',
+            'invoices.create',
+            'invoices.edit',
+            'invoices.delete'
+          ])
+          && (
+            hasPerm('orders.view_all')
+            || ownsOrderChildData(resource.data)
+            || (
+              resource.data.order_id is string
+              && ownsOrderById(resource.data.order_id)
+            )
+          )
+        );""",
+              ),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'firestore.rules: expected one match, found {count}: {old[:100]}')
+              text = text.replace(old, new, 1)
+          rules.write_text(text)
+
+          permission_test = Path('tests/permission-matrix.client.test.mjs')
+          text = permission_test.read_text()
+          addition = r'''
+
+test('view_all mở rộng đúng scope nhưng không tự cấp action', () => {
+  const cases = [
+    ['orders.view_all', 'page.orders', null],
+    ['export_requests.view_all', 'page.export_requests', 'orders.view_all'],
+    ['payments.view_all', 'page.payments', 'orders.view_all'],
+    ['invoices.view_all', 'page.invoices', 'orders.view_all'],
+    ['shipments.view_all', 'page.shipments', 'orders.view_all'],
+  ]
+
+  for (const [permission, pagePermission, orderScope] of cases) {
+    const grants = grantSet(permission)
+    assert.equal(grants.has(permission), true)
+    assert.equal(grants.has(pagePermission), true)
+    if (orderScope) assert.equal(grants.has(orderScope), true)
+  }
+
+  const allOnly = resolvePermissionDependencies([
+    'orders.view_all',
+    'export_requests.view_all',
+    'payments.view_all',
+    'invoices.view_all',
+    'shipments.view_all',
+  ])
+  for (const action of [
+    'orders.edit', 'orders.delete',
+    'orders.warehouse_export', 'export_requests.delete',
+    'payments.edit', 'payments.delete',
+    'invoices.edit', 'invoices.delete',
+    'shipments.edit', 'shipments.delete',
+  ]) {
+    assert.equal(allOnly.includes(action), false, `${action} không được tự cấp từ view_all`)
+  }
+})
+'''
+          if "view_all mở rộng đúng scope" not in text:
+              permission_test.write_text(text + addition)
+
+          Path('tests/view-all-action-scopes.client.test.mjs').write_text(r'''import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { test } from 'node:test'
+
+const accessMatrix = readFileSync('constants/accessMatrix.mjs', 'utf8')
+const scopedQueries = readFileSync('composables/useScopedQueries.ts', 'utf8')
+const firestoreRules = readFileSync('firestore.rules', 'utf8')
+const ordersPage = readFileSync('pages/orders.vue', 'utf8')
+const requestsPage = readFileSync('pages/export-requests.vue', 'utf8')
+const paymentsPage = readFileSync('pages/payments.vue', 'utf8')
+const invoicesPage = readFileSync('pages/invoices.vue', 'utf8')
+const shipmentsPage = readFileSync('pages/shipments.vue', 'utf8')
+
+test('các page dùng view_all để mở rộng dữ liệu, action vẫn là quyền riêng', () => {
+  assert.match(scopedQueries, /canAll\('orders\.view_all'\)/)
+  assert.match(scopedQueries, /canAll\('export_requests\.view_all'\)/)
+  assert.match(scopedQueries, /canAll\('payments\.view_all'\)/)
+  assert.match(scopedQueries, /canAll\('invoices\.view_all'\)/)
+  assert.match(scopedQueries, /canAll\('shipments\.view_all'\)/)
+
+  assert.match(ordersPage, /hasPermission\('orders\.edit'\)/)
+  assert.match(ordersPage, /hasPermission\('orders\.delete'\)/)
+  assert.match(requestsPage, /hasPermission\("orders\.warehouse_export"\)/)
+  assert.match(requestsPage, /hasPermission\("export_requests\.delete"\)/)
+  assert.match(paymentsPage, /hasPermission\('payments\.edit'\)/)
+  assert.match(paymentsPage, /hasPermission\('payments\.delete'\)/)
+  assert.match(invoicesPage, /hasPermission\('invoices\.edit'\)/)
+  assert.match(invoicesPage, /hasPermission\('invoices\.delete'\)/)
+  assert.match(shipmentsPage, /hasPermission\('shipments\.edit'\)/)
+  assert.match(shipmentsPage, /hasPermission\('shipments\.delete'\)/)
+})
+
+test('dependency kéo parent order scope cho các page quan hệ', () => {
+  for (const permission of [
+    'export_requests.view_all',
+    'payments.view_all',
+    'invoices.view_all',
+    'shipments.view_all',
+  ]) {
+    const escaped = permission.replace('.', '\\.')
+    assert.match(accessMatrix, new RegExp(`'${escaped}': \\[[^\\]]*'orders\\.view_all'`))
+  }
+})
+
+test('rules yêu cầu đồng thời action và all-scope khi thao tác bản ghi người khác', () => {
+  assert.match(firestoreRules, /hasPerm\('orders\.edit'\)[\s\S]*hasPerm\('orders\.view_all'\)[\s\S]*ownsOrderData\(resource\.data\)/)
+  assert.match(firestoreRules, /hasPerm\('orders\.delete'\)[\s\S]*hasPerm\('orders\.view_all'\)[\s\S]*ownsOrderData\(resource\.data\)/)
+  assert.match(firestoreRules, /hasPerm\('orders\.warehouse_export'\)[\s\S]*hasPerm\('export_requests\.view_all'\)[\s\S]*ownsOrderChildData\(resource\.data\)/)
+  assert.match(firestoreRules, /hasAnyPerm\(\['export_requests\.delete', 'orders\.delete'\]\)[\s\S]*hasPerm\('export_requests\.view_all'\)/)
+  assert.match(firestoreRules, /match \/invoices\/\{docId\} \{[\s\S]*hasPerm\('invoices\.view_all'\)/)
+})
+
+test('không thay đổi nghiệp vụ riêng của page tiến độ in ấn', () => {
+  assert.doesNotMatch(accessMatrix, /'printing\.view_all': \[[^\]]*'orders\.view_all'/)
+  assert.match(firestoreRules, /printingCanOperateProgressAfterById/)
+})
+''')
+
+          package = Path('package.json')
+          text = package.read_text()
+          old = 'tests/shipment-permission-flow.client.test.mjs tests/shipment-permissions.rules.test.mjs\\"'
+          new = 'tests/shipment-permission-flow.client.test.mjs tests/shipment-permissions.rules.test.mjs tests/view-all-action-scopes.client.test.mjs\\"'
+          if old not in text:
+              raise SystemExit('package.json test:rules tail mismatch')
+          package.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run focused client tests
+        run: node --test tests/permission-matrix.client.test.mjs tests/view-all-action-scopes.client.test.mjs
+
+      - name: Run complete rule suite
+        run: npm run test:rules
+
+      - name: Commit final changes
+        shell: bash
+        run: |
+          rm .github/workflows/agent-unify-view-all.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add constants/permissions.ts constants/accessMatrix.mjs composables/useScopedQueries.ts firestore.rules tests/permission-matrix.client.test.mjs tests/view-all-action-scopes.client.test.mjs package.json .github/workflows/agent-unify-view-all.yml
+          git commit -m "unify view all action scopes"
+          git push origin HEAD:agent/unify-view-all-actions
