@@ -3,6 +3,8 @@ import type { CustomerDoc, OrderDoc, OrderItemDoc, ShipmentDoc } from '~/types/m
 import { formatDateTime, isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 import { toDateKey } from '~/utils/listFilters'
 
@@ -18,9 +20,10 @@ const {
   loadScopedPaymentsForOrders,
   loadScopedCustomers,
   loadScopedShipmentsPage,
+  loadScopedShipmentsForOrders,
 } = useScopedQueries()
 const { computePaymentStatus, parseLogoLines } = useOrderLogic()
-const { appUser, hasPermission } = useAuth()
+const { appUser, permissions, hasPermission } = useAuth()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
@@ -85,6 +88,28 @@ function resetFilters() {
 }
 
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id))
+
+function shipmentActionDecision(action: 'create' | 'edit' | 'delete', row?: ShipmentWithPayerAmounts | null, order?: OrderDoc | null) {
+  return moduleActionDecision({
+    actionPermission: `shipments.${action}`,
+    viewAllPermission: 'shipments.view_all',
+    permissions: permissions.value,
+    record: row || null,
+    parent: order || (row ? orders.value.find(item => item.id === row.order_id) : selectedOrder.value) || null,
+    currentUserEmail: appUser.value?.email || '',
+  })
+}
+
+function shipmentActionError(action: 'create' | 'edit' | 'delete', row?: ShipmentWithPayerAmounts | null) {
+  return permissionDecisionMessage(shipmentActionDecision(action, row), {
+    operation: `${action === 'create' ? 'tạo' : action === 'edit' ? 'sửa' : 'xóa'} vận chuyển`,
+    record: row?.tracking_code || row?.id || form.id || '(mới)',
+    status: row?.shipping_status || row?.status || form.shipping_status || '',
+  })
+}
+
+function canEditShipment(row: ShipmentWithPayerAmounts) { return shipmentActionDecision('edit', row).allowed }
+function canDeleteShipment(row: ShipmentWithPayerAmounts) { return shipmentActionDecision('delete', row).allowed }
 const selectedCustomer = computed(() => customers.value.find(customer => customer.id === selectedOrder.value?.customer_id))
 const selectedOrderItems = computed(() => selectedOrder.value ? (itemsByOrder.value[selectedOrder.value.id] || []) : [])
 const detailOrder = computed(() => orders.value.find(order => order.id === selectedDetail.value?.order_id))
@@ -261,7 +286,7 @@ function openDetail(row: ShipmentWithPayerAmounts) {
 }
 
 function openModal(row?: ShipmentWithPayerAmounts) {
-  if (row && !hasPermission('shipments.edit') && !hasPermission('*')) return showToast('Bạn không có quyền sửa vận chuyển.', 'error')
+  if (row && !canEditShipment(row)) return showToast(shipmentActionError('edit', row), 'error')
   editing.value = row || null
   Object.keys(form).forEach(key => delete form[key])
   if (row) {
@@ -304,8 +329,6 @@ function openModal(row?: ShipmentWithPayerAmounts) {
 }
 
 async function save() {
-  if (editing.value && !hasPermission('shipments.edit') && !hasPermission('*')) return showToast('Bạn không có quyền sửa vận chuyển.', 'error')
-  if (!editing.value && !hasPermission('shipments.create') && !hasPermission('*')) return showToast('Bạn không có quyền tạo vận chuyển.', 'error')
   if (!form.order_id) return showToast('Vui lòng chọn đơn hàng.', 'error')
   if (!form.customer_pays_shipping && !form.company_pays_shipping) return showToast('Vui lòng chọn ít nhất một bên trả phí vận chuyển.', 'error')
 
@@ -317,6 +340,8 @@ async function save() {
 
   const order = selectedOrder.value
   if (!order) return showToast('Không tìm thấy đơn hàng.', 'error')
+  const action = editing.value ? 'edit' : 'create'
+  if (!shipmentActionDecision(action, editing.value, order).allowed) return showToast(shipmentActionError(action, editing.value), 'error')
 
   saving.value = true
   await withLoading(async () => {
@@ -344,7 +369,7 @@ async function save() {
         shipping_revenue_amount: shippingRevenueAmount,
         created_by: editing.value?.created_by || appUser.value?.email || '',
       },
-      existingRecords: rows.value.filter(row => row.order_id === order.id),
+      existingRecords: await loadScopedShipmentsForOrders([order], true),
       actor: appUser.value?.email || '',
     })
 
@@ -355,14 +380,18 @@ async function save() {
     Object.assign(order, result.orderPatch)
     showModal.value = false
     showToast(editing.value ? 'Đã cập nhật vận chuyển và tổng hợp đơn hàng.' : 'Đã thêm vận chuyển và cập nhật đơn hàng.', 'success')
-  }).catch(error => showToast(reportFirebaseError(error, 'Không lưu được vận chuyển. Toàn bộ thay đổi đã hoàn tác.'), 'error'))
+  }).catch(error => showToast(reportFirebaseError(error, 'Không lưu được vận chuyển. Toàn bộ thay đổi đã hoàn tác.', {
+    operation: `shipments.${action}`, record: form.id || form.order_id,
+    status: editing.value?.status || form.status, actionPermission: `shipments.${action}`,
+    scopePermission: 'shipments.view_all',
+  }), 'error'))
     .finally(() => { saving.value = false })
 }
 
 async function remove(row: ShipmentWithPayerAmounts) {
-  if (!hasPermission('shipments.delete') && !hasPermission('*')) return showToast('Bạn không có quyền xóa vận chuyển.', 'error')
   const order = orders.value.find(item => item.id === row.order_id)
   if (!order) return showToast('Không tìm thấy đơn hàng cha của vận chuyển.', 'error')
+  if (!shipmentActionDecision('delete', row, order).allowed) return showToast(shipmentActionError('delete', row), 'error')
   const confirmed = await askConfirm({
     title: 'Xóa vận chuyển',
     message: `Bạn chắc chắn muốn xóa vận chuyển của đơn ${row.order_code}?`,
@@ -375,13 +404,16 @@ async function remove(row: ShipmentWithPayerAmounts) {
       mode: 'delete',
       order,
       record: row,
-      existingRecords: rows.value.filter(item => item.order_id === order.id),
+      existingRecords: await loadScopedShipmentsForOrders([order], true),
       actor: appUser.value?.email || '',
     })
     rows.value = rows.value.filter(item => item.id !== row.id)
     Object.assign(order, result.orderPatch)
     showToast('Đã xóa vận chuyển và cập nhật lại tổng hợp đơn hàng.', 'success')
-  }).catch(error => showToast(reportFirebaseError(error, 'Không xóa được vận chuyển. Toàn bộ thay đổi đã hoàn tác.'), 'error'))
+  }).catch(error => showToast(reportFirebaseError(error, 'Không xóa được vận chuyển. Toàn bộ thay đổi đã hoàn tác.', {
+    operation: 'shipments.delete', record: row.id, status: row.status,
+    actionPermission: 'shipments.delete', scopePermission: 'shipments.view_all',
+  }), 'error'))
 }
 
 onMounted(() => loadRows())
@@ -428,8 +460,8 @@ onMounted(() => loadRows())
               <td>
                 <div class="action-buttons">
                   <button class="btn-sm btn-view" @click="openDetail(row)">Xem</button>
-                  <button v-if="hasPermission('shipments.edit') || hasPermission('*')" class="btn-sm" @click="openModal(row)">Sửa</button>
-                  <button v-if="hasPermission('shipments.delete') || hasPermission('*')" class="btn-sm btn-delete" @click="remove(row)">Xóa</button>
+                  <button v-if="canEditShipment(row)" class="btn-sm" @click="openModal(row)">Sửa</button>
+                  <button v-if="canDeleteShipment(row)" class="btn-sm btn-delete" @click="remove(row)">Xóa</button>
                 </div>
               </td>
             </tr>

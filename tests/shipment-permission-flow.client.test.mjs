@@ -15,8 +15,8 @@ test('shipment permissions expose the same own/all scope model as payments', () 
   assert.match(accessMatrix, /'shipments\.view_all': \['page\.shipments', 'orders\.view_all'\]/)
   assert.match(scopedQueries, /canAll\('shipments\.view_all'\)/)
   assert.match(firestoreRules, /match \/shipments\/\{docId\} \{\s*allow read: if hasPerm\('shipments\.view_all'\)/)
-  assert.match(firestoreRules, /hasPerm\('orders\.view_all'\)/)
-  assert.match(firestoreRules, /hasAnyPerm\(\[\s*'shipments\.view',\s*'shipments\.create',\s*'shipments\.edit',\s*'shipments\.delete'/)
+  assert.match(firestoreRules, /relationCreateBase\(request\.resource\.data\.order_id, 'shipments\.view_all'\)/)
+  assert.match(firestoreRules, /relationExistingChildBase\(resource\.data\.order_id, 'shipments\.view_all'\)/)
 })
 
 test('shipment relation summaries use all records for the selected order', () => {

@@ -4,11 +4,13 @@ import type { OrderDoc, PaymentDoc } from '~/types/models'
 import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 import { toDateKey } from '~/utils/listFilters'
 
 const { mutateOrderRelation } = useAtomicOrderRelations()
-const { appUser, hasPermission } = useAuth()
+const { appUser, permissions, hasPermission } = useAuth()
 const { loadScopedOrders, loadScopedPaymentsPage, loadScopedPaymentsForOrders } = useScopedQueries()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
@@ -73,8 +75,35 @@ function resetFilters() {
   dateTo.value = ''
 }
 
-const canEditPayments = computed(() => hasPermission('*') || hasPermission('payments.edit'))
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id || order.order_code === form.order_code))
+
+function paymentActionDecision(action: 'create' | 'edit' | 'delete', row?: PaymentDoc | null, order?: OrderDoc | null) {
+  return moduleActionDecision({
+    actionPermission: `payments.${action}`,
+    viewAllPermission: 'payments.view_all',
+    permissions: permissions.value,
+    record: row || null,
+    parent: order || (row ? orders.value.find(item => item.id === row.order_id) : selectedOrder.value) || null,
+    currentUserEmail: appUser.value?.email || '',
+  })
+}
+
+function paymentActionError(action: 'create' | 'edit' | 'delete', row?: PaymentDoc | null) {
+  const order = row ? orders.value.find(item => item.id === row.order_id) : selectedOrder.value
+  return permissionDecisionMessage(paymentActionDecision(action, row, order), {
+    operation: `${action === 'create' ? 'tạo' : action === 'edit' ? 'sửa' : 'xóa'} thanh toán`,
+    record: row?.id || form.id || '(mới)',
+    status: row?.status || form.status || '',
+  })
+}
+
+function canEditPayment(row: PaymentDoc) {
+  return paymentActionDecision('edit', row).allowed
+}
+
+function canDeletePayment(row: PaymentDoc) {
+  return paymentActionDecision('delete', row).allowed
+}
 
 async function loadRows(force = false, append = false) {
   if (append && (!hasMoreRows.value || loadingMore.value)) return
@@ -112,7 +141,7 @@ function openDetail(row: PaymentDoc) {
 }
 
 function openModal(row?: PaymentDoc) {
-  if (row && !canEditPayments.value) return showToast('Bạn không có quyền sửa thanh toán.', 'error')
+  if (row && !canEditPayment(row)) return showToast(paymentActionError('edit', row), 'error')
   editing.value = row || null
   Object.assign(form, row ? { ...row } : {
     id: makeId('pay'),
@@ -131,12 +160,12 @@ function openModal(row?: PaymentDoc) {
 }
 
 async function savePayment() {
-  if (editing.value && !canEditPayments.value) return showToast('Bạn không có quyền sửa thanh toán.', 'error')
-  if (!editing.value && !hasPermission('payments.create') && !hasPermission('*')) return showToast('Bạn không có quyền tạo thanh toán.', 'error')
   chooseOrder()
   if (!form.order_id) return showToast('Thiếu đơn hàng.', 'error')
   const order = selectedOrder.value
   if (!order) return showToast(`Không tìm thấy đơn hàng với mã: ${form.order_code || form.order_id}`, 'error')
+  const action = editing.value ? 'edit' : 'create'
+  if (!paymentActionDecision(action, editing.value, order).allowed) return showToast(paymentActionError(action, editing.value), 'error')
   if (!String(order.customer_name || '').trim()) return showToast('Đơn hàng chưa có thông tin khách hàng, không thể tạo thanh toán.', 'error')
 
   saving.value = true
@@ -163,16 +192,26 @@ async function savePayment() {
     showModal.value = false
     showToast(editing.value ? 'Đã cập nhật thanh toán và tổng hợp đơn hàng.' : 'Đã thêm thanh toán và cập nhật đơn hàng.', 'success')
   }).catch(error => {
-    showToast(reportFirebaseError(error, editing.value ? 'Không cập nhật được thanh toán. Toàn bộ thay đổi đã hoàn tác.' : 'Không tạo được thanh toán. Toàn bộ thay đổi đã hoàn tác.'), 'error')
+    showToast(reportFirebaseError(
+      error,
+      editing.value ? 'Không cập nhật được thanh toán. Toàn bộ thay đổi đã hoàn tác.' : 'Không tạo được thanh toán. Toàn bộ thay đổi đã hoàn tác.',
+      {
+        operation: `payments.${action}`,
+        record: form.id || form.order_id,
+        status: editing.value?.status || form.status,
+        actionPermission: `payments.${action}`,
+        scopePermission: 'payments.view_all',
+      },
+    ), 'error')
   }).finally(() => {
     saving.value = false
   })
 }
 
 async function removePayment(row: PaymentDoc) {
-  if (!hasPermission('payments.delete') && !hasPermission('*')) return showToast('Bạn không có quyền xóa thanh toán.', 'error')
   const order = orders.value.find(item => item.id === row.order_id)
   if (!order) return showToast('Không tìm thấy đơn hàng cha của thanh toán.', 'error')
+  if (!paymentActionDecision('delete', row, order).allowed) return showToast(paymentActionError('delete', row), 'error')
   const confirmed = await askConfirm({
     title: 'Xóa thanh toán',
     message: `Bạn chắc chắn muốn xóa phiếu thanh toán của đơn ${row.order_code}?`,
@@ -192,7 +231,10 @@ async function removePayment(row: PaymentDoc) {
     rows.value = rows.value.filter(item => item.id !== row.id)
     Object.assign(order, result.orderPatch)
     showToast('Đã xóa thanh toán và cập nhật lại công nợ đơn hàng.', 'success')
-  }).catch(error => showToast(reportFirebaseError(error, 'Không xóa được thanh toán. Toàn bộ thay đổi đã hoàn tác.'), 'error'))
+  }).catch(error => showToast(reportFirebaseError(error, 'Không xóa được thanh toán. Toàn bộ thay đổi đã hoàn tác.', {
+    operation: 'payments.delete', record: row.id, status: row.status,
+    actionPermission: 'payments.delete', scopePermission: 'payments.view_all',
+  }), 'error'))
 }
 
 onMounted(() => loadRows())
@@ -229,7 +271,7 @@ onMounted(() => loadRows())
               <td>{{ row.method }}</td>
               <td><span class="badge green">{{ row.payment_status }}</span></td>
               <td>{{ row.created_by }}</td>
-              <td><div class="action-buttons"><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button><button v-if="canEditPayments" class="btn-sm" @click="openModal(row)">Sửa</button><button v-if="hasPermission('payments.delete') || hasPermission('*')" class="btn-sm btn-delete" @click="removePayment(row)">Xóa</button></div></td>
+              <td><div class="action-buttons"><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button><button v-if="canEditPayment(row)" class="btn-sm" @click="openModal(row)">Sửa</button><button v-if="canDeletePayment(row)" class="btn-sm btn-delete" @click="removePayment(row)">Xóa</button></div></td>
             </tr>
             <tr v-if="!filtered.length"><td colspan="8" class="empty">Không có thanh toán phù hợp.</td></tr>
           </tbody>

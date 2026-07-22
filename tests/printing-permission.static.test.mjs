@@ -34,7 +34,8 @@ test('printing separates operator actions from source-order owner visibility', (
   assert.match(printingQueries, /fetchByIds<PrintOrderDoc>\('print_orders', 'order_id'/)
   assert.match(printingQueries, /fetchByIds<PrintOrderItemDoc>\('print_order_items', 'print_order_id'/)
   assert.match(printingPage, /canViewOwnOrders/)
-  assert.match(printingPage, /ownsSourceOrder/)
+  assert.match(printingPage, /moduleActionDecision/)
+  assert.match(printingPage, /parentOwnerFields: \['owner_email', 'created_by', 'sale_email'\]/)
 })
 
 test('read-only source-order owners do not receive printing action buttons', () => {

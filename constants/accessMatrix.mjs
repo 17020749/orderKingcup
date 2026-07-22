@@ -114,6 +114,8 @@ export const PERMISSION_DEPENDENCIES = {
 
   'page.payments': ['payments.view', 'orders.view'],
   'payments.view': ['page.payments', 'orders.view'],
+  // Relation pages need to read the complete parent order in transactions.
+  // The Rules still require the child module's own view_all for child actions.
   'payments.view_all': ['page.payments', 'orders.view_all'],
   'payments.create': ['page.payments', 'payments.view', 'orders.view'],
   'payments.edit': ['page.payments', 'payments.view', 'orders.view'],
@@ -137,6 +139,7 @@ export const PERMISSION_DEPENDENCIES = {
 
   'page.invoices': ['invoices.view', 'orders.view'],
   'invoices.view': ['page.invoices', 'orders.view'],
+  'invoices.view_all': ['page.invoices', 'orders.view_all'],
   'invoices.create': ['page.invoices', 'invoices.view', 'orders.view'],
   'invoices.edit': ['page.invoices', 'invoices.view', 'orders.view'],
   'invoices.delete': ['page.invoices', 'invoices.view', 'orders.view'],
