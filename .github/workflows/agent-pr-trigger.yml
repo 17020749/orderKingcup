@@ -29,6 +29,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           sed -n '30,324p' .github/workflows/agent-unify-view-all.yml | sed 's/^          //' > /tmp/patch.py
+          python3 - <<'PREPARE'
+          from pathlib import Path
+          path = Path('/tmp/patch.py')
+          text = path.read_text()
+          start = text.index('old = """    function canMutateOrderById')
+          end = text.index('replacements = [', start)
+          replacement = '''needle = "          isAdmin()\\n          || ownsOrderData(order)"
+          if text.count(needle) != 2:
+              raise SystemExit(f'firestore.rules: expected two order mutation ownership checks, found {text.count(needle)}')
+          text = text.replace(
+              needle,
+              "          isAdmin()\\n          || hasPerm('orders.view_all')\\n          || ownsOrderData(order)",
+              2,
+          )
+
+          '''
+          path.write_text(text[:start] + replacement + text[end:])
+          PREPARE
           set +e
           python3 /tmp/patch.py > /tmp/patch.log 2>&1
           status=$?
