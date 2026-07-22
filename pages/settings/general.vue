@@ -14,7 +14,7 @@ import { reportFirebaseError } from '~/utils/firebaseErrors'
 import { normalizeEmail, toNumber } from '~/utils/format'
 
 const { db } = useFirebaseServices()
-const { appUser, hasPermission } = useAuth()
+const { hasPermission } = useAuth()
 const { showToast } = useUi()
 
 const loading = ref(false)
@@ -29,11 +29,7 @@ const form = reactive({
   revision: 1,
 })
 
-const canManage = computed(() => {
-  const role = String(appUser.value?.role || '').toLowerCase()
-  const roles = Array.isArray(appUser.value?.roles) ? appUser.value.roles.map(value => String(value).toLowerCase()) : []
-  return hasPermission('*') || appUser.value?.is_admin === true || role === 'admin' || roles.includes('admin') || roles.includes('role_admin')
-})
+const canManage = computed(() => hasPermission('*'))
 
 const strategyDescription = computed(() => ({
   fifo: 'Ưu tiên lô có ngày nhập cũ nhất. Đây là lựa chọn mặc định và phù hợp với phần lớn hàng hóa.',

@@ -25,6 +25,8 @@ import {
   removeRelationRecord,
   replaceRelationRecord,
 } from '~/utils/orderRelationState.mjs'
+// @ts-ignore Shared ESM helpers are executed directly by Node client tests.
+import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
 
 type RelationModule = 'payments' | 'invoices' | 'shipments'
 type RelationMode = 'create' | 'update' | 'delete'
@@ -82,7 +84,34 @@ function localTimestamp() {
 
 export function useAtomicOrderRelations() {
   const { db } = useFirebaseServices()
-  const { appUser, isAdmin } = useAuth()
+  const { appUser, isAdmin, permissions } = useAuth()
+
+  function assertRelationPermission(
+    module: RelationModule,
+    mode: RelationMode,
+    order: OrderDoc,
+    record: RelationRecord | null,
+    actor: string,
+  ) {
+    const action = mode === 'update' ? 'edit' : mode
+    const decision = moduleActionDecision({
+      actionPermission: `${module}.${action}`,
+      viewAllPermission: `${module}.view_all`,
+      permissions: permissions.value,
+      // Create scope is determined by the selected parent order. Treating a
+      // draft child (whose created_by is the actor) as owned would widen scope.
+      record: mode === 'create' ? null : record,
+      parent: order,
+      currentUserEmail: actor,
+    })
+    if (!decision.allowed) {
+      throw new Error(permissionDecisionMessage(decision, {
+        operation: `${module}.${action}`,
+        record: record?.id || order.id,
+        status: record?.status || order.status,
+      }))
+    }
+  }
 
   async function mutateOrderRelation(input: MutateRelationInput): Promise<MutateRelationResult> {
     const { module, mode, order } = input
@@ -91,6 +120,7 @@ export function useAtomicOrderRelations() {
     if (!actor) throw new Error('Không xác định được người thao tác.')
     if (!order?.id) throw new Error('Thiếu đơn hàng cha.')
     if (!recordId) throw new Error('Thiếu ID chứng từ liên kết.')
+    assertRelationPermission(module, mode, order, input.record, actor)
     if (!relationLockReady(order)) {
       throw new Error('Đơn hàng cũ chưa hoàn tất đồng bộ khóa thanh toán, hóa đơn và vận chuyển. Vui lòng tải lại sau khi hệ thống xử lý.')
     }
@@ -145,6 +175,15 @@ export function useAtomicOrderRelations() {
       if (mode !== 'create' && String(childSnap?.data()?.order_id || '') !== String(order.id)) {
         throw new Error('Chứng từ không thuộc đơn hàng đã chọn.')
       }
+      assertRelationPermission(
+        module,
+        mode,
+        currentOrder,
+        mode === 'create'
+          ? null
+          : ({ ...childSnap?.data(), id: childSnap?.id || recordId } as RelationRecord),
+        actor,
+      )
 
       const timestamp = serverTimestamp()
       const nextRevision = currentRevision + 1

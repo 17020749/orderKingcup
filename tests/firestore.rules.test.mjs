@@ -224,7 +224,7 @@ async function seed() {
         email: PRINTING,
         active: true,
         deleted: false,
-        permissions_flat: ['page.printing', 'printing.view', 'printing.create', 'printing.edit', 'printing.delete']
+        permissions_flat: ['page.printing', 'printing.view', 'printing.view_all', 'printing.create', 'printing.edit', 'printing.delete']
       }),
       setDoc(doc(db, 'users', PRINTING_VIEWER), {
         email: PRINTING_VIEWER,
@@ -887,12 +887,12 @@ test('User thường không thể tạo, sửa hoặc xóa role', async () => {
   await assertFails(deleteDoc(doc(db, 'roles', 'missing-role')))
 })
 
-test('Tương thích user status Hoạt động và role Admin cũ', async () => {
+test('Tương thích user status Hoạt động nhưng role Admin cũ không tự cấp quyền', async () => {
   const legacyDb = env.authenticatedContext(LEGACY, { email: LEGACY }).firestore()
   await assertSucceeds(getDoc(doc(legacyDb, 'orders', 'order-legacy')))
 
   const roleAdminDb = env.authenticatedContext(ROLE_ADMIN, { email: ROLE_ADMIN }).firestore()
-  await assertSucceeds(getDocs(collection(roleAdminDb, 'users')))
+  await assertFails(getDocs(collection(roleAdminDb, 'users')))
 })
 
 test('Order item dùng owner_email/created_by/sale_email và đối chiếu parent thật', async () => {

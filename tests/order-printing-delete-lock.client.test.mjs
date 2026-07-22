@@ -108,11 +108,11 @@ test('luồng in cập nhật khóa parent khi tạo, xóa và có đối soát 
 
 test('Rules ưu tiên nhánh rẻ để không vượt giới hạn biểu thức', () => {
   const rules = readFileSync('firestore.rules', 'utf8')
-  assert.match(rules, /Soft-delete is evaluated first/)
-  assert.match(rules, /allow update: if \(\s*softDeleteOnly\(\)[\s\S]*?orderPrintingReconcileAllowed\(\)[\s\S]*?\|\| orderPrintingSummaryUpdateAllowed\(docId\)/)
+  assert.match(rules, /Dispatch by the fields actually changed/)
+  assert.match(rules, /allow update: if changedAny\(\['deleted', 'active', 'deleted_at'\]\)[\s\S]*?orderPrintingReconcileAllowed\(\)[\s\S]*?\|\| orderPrintingSummaryUpdateAllowed\(docId\)/)
   assert.match(rules, /Normal edits are evaluated before the more expensive atomic delete path/)
   assert.match(rules, /Normal item edits are evaluated before the atomic soft-delete path/)
-  assert.match(rules, /lifecycle_status'[\s\S]*?exportRequestReleaseAllowed\(docId\)[\s\S]*?\|\| exportSoftDeleteAllowed\(\)/)
+  assert.match(rules, /allow update: if changedAny\(\['deleted', 'active', 'deleted_at'\]\)\s*\? \(exportSoftDeleteAllowed\(\) \|\| exportOrderCascadeDeleteAllowed\(\)\)[\s\S]*?\? exportRequestReleaseAllowed\(docId\)/)
 })
 
 test('regression xóa order dùng fixture không có tiến độ in', () => {

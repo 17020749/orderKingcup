@@ -61,7 +61,7 @@ beforeEach(async () => {
       setDoc(doc(db, 'users', ADMIN), {
         email: ADMIN,
         is_admin: true,
-        permissions_flat: [],
+        permissions_flat: ['*'],
         active: true,
         deleted: false,
       }),

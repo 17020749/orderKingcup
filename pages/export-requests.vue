@@ -21,6 +21,11 @@ import {
   toNumber,
 } from "~/utils/format";
 import { reportFirebaseError } from "~/utils/firebaseErrors";
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import {
+  exportRequestActionDecision,
+  permissionDecisionMessage,
+} from "~/utils/permissionDecisions.mjs";
 import { isDateInRange, matchesKeyword, uniqueOptions } from "~/utils/listFilters";
 import {
   buildNotificationPayload,
@@ -28,7 +33,7 @@ import {
 } from "~/composables/useNotifications";
 
 const { db } = useFirebaseServices();
-const { appUser, hasPermission } = useAuth();
+const { appUser, permissions } = useAuth();
 const {
   loadScopedOrders,
   loadScopedOrderItems,
@@ -112,17 +117,37 @@ const summary = computed(() =>
 const selectedOrder = computed(() =>
   orders.value.find((order) => order.id === form.order_id),
 );
-const canDeletePermission = computed(
-  () =>
-    hasPermission("*") ||
-    hasPermission("export_requests.delete") ||
-    hasPermission("orders.delete"),
-);
+const currentEmail = computed(() => String(appUser.value?.email || "").trim().toLowerCase());
 
-const SALE_MUTABLE_STATUSES = new Set(["cho_xu_ly", "dang_xu_ly", "pending"]);
+function parentOrder(request: any) {
+  return orders.value.find(order => order.id === request?.order_id) || null;
+}
 
-function saleCanModifyRequest(row: any) {
-  return SALE_MUTABLE_STATUSES.has(String(row?.status || ""));
+function requestActionDecision(action: "create" | "edit" | "delete", request?: any, order?: OrderDoc | null, phase: "start" | "commit" = "commit") {
+  return exportRequestActionDecision({
+    action,
+    request: request || null,
+    order: order || (request ? parentOrder(request) : selectedOrder.value) || null,
+    permissions: permissions.value,
+    currentUserEmail: currentEmail.value,
+    phase,
+  });
+}
+
+function requestDecisionMessage(decision: any, action: string, request?: any) {
+  return permissionDecisionMessage(decision, {
+    operation: `${action} yêu cầu xuất kho`,
+    record: request?.request_id || request?.id || form.request_id || "(mới)",
+    status: request?.status || form.status || "(mới)",
+  });
+}
+
+function canStartCreateRequest() {
+  return requestActionDecision("create", null, null, "start").allowed;
+}
+
+function canEditRequest(row: any) {
+  return requestActionDecision("edit", row).allowed;
 }
 const orderOptions = computed(() =>
   orders.value.map((order) => ({
@@ -286,18 +311,10 @@ function prepareLines() {
 }
 
 function openModal(request?: any) {
-  if (!hasPermission("orders.warehouse_export") && !hasPermission("*")) {
-    return showToast(
-      "Bạn không có quyền tạo hoặc sửa yêu cầu xuất kho.",
-      "error",
-    );
-  }
-  if (request && !saleCanModifyRequest(request)) {
-    return showToast(
-      "Kho đã tiếp nhận hoặc xử lý phiếu nên Sale không thể sửa.",
-      "error",
-    );
-  }
+  const decision = request
+    ? requestActionDecision("edit", request)
+    : requestActionDecision("create", null, null, "start");
+  if (!decision.allowed) return showToast(requestDecisionMessage(decision, request ? "sửa" : "tạo", request), "error");
 
   editing.value = request || null;
   Object.assign(
@@ -331,6 +348,9 @@ function validLines() {
 async function saveRequest() {
   if (!selectedOrder.value)
     return showToast("Vui lòng chọn đơn hàng.", "error");
+  const action = editing.value ? "edit" : "create";
+  const decision = requestActionDecision(action, editing.value, selectedOrder.value);
+  if (!decision.allowed) return showToast(requestDecisionMessage(decision, action === "edit" ? "sửa" : "tạo", editing.value), "error");
   const chosen = validLines();
   if (!chosen.length)
     return showToast(
@@ -533,6 +553,13 @@ async function saveRequest() {
           editing.value
             ? "Không cập nhật được yêu cầu xuất kho."
             : "Không tạo được yêu cầu xuất kho.",
+          {
+            operation: editing.value ? "export_requests.edit" : "export_requests.create",
+            record: form.id || order.id,
+            status: editing.value?.status || "new",
+            actionPermission: "orders.warehouse_export",
+            scopePermission: "export_requests.view_all",
+          },
         ),
         "error",
       );
@@ -561,21 +588,13 @@ function requestHasExported(row: any) {
 }
 
 function canDeleteRequest(row: any) {
-  return (
-    canDeletePermission.value &&
-    saleCanModifyRequest(row) &&
-    !requestHasExported(row) &&
-    !String(row.warehouse_export_code || "").trim()
-  );
+  return requestActionDecision("delete", row).allowed && !requestHasExported(row);
 }
 
 async function removeRequest(row: any) {
-  if (!canDeleteRequest(row)) {
-    return showToast(
-      "Kho đã tiếp nhận/xử lý hoặc phiếu đã xuất nên Sale không thể xóa.",
-      "error",
-    );
-  }
+  const decision = requestActionDecision("delete", row);
+  if (!decision.allowed) return showToast(requestDecisionMessage(decision, "xóa", row), "error");
+  if (requestHasExported(row)) return showToast(`Xóa yêu cầu xuất kho bị chặn (record=${row.request_id || row.id}, code=export_request_has_exported_quantity, status=${row.status || "(unknown)"}).`, "error");
   const confirmed = await askConfirm({
     title: "Xóa yêu cầu xuất kho",
     message: `Bạn chắc chắn muốn xóa yêu cầu xuất kho ${row.request_id}?\nSau khi Kho tiếp nhận, Sale sẽ không thể xóa phiếu.`,
@@ -633,7 +652,13 @@ async function removeRequest(row: any) {
     showToast("Đã xóa yêu cầu xuất kho.", "success");
   }).catch((error) =>
     showToast(
-      reportFirebaseError(error, "Không xóa được yêu cầu xuất kho."),
+      reportFirebaseError(error, "Không xóa được yêu cầu xuất kho.", {
+        operation: "export_requests.delete",
+        record: row.id,
+        status: row.status,
+        actionPermission: "export_requests.delete",
+        scopePermission: "export_requests.view_all",
+      }),
       "error",
     ),
   );
@@ -752,7 +777,7 @@ onBeforeUnmount(() => {
       subtitle="Sale tạo, sửa, xóa và theo dõi trạng thái yêu cầu gửi Kho"
     >
       <button
-        v-if="hasPermission('orders.warehouse_export') || hasPermission('*')"
+        v-if="canStartCreateRequest()"
         class="btn primary"
         @click="openModal()"
       >
@@ -823,9 +848,7 @@ onBeforeUnmount(() => {
                   <button class="btn-sm" @click="openDetail(row)">Xem</button>
                   <button
                     v-if="
-                      (hasPermission('orders.warehouse_export') ||
-                        hasPermission('*')) &&
-                      saleCanModifyRequest(row)
+                      canEditRequest(row)
                     "
                     class="btn-sm"
                     @click="openModal(row)"
@@ -840,7 +863,7 @@ onBeforeUnmount(() => {
                     Xóa
                   </button>
                   <button
-                    v-else-if="canDeletePermission"
+                    v-else-if="requestActionDecision('delete', row).code !== 'missing_action'"
                     class="btn-sm"
                     disabled
                   >
