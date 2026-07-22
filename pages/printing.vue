@@ -360,13 +360,13 @@ function resetForm(order?: PrintOrderDoc) {
 }
 
 function openCreateModal() {
-  if (!canCreate.value) return showToast('Bạn không có quyền thêm tiến độ in ấn.', 'error')
+  if (!canCreate.value) return showToast('Không thể thêm tiến độ in ấn. Thiếu quyền: [printing.create].', 'error')
   resetForm()
   showFormModal.value = true
 }
 
 function openEditModal(order: PrintOrderDoc) {
-  if (!canEditOrder(order)) return showToast('Bạn không có quyền sửa tiến độ in ấn này.', 'error')
+  if (!canEditOrder(order)) return showToast('Không thể sửa tiến độ in ấn này. Thiếu quyền: [printing.edit].', 'error')
   resetForm(order)
   showFormModal.value = true
 }
@@ -433,8 +433,8 @@ function collectItems(): PrintItemInput[] {
 async function submitForm() {
   if (editing.value ? !canEditOrder(editing.value) : !canCreate.value) {
     return showToast(editing.value
-      ? 'Bạn không có quyền sửa tiến độ in ấn này.'
-      : 'Bạn không có quyền tạo tiến độ in ấn.', 'error')
+      ? 'Không thể sửa tiến độ in ấn này. Thiếu quyền: [printing.edit].'
+      : 'Không thể tạo tiến độ in ấn. Thiếu quyền: [printing.create].', 'error')
   }
   if (!form.order_id || !form.order_code) {
     return showToast('Vui lòng chọn mã đơn hàng.', 'error')
@@ -475,7 +475,7 @@ async function submitForm() {
 }
 
 async function removeOrder(order: PrintOrderDoc) {
-  if (!canDeleteOrder(order)) return showToast('Bạn không có quyền xóa tiến độ in ấn này.', 'error')
+  if (!canDeleteOrder(order)) return showToast('Không thể xóa tiến độ in ấn này. Thiếu quyền: [printing.delete].', 'error')
   const confirmed = await askConfirm({
     title: 'Xóa tiến độ in ấn',
     message: `Bạn chắc chắn muốn xóa đơn in ${order.order_code}? Đơn và toàn bộ dòng tiến độ sẽ được xóa mềm.`,

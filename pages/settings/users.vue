@@ -164,7 +164,7 @@ function openRoleModal(row?: RoleDoc) {
   Object.assign(
     roleForm,
     row
-      ? { ...row, permissions: [...(row.permissions || [])] }
+      ? { ...row, permissions: resolvePermissionDependencies(row.permissions || []) }
       : {
           id: "",
           name: "",

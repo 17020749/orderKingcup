@@ -291,7 +291,7 @@ function openEditModal(row: ExportOrderDoc) {
     return showToast(
       isRequestGenerated(row)
         ? "Phiếu sinh từ yêu cầu sale chỉ được xem, không được sửa tại đây."
-        : "Bạn không có quyền sửa phiếu xuất này.",
+        : "Không thể sửa phiếu xuất này. Thiếu quyền: [export.edit].",
       "error",
     );
   }

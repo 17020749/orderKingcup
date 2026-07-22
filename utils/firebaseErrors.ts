@@ -1,7 +1,29 @@
-export function firebaseErrorMessage(error: any, fallback = 'Có lỗi xảy ra, vui lòng thử lại.') {
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { permissionDeniedMessage } from '~/utils/permissionDiagnostics.mjs'
+
+export type FirebasePermissionContext = {
+  currentPermissions?: string[]
+  requiredAll?: string[]
+  requiredAny?: string[]
+  operation?: string
+  recordLabel?: string
+  diagnosticCode?: string
+  reason?: string
+}
+
+export function firebaseErrorMessage(
+  error: any,
+  fallback = 'Có lỗi xảy ra, vui lòng thử lại.',
+  permissionContext?: FirebasePermissionContext,
+) {
   const code = String(error?.code || '').replace('firestore/', '').replace('auth/', '')
+  const context = error?.permissionContext || permissionContext
+  if (code === 'permission-denied') {
+    if (context) return permissionDeniedMessage(context)
+    return 'Firestore từ chối thao tác (permission-denied). Nơi gọi chưa khai báo quyền bắt buộc nên chưa thể xác định khóa quyền thiếu.'
+  }
+
   const messages: Record<string, string> = {
-    'permission-denied': 'Bạn chưa có quyền thực hiện thao tác này.',
     'unauthenticated': 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.',
     'not-found': 'Không tìm thấy dữ liệu cần thao tác.',
     'already-exists': 'Dữ liệu này đã tồn tại.',
@@ -16,7 +38,11 @@ export function firebaseErrorMessage(error: any, fallback = 'Có lỗi xảy ra,
   return message || fallback
 }
 
-export function reportFirebaseError(error: any, fallback?: string) {
+export function reportFirebaseError(
+  error: any,
+  fallback?: string,
+  permissionContext?: FirebasePermissionContext,
+) {
   console.error(error)
-  return firebaseErrorMessage(error, fallback)
+  return firebaseErrorMessage(error, fallback, permissionContext)
 }

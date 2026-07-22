@@ -3,6 +3,7 @@ import {
   collection,
   doc,
   serverTimestamp,
+  setDoc,
   writeBatch,
 } from "firebase/firestore";
 import type { FulfillmentRow } from "~/composables/useWarehouseLogic";
@@ -21,6 +22,8 @@ import {
   toNumber,
 } from "~/utils/format";
 import { reportFirebaseError } from "~/utils/firebaseErrors";
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { recordBelongsToUser, scopedActionDecision } from "~/utils/permissionDiagnostics.mjs";
 import { isDateInRange, matchesKeyword, uniqueOptions } from "~/utils/listFilters";
 import {
   buildNotificationPayload,
@@ -28,7 +31,7 @@ import {
 } from "~/composables/useNotifications";
 
 const { db } = useFirebaseServices();
-const { appUser, hasPermission } = useAuth();
+const { appUser, hasPermission, permissions } = useAuth();
 const {
   loadScopedOrders,
   loadScopedOrderItems,
@@ -112,17 +115,83 @@ const summary = computed(() =>
 const selectedOrder = computed(() =>
   orders.value.find((order) => order.id === form.order_id),
 );
-const canDeletePermission = computed(
-  () =>
-    hasPermission("*") ||
-    hasPermission("export_requests.delete") ||
-    hasPermission("orders.delete"),
-);
-
 const SALE_MUTABLE_STATUSES = new Set(["cho_xu_ly", "dang_xu_ly", "pending"]);
 
 function saleCanModifyRequest(row: any) {
   return SALE_MUTABLE_STATUSES.has(String(row?.status || ""));
+}
+
+function requestOrder(row?: any, explicitOrder?: OrderDoc | null) {
+  return (
+    explicitOrder ||
+    orders.value.find((item) => item.id === row?.order_id) ||
+    null
+  );
+}
+
+function ownsRequestScope(
+  row: any,
+  order: OrderDoc | null,
+  allowBeforeSelection = false,
+) {
+  if (allowBeforeSelection && !order) return true;
+  return recordBelongsToUser(
+    row || {},
+    appUser.value?.email || "",
+    order || {},
+  );
+}
+
+function requestCreateDecision(order: OrderDoc | null = null) {
+  return scopedActionDecision({
+    permissions: permissions.value,
+    actionPermission: "orders.warehouse_export",
+    scopePermission: "export_requests.view_all",
+    ownsRecord: ownsRequestScope(null, order, true),
+    operation: "tạo yêu cầu xuất kho",
+    recordLabel: order?.order_code || "",
+    diagnosticCode: "EXPORT_REQUEST_CREATE_RULES",
+    reason:
+      "Có orders.warehouse_export nhưng không có export_requests.view_all chỉ được tạo yêu cầu cho đơn thuộc phạm vi của mình; view_all không có action chỉ được xem.",
+  });
+}
+
+function requestEditDecision(row: any, explicitOrder: OrderDoc | null = null) {
+  const order = requestOrder(row, explicitOrder);
+  return scopedActionDecision({
+    permissions: permissions.value,
+    actionPermission: "orders.warehouse_export",
+    scopePermission: "export_requests.view_all",
+    ownsRecord: ownsRequestScope(row, order),
+    operation: "sửa yêu cầu xuất kho",
+    recordLabel: row?.request_id || row?.order_code || row?.id || "",
+    diagnosticCode: "EXPORT_REQUEST_UPDATE_RULES",
+    reason:
+      "Có orders.warehouse_export nhưng không có export_requests.view_all chỉ được sửa yêu cầu thuộc phạm vi của mình; view_all không có action chỉ được xem.",
+  });
+}
+
+function requestDeleteDecision(row: any) {
+  const order = requestOrder(row);
+  return scopedActionDecision({
+    permissions: permissions.value,
+    actionPermission: "export_requests.delete",
+    scopePermission: "export_requests.view_all",
+    ownsRecord: ownsRequestScope(row, order),
+    operation: "xóa yêu cầu xuất kho",
+    recordLabel: row?.request_id || row?.order_code || row?.id || "",
+    diagnosticCode: "EXPORT_REQUEST_DELETE_RULES",
+    reason:
+      "Có export_requests.delete nhưng không có export_requests.view_all chỉ được xóa yêu cầu thuộc phạm vi của mình; view_all không có action chỉ được xem.",
+  });
+}
+
+const canDeletePermission = computed(
+  () => hasPermission("export_requests.delete") || hasPermission("*"),
+);
+
+function canEditRequest(row: any) {
+  return saleCanModifyRequest(row) && requestEditDecision(row).allowed;
 }
 const orderOptions = computed(() =>
   orders.value.map((order) => ({
@@ -286,12 +355,10 @@ function prepareLines() {
 }
 
 function openModal(request?: any) {
-  if (!hasPermission("orders.warehouse_export") && !hasPermission("*")) {
-    return showToast(
-      "Bạn không có quyền tạo hoặc sửa yêu cầu xuất kho.",
-      "error",
-    );
-  }
+  const permissionDecision = request
+    ? requestEditDecision(request)
+    : requestCreateDecision();
+  if (!permissionDecision.allowed) return showToast(permissionDecision.message, "error");
   if (request && !saleCanModifyRequest(request)) {
     return showToast(
       "Kho đã tiếp nhận hoặc xử lý phiếu nên Sale không thể sửa.",
@@ -331,6 +398,11 @@ function validLines() {
 async function saveRequest() {
   if (!selectedOrder.value)
     return showToast("Vui lòng chọn đơn hàng.", "error");
+  const permissionDecision = editing.value
+    ? requestEditDecision(editing.value, selectedOrder.value)
+    : requestCreateDecision(selectedOrder.value);
+  if (!permissionDecision.allowed)
+    return showToast(permissionDecision.message, "error");
   const chosen = validLines();
   if (!chosen.length)
     return showToast(
@@ -478,38 +550,45 @@ async function saveRequest() {
       active: true,
       deleted: false,
     });
-    {
-      const notificationType = editing.value
-        ? "warehouse_export_request_updated"
-        : "warehouse_export_request_created";
-      const notificationTitle = editing.value
-        ? "Yêu cầu xuất kho vừa được cập nhật"
-        : "Có yêu cầu xuất kho mới";
-      const notificationMessage = editing.value
-        ? `${form.request_id} · Đơn ${order.order_code || "-"} vừa được Sale cập nhật.`
-        : `${form.request_id} · Đơn ${order.order_code || "-"} · ${order.customer_name || "Khách hàng"}`;
-      batch.set(
-        doc(collection(db, "notifications")),
-        buildNotificationPayload({
-          type: notificationType,
-          title: notificationTitle,
-          message: notificationMessage,
-          route: "/warehouse-export-requests",
-          entity_collection: "order_export_requests",
-          entity_id: form.id,
-          entity_code: form.request_id,
-          created_by: appUser.value?.email || "",
-          audience: "warehouse_export",
-          audience_permissions: WAREHOUSE_NOTIFICATION_PERMISSIONS,
-          metadata: {
-            order_id: order.id,
-            order_code: order.order_code || "",
-            customer_name: order.customer_name || "",
-          },
-        }),
+    const notificationType = editing.value
+      ? "warehouse_export_request_updated"
+      : "warehouse_export_request_created";
+    const notificationTitle = editing.value
+      ? "Yêu cầu xuất kho vừa được cập nhật"
+      : "Có yêu cầu xuất kho mới";
+    const notificationMessage = editing.value
+      ? `${form.request_id} · Đơn ${order.order_code || "-"} vừa được Sale cập nhật.`
+      : `${form.request_id} · Đơn ${order.order_code || "-"} · ${order.customer_name || "Khách hàng"}`;
+    const notificationPayload = buildNotificationPayload({
+      type: notificationType,
+      title: notificationTitle,
+      message: notificationMessage,
+      route: "/warehouse-export-requests",
+      entity_collection: "order_export_requests",
+      entity_id: form.id,
+      entity_code: form.request_id,
+      created_by: appUser.value?.email || "",
+      audience: "warehouse_export",
+      audience_permissions: WAREHOUSE_NOTIFICATION_PERMISSIONS,
+      metadata: {
+        order_id: order.id,
+        order_code: order.order_code || "",
+        customer_name: order.customer_name || "",
+      },
+    });
+
+    // Core business documents remain atomic. Notification is a side effect so
+    // its Rules cost cannot reject an otherwise-valid request mutation.
+    await batch.commit();
+    let notificationFailed = false;
+    try {
+      await setDoc(doc(collection(db, "notifications")), notificationPayload);
+    } catch (error) {
+      notificationFailed = true;
+      console.warn(
+        reportFirebaseError(error, "Phiếu đã lưu nhưng chưa gửi được thông báo kho."),
       );
     }
-    await batch.commit();
 
     const index = rows.value.findIndex((row) => row.id === form.id);
     if (index >= 0) rows.value[index] = nextRow;
@@ -519,11 +598,14 @@ async function saveRequest() {
     invalidateScopedCache("orders");
     invalidateScopedCache("activity_logs");
     showModal.value = false;
+    const successMessage = editing.value
+      ? "Đã cập nhật yêu cầu xuất kho."
+      : "Đã gửi yêu cầu xuất kho sang kho.";
     showToast(
-      editing.value
-        ? "Đã cập nhật yêu cầu xuất kho."
-        : "Đã gửi yêu cầu xuất kho sang kho.",
-      "success",
+      notificationFailed
+        ? `${successMessage} Thông báo kho chưa gửi được, dữ liệu phiếu vẫn đã lưu.`
+        : successMessage,
+      notificationFailed ? "info" : "success",
     );
   })
     .catch((error) => {
@@ -533,6 +615,7 @@ async function saveRequest() {
           editing.value
             ? "Không cập nhật được yêu cầu xuất kho."
             : "Không tạo được yêu cầu xuất kho.",
+          permissionDecision.permissionContext,
         ),
         "error",
       );
@@ -563,6 +646,7 @@ function requestHasExported(row: any) {
 function canDeleteRequest(row: any) {
   return (
     canDeletePermission.value &&
+    requestDeleteDecision(row).allowed &&
     saleCanModifyRequest(row) &&
     !requestHasExported(row) &&
     !String(row.warehouse_export_code || "").trim()
@@ -570,7 +654,15 @@ function canDeleteRequest(row: any) {
 }
 
 async function removeRequest(row: any) {
-  if (!canDeleteRequest(row)) {
+  const permissionDecision = requestDeleteDecision(row);
+  if (!permissionDecision.allowed) {
+    return showToast(permissionDecision.message, "error");
+  }
+  if (
+    !saleCanModifyRequest(row) ||
+    requestHasExported(row) ||
+    String(row.warehouse_export_code || "").trim()
+  ) {
     return showToast(
       "Kho đã tiếp nhận/xử lý hoặc phiếu đã xuất nên Sale không thể xóa.",
       "error",
@@ -633,7 +725,11 @@ async function removeRequest(row: any) {
     showToast("Đã xóa yêu cầu xuất kho.", "success");
   }).catch((error) =>
     showToast(
-      reportFirebaseError(error, "Không xóa được yêu cầu xuất kho."),
+      reportFirebaseError(
+        error,
+        "Không xóa được yêu cầu xuất kho.",
+        permissionDecision.permissionContext,
+      ),
       "error",
     ),
   );
@@ -823,9 +919,7 @@ onBeforeUnmount(() => {
                   <button class="btn-sm" @click="openDetail(row)">Xem</button>
                   <button
                     v-if="
-                      (hasPermission('orders.warehouse_export') ||
-                        hasPermission('*')) &&
-                      saleCanModifyRequest(row)
+                      canEditRequest(row)
                     "
                     class="btn-sm"
                     @click="openModal(row)"

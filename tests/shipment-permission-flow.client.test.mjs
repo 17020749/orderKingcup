@@ -12,7 +12,7 @@ const firestoreRules = readFileSync('firestore.rules', 'utf8')
 test('shipment permissions expose the same own/all scope model as payments', () => {
   assert.match(permissionCatalog, /key: 'shipments\.view_all'/)
   assert.match(accessMatrix, /'page\.shipments': \['shipments\.view', 'orders\.view'\]/)
-  assert.match(accessMatrix, /'shipments\.view_all': \['page\.shipments', 'orders\.view_all'\]/)
+  assert.match(accessMatrix, /'shipments\.view_all': \['page\.shipments', 'shipments\.view', 'orders\.view_all'\]/)
   assert.match(scopedQueries, /canAll\('shipments\.view_all'\)/)
   assert.match(firestoreRules, /match \/shipments\/\{docId\} \{\s*allow read: if hasPerm\('shipments\.view_all'\)/)
   assert.match(firestoreRules, /hasPerm\('orders\.view_all'\)/)

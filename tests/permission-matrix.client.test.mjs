@@ -174,3 +174,64 @@ test('client thật đã nối role editor, sidebar và middleware vào ma trậ
   assert.match(middleware, /appRoutePermission\(to\.path\)/)
   assert.match(routes, /APP_ACCESS_MODULES\.map/)
 })
+
+test('view_all scope không tự cấp action và dùng đúng page permission', () => {
+  const cases = [
+    { viewAll: 'orders.view_all', page: 'page.orders', actions: ['orders.edit', 'orders.delete'] },
+    { viewAll: 'export_requests.view_all', page: 'page.export_requests', actions: ['orders.warehouse_export', 'export_requests.delete'] },
+    { viewAll: 'payments.view_all', page: 'page.payments', actions: ['payments.edit', 'payments.delete'] },
+    { viewAll: 'invoices.view_all', page: 'page.invoices', actions: ['invoices.edit', 'invoices.delete'] },
+    { viewAll: 'shipments.view_all', page: 'page.shipments', actions: ['shipments.edit', 'shipments.delete'] },
+  ]
+
+  for (const item of cases) {
+    const grants = grantSet(item.viewAll)
+    assert.equal(grants.has(item.viewAll), true, 'Thiếu ' + item.viewAll)
+    assert.equal(grants.has(item.page), true, 'Thiếu ' + item.page)
+    for (const action of item.actions) {
+      assert.equal(grants.has(action), false, item.viewAll + ' không được tự cấp ' + action)
+    }
+  }
+
+  for (const viewAll of ['export_requests.view_all', 'payments.view_all', 'invoices.view_all', 'shipments.view_all']) {
+    assert.equal(grantSet(viewAll).has('orders.view_all'), true, viewAll + ' phải kéo theo orders.view_all để tải đơn nguồn')
+  }
+})
+
+test('client chỉ mở action bằng quyền action, không dùng view_all thay thế', () => {
+  const sources = {
+    orders: readFileSync('pages/orders.vue', 'utf8'),
+    exportRequests: readFileSync('pages/export-requests.vue', 'utf8'),
+    payments: readFileSync('pages/payments.vue', 'utf8'),
+    invoices: readFileSync('pages/invoices.vue', 'utf8'),
+    shipments: readFileSync('pages/shipments.vue', 'utf8'),
+  }
+
+  assert.match(sources.orders, /canEditOrders = computed\(\(\) => hasPermission\('orders\.edit'\)\)/)
+  assert.match(sources.orders, /hasPermission\('orders\.delete'\)/)
+  assert.match(sources.exportRequests, /actionPermission: "orders\.warehouse_export"/)
+  assert.match(sources.exportRequests, /hasPermission\("export_requests\.delete"\)/)
+  assert.match(sources.payments, /actionPermission = `payments\./)
+  assert.match(sources.invoices, /actionPermission = `invoices\./)
+  assert.match(sources.shipments, /actionPermission = `shipments\./)
+})
+
+test('client và rules dùng view_all riêng cho từng module quan hệ', () => {
+  const catalog = readFileSync('constants/permissions.ts', 'utf8')
+  const scopedQueries = readFileSync('composables/useScopedQueries.ts', 'utf8')
+  const rules = readFileSync('firestore.rules', 'utf8')
+
+  assert.match(catalog, /key: 'invoices\.view_all'/)
+  assert.match(scopedQueries, /canAll\('invoices\.view_all'\)/)
+  assert.match(scopedQueries, /const rows = canAll\('payments\.view_all'\)[\s\S]*?await loadScopedPayments\(orders, force\)/)
+  assert.match(scopedQueries, /const canManageAllOrders = canAll\('orders\.view_all'\)[\s\S]*?'orders\.edit', 'orders\.delete'/)
+
+  assert.match(rules, /function relationCreateBase\(orderId, viewAllPermission\)/)
+  assert.match(rules, /relationCreateBase\(request\.resource\.data\.order_id, 'payments\.view_all'\)/)
+  assert.match(rules, /relationCreateBase\(request\.resource\.data\.order_id, 'invoices\.view_all'\)/)
+  assert.match(rules, /relationCreateBase\(request\.resource\.data\.order_id, 'shipments\.view_all'\)/)
+  assert.match(rules, /relationExistingChildBase\(resource\.data\.order_id, 'payments\.view_all'\)/)
+  assert.match(rules, /relationExistingChildBase\(resource\.data\.order_id, 'invoices\.view_all'\)/)
+  assert.match(rules, /relationExistingChildBase\(resource\.data\.order_id, 'shipments\.view_all'\)/)
+  assert.match(rules, /hasPerm\('orders\.view_all'\)[\s\S]*?hasAnyPerm\(\['orders\.edit', 'orders\.delete'\]\)[\s\S]*?canReadOrderById/)
+})

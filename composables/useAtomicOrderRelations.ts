@@ -13,6 +13,10 @@ import type { InvoiceDoc, OrderDoc, PaymentDoc, ShipmentDoc } from '~/types/mode
 import { makeId, normalizeEmail, toNumber } from '~/utils/format'
 import { invalidateScopedCache } from '~/composables/useScopedQueries'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
+import { buildActiveRelationPayload } from '~/utils/orderRelationPayload.mjs'
+// @ts-ignore Shared ESM helpers are executed directly by Node client tests.
+import { scopedActionDecision } from '~/utils/permissionDiagnostics.mjs'
+// @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import {
   buildOrderRelationPatch,
   buildReconciledOrderRelationPatch,
@@ -49,22 +53,6 @@ function collectionName(module: RelationModule) {
   return module
 }
 
-function activePayload(record: RelationRecord, order: OrderDoc, actor: string) {
-  const normalizedActor = normalizeEmail(actor)
-  return {
-    ...record,
-    order_id: order.id,
-    order_code: order.order_code,
-    order_owner_email: order.owner_email || '',
-    order_created_by: order.created_by || '',
-    order_sale_email: order.sale_email || '',
-    created_by: record.created_by || normalizedActor,
-    active: true,
-    deleted: false,
-    status: record.status === 'deleted' ? 'active' : (record.status || 'active'),
-  }
-}
-
 function softDeletePayload() {
   const timestamp = serverTimestamp()
   return {
@@ -82,7 +70,7 @@ function localTimestamp() {
 
 export function useAtomicOrderRelations() {
   const { db } = useFirebaseServices()
-  const { appUser, isAdmin } = useAuth()
+  const { appUser, isAdmin, permissions } = useAuth()
 
   async function mutateOrderRelation(input: MutateRelationInput): Promise<MutateRelationResult> {
     const { module, mode, order } = input
@@ -104,7 +92,29 @@ export function useAtomicOrderRelations() {
     const orderRef = doc(db, 'orders', order.id)
     const childRef = doc(db, collectionName(module), recordId)
     const activityRef = doc(collection(db, 'activity_logs'))
+    const ownerEmails = [order.owner_email, order.created_by, order.sale_email]
+      .map(value => normalizeEmail(value || ''))
+      .filter(Boolean)
+    const ownsOrder = ownerEmails.includes(actor)
+    const actionPermission = `${module}.${mode === 'create' ? 'create' : mode === 'update' ? 'edit' : 'delete'}`
+    const permissionDecision = scopedActionDecision({
+      permissions: permissions.value,
+      actionPermission,
+      scopePermission: `${module}.view_all`,
+      ownsRecord: ownsOrder,
+      operation: `${mode === 'create' ? 'tạo' : mode === 'update' ? 'sửa' : 'xóa'} ${module}`,
+      recordLabel: String(input.record.order_code || order.order_code || recordId),
+      diagnosticCode: `${module.toUpperCase()}_${mode.toUpperCase()}_RULES`,
+      reason: 'Bản ghi liên kết phải giữ nguyên order_id, created_by và created_at; bản ghi cũ thiếu created_by phải tiếp tục để trống khi sửa.',
+    })
+    if (!permissionDecision.allowed) {
+      const permissionError: any = new Error(permissionDecision.message)
+      permissionError.code = 'permission-denied'
+      permissionError.permissionContext = permissionDecision.permissionContext
+      throw permissionError
+    }
 
+    try {
     // The list rendered on a page may be cursor-paginated or scoped. Relation
     // summaries must always be calculated from every document of the selected
     // order, otherwise Firestore correctly rejects the parent count transition.
@@ -163,7 +173,7 @@ export function useAtomicOrderRelations() {
           updated_at: localTimestamp(),
         }
       } else {
-        const payload = activePayload(input.record, currentOrder, actor)
+        const payload = buildActiveRelationPayload({ record: input.record, existingRecord: childSnap?.data() || {}, order: currentOrder, actor, mode })
         const firestorePayload: DocumentData = {
           ...payload,
           id: recordId,
@@ -230,6 +240,12 @@ export function useAtomicOrderRelations() {
         updated_at: localTimestamp(),
       }
     })
+    } catch (error: any) {
+      if (String(error?.code || '').includes('permission-denied')) {
+        error.permissionContext = permissionDecision.permissionContext
+      }
+      throw error
+    }
 
     invalidateScopedCache(module)
     invalidateScopedCache('orders')

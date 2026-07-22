@@ -49,7 +49,7 @@ test('page đơn hàng dùng preflight mới nhất và không thay đổi luồ
 
   assert.match(page, /warehouseOrderDeleteBlocker/)
   assert.match(page, /warehouseRequestsForDeleteCascade/)
-  assert.match(page, /loadScopedExportRequests\(\[row\], true\)/)
+  assert.match(page, /loadScopedExportRequestsForOrders\(\[row\], true\)/)
   assert.match(scopedQueries, /hasPermission\('orders\.delete'\)/)
 
   assert.match(page, /async function saveOrder\(\)/)

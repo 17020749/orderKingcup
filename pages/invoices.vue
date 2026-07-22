@@ -3,12 +3,14 @@ import type { InvoiceDoc, OrderDoc } from '~/types/models'
 import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { recordBelongsToUser, scopedActionDecision } from '~/utils/permissionDiagnostics.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 import { toDateKey } from '~/utils/listFilters'
 
 const { mutateOrderRelation } = useAtomicOrderRelations()
 const { loadScopedOrders, loadScopedInvoicesPage } = useScopedQueries()
-const { appUser, hasPermission } = useAuth()
+const { appUser, hasPermission, permissions } = useAuth()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
@@ -64,6 +66,26 @@ function resetFilters() {
 
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id))
 
+
+function invoiceActionDecision(row: InvoiceDoc | null | undefined, mode: 'create' | 'update' | 'delete') {
+  const parentOrder = row ? orders.value.find(order => order.id === row.order_id) : selectedOrder.value
+  const actionPermission = `invoices.${mode === 'create' ? 'create' : mode === 'update' ? 'edit' : 'delete'}`
+  return scopedActionDecision({
+    permissions: permissions.value,
+    actionPermission,
+    scopePermission: 'invoices.view_all',
+    ownsRecord: !row || recordBelongsToUser(row, appUser.value?.email || '', parentOrder || {}),
+    operation: `${mode === 'create' ? 'tạo' : mode === 'update' ? 'sửa' : 'xóa'} hóa đơn`,
+    recordLabel: String(row?.order_code || row?.id || ''),
+    diagnosticCode: `INVOICES_${mode.toUpperCase()}_RULES`,
+    reason: 'Bản ghi phải thuộc phạm vi đơn hàng của người dùng nếu không có invoices.view_all; các trường order_id, created_by và created_at phải giữ nguyên khi sửa.',
+  })
+}
+
+function canCreateInvoices() { return invoiceActionDecision(null, 'create').allowed }
+function canEditInvoicesRow(row: InvoiceDoc) { return invoiceActionDecision(row, 'update').allowed }
+function canDeleteInvoicesRow(row: InvoiceDoc) { return invoiceActionDecision(row, 'delete').allowed }
+
 async function loadRows(force = false, append = false) {
   if (append && (!hasMoreRows.value || loadingMore.value)) return
   if (append) loadingMore.value = true
@@ -99,7 +121,7 @@ function openDetail(row: InvoiceDoc) {
 }
 
 function openModal(row?: InvoiceDoc) {
-  if (row && !hasPermission('invoices.edit') && !hasPermission('*')) return showToast('Bạn không có quyền sửa hóa đơn.', 'error')
+  if (row) { const decision = invoiceActionDecision(row, 'update'); if (!decision.allowed) return showToast(decision.message, 'error') }
   editing.value = row || null
   Object.assign(form, row ? { ...row } : {
     id: makeId('inv'),
@@ -119,8 +141,8 @@ function openModal(row?: InvoiceDoc) {
 }
 
 async function save() {
-  if (editing.value && !hasPermission('invoices.edit') && !hasPermission('*')) return showToast('Bạn không có quyền sửa hóa đơn.', 'error')
-  if (!editing.value && !hasPermission('invoices.create') && !hasPermission('*')) return showToast('Bạn không có quyền tạo hóa đơn.', 'error')
+  if (editing.value) { const decision = invoiceActionDecision(editing.value, 'update'); if (!decision.allowed) return showToast(decision.message, 'error') }
+  if (!editing.value) { const decision = invoiceActionDecision(null, 'create'); if (!decision.allowed) return showToast(decision.message, 'error') }
   if (!form.order_id) return showToast('Vui lòng chọn đơn hàng.', 'error')
   const order = selectedOrder.value
   if (!order) return showToast('Không tìm thấy đơn hàng.', 'error')
@@ -153,7 +175,7 @@ async function save() {
 }
 
 async function remove(row: InvoiceDoc) {
-  if (!hasPermission('invoices.delete') && !hasPermission('*')) return showToast('Bạn không có quyền xóa hóa đơn.', 'error')
+  { const decision = invoiceActionDecision(row, 'delete'); if (!decision.allowed) return showToast(decision.message, 'error') }
   const order = orders.value.find(item => item.id === row.order_id)
   if (!order) return showToast('Không tìm thấy đơn hàng cha của hóa đơn.', 'error')
   const confirmed = await askConfirm({
@@ -183,7 +205,7 @@ onMounted(() => loadRows())
 <template>
   <AppShell>
     <PageHeader title="Hóa đơn" subtitle="Theo dõi yêu cầu và trạng thái xuất hóa đơn">
-      <button v-if="hasPermission('invoices.create') || hasPermission('*')" class="btn primary" @click="openModal()">+ Thêm hóa đơn</button>
+      <button v-if="canCreateInvoices()" class="btn primary" @click="openModal()">+ Thêm hóa đơn</button>
     </PageHeader>
     <div class="card" style="padding: 24px;">
       <div class="toolbar"><input v-model="search" class="input" placeholder="Tìm đơn, số hóa đơn, công ty..."/><select v-model="invoiceStatusFilter" class="select"><option value="">Tất cả trạng thái</option><option>Yêu cầu xuất</option><option>HĐ nháp</option><option>Đã xuất</option></select><input v-model="dateFrom" class="input" type="date" aria-label="Từ ngày"/><input v-model="dateTo" class="input" type="date" aria-label="Đến ngày"/><button class="btn" @click="resetFilters">Xóa lọc</button><button class="btn" @click="loadRows(true)">Làm mới</button></div>
@@ -193,7 +215,7 @@ onMounted(() => loadRows())
         <table>
           <thead><tr><th>Đơn hàng</th><th>Số hóa đơn</th><th>Ngày</th><th>Công ty</th><th>Giá trị</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
-            <tr v-for="row in filtered" :key="row.id"><td>{{row.order_code}}</td><td>{{row.invoice_number||'-'}}</td><td>{{row.invoice_date}}</td><td>{{row.company_name}}</td><td>{{money(row.invoice_amount)}}</td><td><span class="badge">{{row.invoice_status}}</span></td><td><div class="action-buttons"><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button><button v-if="hasPermission('invoices.edit') || hasPermission('*')" class="btn-sm" @click="openModal(row)">Sửa</button><button v-if="hasPermission('invoices.delete') || hasPermission('*')" class="btn-sm btn-delete" @click="remove(row)">Xóa</button></div></td></tr>
+            <tr v-for="row in filtered" :key="row.id"><td>{{row.order_code}}</td><td>{{row.invoice_number||'-'}}</td><td>{{row.invoice_date}}</td><td>{{row.company_name}}</td><td>{{money(row.invoice_amount)}}</td><td><span class="badge">{{row.invoice_status}}</span></td><td><div class="action-buttons"><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button><button v-if="canEditInvoicesRow(row)" class="btn-sm" @click="openModal(row)">Sửa</button><button v-if="canDeleteInvoicesRow(row)" class="btn-sm btn-delete" @click="remove(row)">Xóa</button></div></td></tr>
             <tr v-if="!filtered.length"><td colspan="7" class="empty">Không có hóa đơn phù hợp.</td></tr>
           </tbody>
         </table>

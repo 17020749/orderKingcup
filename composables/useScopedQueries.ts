@@ -551,7 +551,7 @@ export function useScopedQueries() {
     pageSize = 50,
     force = false,
   ): Promise<CursorPage<InvoiceDoc>> {
-    if (!isAdminUser()) return fullCursorPage(await loadScopedInvoices(force))
+    if (!canAll('invoices.view_all')) return fullCursorPage(await loadScopedInvoices(force))
     const page = await fetchOrderedPage<InvoiceDoc>('invoices', 'invoice_date', cursor, pageSize)
     return { ...page, rows: page.rows.filter(isActive) as InvoiceDoc[] }
   }
@@ -599,8 +599,13 @@ export function useScopedQueries() {
     const canReadForRelation = canAll('payments.view_all')
       || ['payments.view', 'payments.create', 'payments.edit', 'payments.delete'].some(key => hasPermission(key))
     if (!canReadForRelation) return [] as PaymentDoc[]
+
+    const allowedOrderIds = new Set(orderIds)
+    const rows = canAll('payments.view_all')
+      ? await fetchByFieldValues<PaymentDoc>('payments', 'order_id', orderIds)
+      : await loadScopedPayments(orders, force)
     return sortNewest(
-      (await fetchByFieldValues<PaymentDoc>('payments', 'order_id', orderIds)).filter(isActive) as PaymentDoc[],
+      uniqueById(rows).filter(payment => isActive(payment) && allowedOrderIds.has(payment.order_id)) as PaymentDoc[],
       'payment_date',
     )
   }
@@ -608,7 +613,9 @@ export function useScopedQueries() {
   async function loadScopedExportRequestsForOrders(orders: OrderDoc[], force = false) {
     const orderIds = cleanIds(orders)
     if (!orderIds.length) return [] as AnyDoc[]
-    if (!canAll('export_requests.view_all')) {
+    const canManageAllOrders = canAll('orders.view_all')
+      && ['orders.edit', 'orders.delete'].some(key => hasPermission(key))
+    if (!canAll('export_requests.view_all') && !canManageAllOrders) {
       const visible = await loadScopedExportRequests(orders, force)
       const allowedOrderIds = new Set(orderIds)
       return visible.filter(request => allowedOrderIds.has(request.order_id))
@@ -933,7 +940,7 @@ export function useScopedQueries() {
   }
 
   async function loadScopedInvoices(force = false) {
-    if (isAdminUser()) {
+    if (canAll('invoices.view_all')) {
       return (await listCollection<InvoiceDoc>('invoices', [], {
         cacheKey: 'all', ttlMs: 20_000, force
       })).filter(isActive)

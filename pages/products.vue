@@ -122,8 +122,8 @@ function emptyProduct() {
 }
 
 function openModal(row?: ProductDoc) {
-  if (row && !canEdit.value) return showToast('Bạn không có quyền sửa sản phẩm.', 'error')
-  if (!row && !canCreate.value) return showToast('Bạn không có quyền thêm sản phẩm.', 'error')
+  if (row && !canEdit.value) return showToast('Không thể sửa sản phẩm. Thiếu quyền: [products.edit].', 'error')
+  if (!row && !canCreate.value) return showToast('Không thể thêm sản phẩm. Thiếu quyền: [products.create].', 'error')
 
   editing.value = row || null
   const source = withoutLegacyCost((row || emptyProduct()) as any)
@@ -203,7 +203,7 @@ async function saveProduct() {
 }
 
 async function removeProduct(row: ProductDoc) {
-  if (!canDelete.value) return showToast('Bạn không có quyền xóa sản phẩm.', 'error')
+  if (!canDelete.value) return showToast('Không thể xóa sản phẩm. Thiếu quyền: [products.delete].', 'error')
   const confirmed = await askConfirm({
     title: 'Xóa sản phẩm',
     message: `Bạn chắc chắn muốn xóa sản phẩm ${row.product_code} - ${row.product_name}?\nSản phẩm sẽ được ẩn nhưng dữ liệu cũ trong đơn hàng vẫn được giữ.`,

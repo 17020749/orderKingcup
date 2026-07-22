@@ -6,6 +6,8 @@ import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, 
 import { customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, userCodeValidationError } from '~/utils/orderCode'
 import { generateCustomerCode } from '~/utils/customerCode'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { recordBelongsToUser, scopedActionDecision } from '~/utils/permissionDiagnostics.mjs'
 import { toDateKey } from '~/utils/listFilters'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
@@ -22,7 +24,7 @@ import {
 import { validateOrderItemEdit } from '~/utils/orderItemDependencies.mjs'
 
 const { db } = useFirebaseServices()
-const { appUser, hasPermission, isAdmin } = useAuth()
+const { appUser, hasPermission, isAdmin, permissions } = useAuth()
 const { calcItems, computePaymentStatus, parseLogoLines } = useOrderLogic()
 const { invalidateScopedCache } = useRepo()
 const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
@@ -108,6 +110,19 @@ function resetFilters() {
 
 const canEditOrders = computed(() => hasPermission('orders.edit'))
 const canManageInvoiceStatus = computed(() => !editing.value && hasPermission('invoices.create'))
+
+function orderEditDecision(row?: OrderDoc | null) {
+  return scopedActionDecision({
+    permissions: permissions.value,
+    actionPermission: row ? 'orders.edit' : 'orders.create',
+    scopePermission: 'orders.view_all',
+    ownsRecord: !row || recordBelongsToUser(row, appUser.value?.email || ''),
+    operation: row ? 'sửa đơn hàng' : 'tạo đơn hàng',
+    recordLabel: row?.order_code || row?.id || '',
+    diagnosticCode: row ? 'ORDER_UPDATE_RULES' : 'ORDER_CREATE_RULES',
+    reason: 'Đơn hàng phải giữ nguyên mã đơn, khách hàng, owner, created_by và các trường tổng hợp hệ thống khi sửa.',
+  })
+}
 const itemCount = computed(() => `${formItems.value.length} dòng`)
 const modalTotals = computed(() => calcItems(formItems.value, form))
 const selectedDetailItems = computed(() => selectedDetail.value ? (itemsByOrder.value[selectedDetail.value.id] || []) : [])
@@ -581,8 +596,9 @@ function closePrint() {
 }
 
 async function saveOrder() {
-  if (editing.value && !canEditRow(editing.value)) return showToast('Bạn không có quyền sửa đơn hàng này', 'error')
-  if (!editing.value && !hasPermission('orders.create')) return showToast('Bạn không có quyền tạo đơn hàng', 'error')
+  const permissionDecision = orderEditDecision(editing.value)
+  if (!permissionDecision.allowed) return showToast(permissionDecision.message, 'error')
+  if (editing.value && !canEditRow(editing.value)) return showToast('Đơn hàng đã xuất đủ trên Warehouse nên bị khóa sửa.', 'error')
   if (!form.customer_name) return showToast('Thiếu khách hàng', 'error')
   const itemValidation = validateOrderItems()
   if (itemValidation) return showToast(itemValidation, 'error')
@@ -618,7 +634,7 @@ async function saveOrder() {
     const saveItems = buildSaveItems()
     if (editing.value) {
       const [latestRequests, latestPrinting] = await Promise.all([
-        loadScopedExportRequests([editing.value], true),
+        loadScopedExportRequestsForOrders([editing.value], true),
         loadPrintingDependenciesForOrders([editing.value]),
       ])
       exportRequests.value = [
@@ -816,7 +832,7 @@ async function saveOrder() {
     showToast(editing.value ? 'Đã cập nhật đơn hàng' : 'Đã thêm đơn hàng', 'success')
   }).catch(error => showToast(
     (error as any)?.code
-      ? reportFirebaseError(error, 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.')
+      ? reportFirebaseError(error, 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.', orderEditDecision(editing.value).permissionContext)
       : ((error as any)?.message || 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.'),
     'error',
   )).finally(() => {
@@ -850,7 +866,7 @@ async function softDeleteOrder(row: OrderDoc) {
   try {
     const [latestOrderSnap, loadedRequests] = await Promise.all([
       getDoc(doc(db, 'orders', row.id)),
-      loadScopedExportRequests([row], true),
+      loadScopedExportRequestsForOrders([row], true),
     ])
     if (!latestOrderSnap.exists()) throw new Error('Không tìm thấy đơn hàng cần xóa.')
     latestOrder = { ...latestOrderSnap.data(), id: latestOrderSnap.id } as OrderDoc

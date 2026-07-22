@@ -156,7 +156,7 @@ test('non-admin có orders.view_all được thêm thanh toán cho đơn của s
   await assertSucceeds(batch.commit())
 })
 
-test('non-admin chỉ có payments.create vẫn đọc đủ payment của đơn được xem và thêm payment thứ hai', async () => {
+test('orders.view_all không mở phạm vi payment khi thiếu payments.view_all', async () => {
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore()
     await setDoc(doc(db, 'payments', 'pay-existing'), {
@@ -171,7 +171,7 @@ test('non-admin chỉ có payments.create vẫn đọc đủ payment của đơn
   })
 
   const db = env.authenticatedContext(CASHIER, { email: CASHIER }).firestore()
-  await assertSucceeds(getDoc(doc(db, 'payments', 'pay-existing')))
+  await assertFails(getDoc(doc(db, 'payments', 'pay-existing')))
 
   const batch = writeBatch(db)
   batch.set(doc(db, 'payments', 'pay-cashier'), {
@@ -191,9 +191,8 @@ test('non-admin chỉ có payments.create vẫn đọc đủ payment của đơn
     deposit_count: 1,
     collect_count: 1,
   })
-  await assertSucceeds(batch.commit())
+  await assertFails(batch.commit())
 })
-
 test('payment create phải ghi child và summary parent trong cùng batch', async () => {
   const db = env.authenticatedContext(SALE, { email: SALE }).firestore()
   const batch = writeBatch(db)

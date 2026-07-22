@@ -106,7 +106,8 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'shipments.edit', group: 'Vận chuyển', name: 'Sửa vận chuyển' },
   { key: 'shipments.delete', group: 'Vận chuyển', name: 'Xóa vận chuyển' },
 
-  { key: 'invoices.view', group: 'Hóa đơn', name: 'Xem dữ liệu' },
+  { key: 'invoices.view', group: 'Hóa đơn', name: 'Xem hóa đơn của mình' },
+  { key: 'invoices.view_all', group: 'Hóa đơn', name: 'Xem tất cả hóa đơn', emphasis: 'scope' },
   { key: 'invoices.create', group: 'Hóa đơn', name: 'Thêm dữ liệu' },
   { key: 'invoices.edit', group: 'Hóa đơn', name: 'Sửa dữ liệu' },
   { key: 'invoices.delete', group: 'Hóa đơn', name: 'Xóa dữ liệu' },

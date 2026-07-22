@@ -235,7 +235,7 @@ function openCreateModal() {
 }
 
 function openEditModal(row: ImportOrderDoc) {
-  if (!canEdit.value) return showToast('Bạn không có quyền sửa phiếu nhập kho.', 'error')
+  if (!canEdit.value) return showToast('Không thể sửa phiếu nhập kho. Thiếu quyền: [import.edit].', 'error')
   editing.value = row
   const orderItems = itemsForOrder(row)
   Object.assign(form, {
@@ -260,7 +260,7 @@ function openEditModal(row: ImportOrderDoc) {
 }
 
 async function confirmDeleteImport(row: ImportOrderDoc) {
-  if (!canDelete.value) return showToast('Bạn không có quyền xóa phiếu nhập kho.', 'error')
+  if (!canDelete.value) return showToast('Không thể xóa phiếu nhập kho. Thiếu quyền: [import.delete].', 'error')
   const ok = await askConfirm({
     title: 'Xóa phiếu nhập kho',
     message: `Bạn chắc chắn muốn xóa mềm phiếu ${codeOf(row)}? Chỉ được xóa khi các lô của phiếu chưa được xuất.`,
