@@ -20,6 +20,10 @@ jobs:
         with:
           ref: agent/unify-view-all-actions
           fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
