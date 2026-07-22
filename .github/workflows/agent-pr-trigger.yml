@@ -24,8 +24,21 @@ jobs:
           cache: npm
       - name: Extract and run patch
         run: |
+          if [ -f agent-patch-error.log ]; then
+            cat agent-patch-error.log
+            exit 1
+          fi
           awk '/^          python3 - <<'"'"'PY'"'"'/{capture=1; next} capture && /^          PY$/{exit} capture{sub(/^          /, ""); print}' .github/workflows/agent-unify-view-all.yml > /tmp/patch.py
-          python3 /tmp/patch.py
+          if ! python3 /tmp/patch.py > /tmp/patch.log 2>&1; then
+            cat /tmp/patch.log
+            cp /tmp/patch.log agent-patch-error.log
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add agent-patch-error.log
+            git commit -m "record permission patch error"
+            git push origin HEAD:agent/unify-view-all-actions
+            exit 1
+          fi
       - run: npm ci
       - run: node --test tests/permission-matrix.client.test.mjs tests/view-all-action-scopes.client.test.mjs
       - run: npm run test:rules
