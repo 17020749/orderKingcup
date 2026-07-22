@@ -53,9 +53,9 @@ jobs:
           set -e
           if [ "$status" -ne 0 ]; then
             {
-              echo 'Rules test failed:'
+              echo 'Rules test failed (focused output):'
               echo '```text'
-              tail -n 180 /tmp/rules.log
+              grep -E -B 12 -A 30 'not ok|AssertionError|ERR_ASSERTION|failureType|# fail|Error:' /tmp/rules.log | tail -n 220 || true
               echo '```'
             } > /tmp/comment.md
             gh pr comment 70 --body-file /tmp/comment.md
