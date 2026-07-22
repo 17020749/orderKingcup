@@ -29,6 +29,8 @@ test('printing separates operator actions from source-order owner visibility', (
   assert.match(permissions, /printing\.view_all/)
   assert.match(printingQueries, /loadOwnSourceOrders/)
   assert.match(printingQueries, /where\(field, 'in', group\)/)
+  assert.match(printingQueries, /SAFE_RELATION_QUERY_CHUNK_SIZE/)
+  assert.match(printingQueries, /Promise\.allSettled/)
   assert.match(printingQueries, /fetchByIds<PrintOrderDoc>\('print_orders', 'order_id'/)
   assert.match(printingQueries, /fetchByIds<PrintOrderItemDoc>\('print_order_items', 'print_order_id'/)
   assert.match(printingPage, /canViewOwnOrders/)

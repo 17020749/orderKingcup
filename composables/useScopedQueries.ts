@@ -39,6 +39,8 @@ import type {
 import { isActive } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 import { permissionDebug } from '~/utils/permissionDebug'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { SAFE_RELATION_QUERY_CHUNK_SIZE } from '~/utils/orderItemScope.mjs'
 
 type CacheEntry = {
   expiresAt: number
@@ -212,7 +214,7 @@ export function useScopedQueries() {
     return Array.from(new Set(rows.map(row => String(row?.id || '').trim()).filter(Boolean)))
   }
 
-  function chunks<T>(values: T[], size = 30) {
+  function chunks<T>(values: T[], size = SAFE_RELATION_QUERY_CHUNK_SIZE) {
     const result: T[][] = []
     for (let index = 0; index < values.length; index += size) {
       result.push(values.slice(index, index + size))

@@ -1,6 +1,8 @@
 import { collection, getDocs, query, where } from 'firebase/firestore'
 import type { OrderDoc, PrintOrderDoc, PrintOrderItemDoc } from '~/types/models'
 import { isActive } from '~/utils/format'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { SAFE_RELATION_QUERY_CHUNK_SIZE } from '~/utils/orderItemScope.mjs'
 
 function cleanIds(orders: OrderDoc[]) {
   return Array.from(new Set(
@@ -10,7 +12,7 @@ function cleanIds(orders: OrderDoc[]) {
   ))
 }
 
-function chunks<T>(values: T[], size = 30) {
+function chunks<T>(values: T[], size = SAFE_RELATION_QUERY_CHUNK_SIZE) {
   const result: T[][] = []
   for (let index = 0; index < values.length; index += size) {
     result.push(values.slice(index, index + size))

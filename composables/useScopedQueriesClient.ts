@@ -12,6 +12,7 @@ import {
   chunkOrderIds,
   filterItemsForVisibleOrders,
   orderItemQueryKey,
+  SAFE_RELATION_QUERY_CHUNK_SIZE,
   uniqueOrderIds,
 } from '~/utils/orderItemScope.mjs'
 import {
@@ -53,13 +54,18 @@ export function useScopedQueriesClient() {
 
     const task = (async () => {
       try {
-        const chunks = chunkOrderIds(orderIds, 10)
-        const snapshots = await Promise.all(chunks.map(group => (
+        const chunks = chunkOrderIds(orderIds, SAFE_RELATION_QUERY_CHUNK_SIZE)
+        const results = await Promise.allSettled(chunks.map(group => (
           getDocs(query(
             collection(db, 'order_items'),
             where('order_id', 'in', group),
           ))
         )))
+        const snapshots = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
+        const failedGroups = results.reduce<Array<{ ids: string[]; reason: unknown }>>((failed, result, index) => {
+          if (result.status === 'rejected') failed.push({ ids: chunks[index], reason: result.reason })
+          return failed
+        }, [])
         const rows = snapshots.flatMap(snapshot => snapshot.docs.map(item => ({
           ...item.data(),
           id: item.id,
@@ -67,14 +73,47 @@ export function useScopedQueriesClient() {
         } as OrderItemDoc)))
         const visibleRows = filterItemsForVisibleOrders(rows, orderIds) as OrderItemDoc[]
 
+        if (failedGroups.length) {
+          failedGroups.forEach(({ ids, reason }, index) => {
+            permissionDebug({
+              module: 'order_items',
+              action: 'query_by_order_id',
+              stage: 'query_denied',
+              userEmail: activeEmail,
+              error: reason,
+              payload: {
+                failed_order_ids: ids,
+                query_group_index: index,
+                query_group_size: ids.length,
+              },
+              note: 'A query group failed; successful groups remain visible.',
+            })
+          })
+
+          const failedIds = failedGroups.flatMap(group => group.ids)
+          const suffix = failedIds.length > 5
+            ? ` (${failedIds.slice(0, 5).join(', ')} and ${failedIds.length - 5} more)`
+            : ` (${failedIds.join(', ')})`
+          showToast(
+            reportFirebaseError(
+              failedGroups[0].reason,
+              `Orders loaded, but product lines failed for ${failedIds.length} order(s)${suffix}.`,
+            ),
+            'error',
+          )
+        }
+
         permissionDebug({
           module: 'order_items',
           action: 'query_by_order_id',
-          stage: 'success',
+          stage: failedGroups.length ? 'partial' : 'success',
           userEmail: activeEmail,
           payload: {
             visible_order_count: orderIds.length,
             query_chunk_count: chunks.length,
+            query_chunk_size: SAFE_RELATION_QUERY_CHUNK_SIZE,
+            failed_group_count: failedGroups.length,
+            failed_order_ids: failedGroups.flatMap(group => group.ids),
             item_count: visibleRows.length,
           },
           note: 'Dòng sản phẩm được tải theo order_id của các đơn đã qua kiểm tra quyền; không phụ thuộc email sao chép trong dữ liệu legacy.',

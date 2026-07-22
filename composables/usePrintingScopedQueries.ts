@@ -13,6 +13,10 @@ import type {
   PrintOrderItemDoc,
 } from '~/types/models'
 import { isActive } from '~/utils/format'
+import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { permissionDebug } from '~/utils/permissionDebug'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { SAFE_RELATION_QUERY_CHUNK_SIZE } from '~/utils/orderItemScope.mjs'
 
 function uniqueById<T extends { id?: string }>(rows: T[]) {
   const result = new Map<string, T>()
@@ -22,7 +26,7 @@ function uniqueById<T extends { id?: string }>(rows: T[]) {
   return Array.from(result.values())
 }
 
-function chunks<T>(values: T[], size = 30) {
+function chunks<T>(values: T[], size = SAFE_RELATION_QUERY_CHUNK_SIZE) {
   const result: T[][] = []
   for (let index = 0; index < values.length; index += size) {
     result.push(values.slice(index, index + size))
@@ -33,6 +37,7 @@ function chunks<T>(values: T[], size = 30) {
 export function usePrintingScopedQueries() {
   const { db } = useFirebaseServices()
   const { appUser, hasPermission } = useAuth()
+  const { showToast } = useUi()
 
   const currentEmail = () => String(appUser.value?.email || '').trim().toLowerCase()
   const canViewAll = () => hasPermission('*') || hasPermission('printing.view_all')
@@ -49,10 +54,42 @@ export function usePrintingScopedQueries() {
   async function fetchByIds<T>(name: string, field: string, ids: string[]) {
     const cleanIds = Array.from(new Set(ids.map(id => String(id || '').trim()).filter(Boolean)))
     if (!cleanIds.length) return [] as T[]
-    const groups = await Promise.all(
-      chunks(cleanIds).map(group => fetchRows<T>(name, [where(field, 'in', group)])),
-    )
-    return uniqueById(groups.flat() as Array<T & { id?: string }>) as T[]
+    const idGroups = chunks(cleanIds)
+    const groups = idGroups.map(group => (
+      fetchRows<T>(name, [where(field, 'in', group)])
+    ))
+    const results = await Promise.allSettled(groups)
+    const rows: T[] = []
+    const failedGroups: Array<{ ids: string[]; reason: unknown }> = []
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        rows.push(...result.value)
+      } else {
+        failedGroups.push({ ids: idGroups[index], reason: result.reason })
+      }
+    })
+
+    if (failedGroups.length) {
+      failedGroups.forEach(({ ids, reason }, index) => permissionDebug({
+        module: name,
+        action: 'query_by_relation_ids',
+        stage: 'query_denied',
+        userEmail: currentEmail(),
+        error: reason,
+        payload: { field, failed_ids: ids, query_group_index: index },
+        note: 'A printing relation query group failed; successful groups remain visible.',
+      }))
+      const failedIds = failedGroups.flatMap(group => group.ids)
+      showToast(
+        reportFirebaseError(
+          failedGroups[0].reason,
+          `Printing data failed for ${failedIds.length} related record(s).`,
+        ),
+        'error',
+      )
+    }
+
+    return uniqueById(rows as Array<T & { id?: string }>) as T[]
   }
 
   async function loadOwnSourceOrders() {
