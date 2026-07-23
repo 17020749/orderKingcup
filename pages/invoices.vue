@@ -65,6 +65,10 @@ function resetFilters() {
 }
 
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id))
+const availableOrders = computed(() => orders.value.filter(order =>
+  toNumber(order.invoice_record_count) === 0
+  || (!!editing.value && order.id === editing.value.order_id)
+))
 
 function invoiceActionDecision(action: 'create' | 'edit' | 'delete', row?: InvoiceDoc | null, order?: OrderDoc | null) {
   return moduleActionDecision({
@@ -234,7 +238,7 @@ onMounted(() => loadRows())
 
     <BaseModal v-if="showModal" :title="editing?'Sửa hóa đơn':'Thêm hóa đơn'" size="lg" :loading="saving" @close="showModal=false" @save="save">
       <div class="form-grid">
-        <div class="form-group"><label>Đơn hàng</label><select v-model="form.order_id" class="select" :disabled="!!editing" @change="chooseOrder"><option value="">Chọn đơn</option><option v-for="order in orders" :key="order.id" :value="order.id">{{order.order_code}} - {{order.customer_name}}</option></select></div>
+        <div class="form-group"><label>Đơn hàng</label><select v-model="form.order_id" class="select" :disabled="!!editing" @change="chooseOrder"><option value="">Chọn đơn</option><option v-for="order in availableOrders" :key="order.id" :value="order.id">{{order.order_code}} - {{order.customer_name}}</option></select></div>
         <div class="form-group"><label>Số hóa đơn</label><input v-model="form.invoice_number" class="input"/></div>
         <div class="form-group"><label>Ngày hóa đơn</label><input v-model="form.invoice_date" class="input" type="date"/></div>
         <div class="form-group"><label>Giá trị</label><input v-model.number="form.invoice_amount" class="input" type="number" min="0"/></div>
