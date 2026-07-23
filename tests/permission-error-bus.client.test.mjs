@@ -34,6 +34,39 @@ test('permission reporter listener failures never interrupt the original flow', 
   unsubscribe()
 })
 
+test('ownership đã thỏa scope không bị chẩn đoán thiếu orders.view_all', () => {
+  const events = []
+  const unsubscribe = subscribePermissionErrors(event => events.push(event))
+
+  permissionDeniedUserMessage({
+    module: 'orders',
+    operation: 'orders.edit',
+    actionPermission: 'orders.edit',
+    scopePermission: 'orders.view_all',
+    scopeSatisfied: true,
+  })
+  unsubscribe()
+
+  assert.deepEqual(events[0].requiredPermissions, ['orders.edit'])
+  assert.equal(events[0].context.scope_satisfied, true)
+})
+
+test('scope chưa thỏa vẫn ghi đúng quyền view_all thay thế ownership', () => {
+  const events = []
+  const unsubscribe = subscribePermissionErrors(event => events.push(event))
+
+  permissionDeniedUserMessage({
+    module: 'orders',
+    operation: 'orders.edit',
+    actionPermission: 'orders.edit',
+    scopePermission: 'orders.view_all',
+  })
+  unsubscribe()
+
+  assert.deepEqual(events[0].requiredPermissions, ['orders.edit', 'orders.view_all'])
+  assert.equal(events[0].context.scope_satisfied, false)
+})
+
 test('permission error logs have a 30-day Firestore TTL field policy', () => {
   const config = JSON.parse(readFileSync('firestore.indexes.json', 'utf8'))
   const ttlPolicy = config.fieldOverrides.find(item => (
