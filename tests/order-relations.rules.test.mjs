@@ -17,6 +17,7 @@ const projectId = 'demo-order-relations-step7'
 const SALE = 'sale@example.com'
 const MANAGER = 'manager@example.com'
 const CASHIER = 'cashier@example.com'
+const ADMIN = 'admin@example.com'
 let env
 
 function baseOrder(id = 'order-a') {
@@ -108,6 +109,12 @@ async function seed() {
           'orders.view_all',
           'payments.create',
         ],
+      }),
+      setDoc(doc(db, 'users', ADMIN), {
+        email: ADMIN,
+        active: true,
+        deleted: false,
+        permissions_flat: ['*'],
       }),
       setDoc(doc(db, 'orders', 'order-a'), baseOrder('order-a')),
       setDoc(doc(db, 'orders', 'order-zero'), baseOrder('order-zero')),
@@ -286,15 +293,59 @@ test('invoice create/delete cập nhật invoice_status và count cùng giao d�
   })
   await assertSucceeds(createBatch.commit())
 
+  for (const actor of [SALE, ADMIN]) {
+    const actorDb = env.authenticatedContext(actor, { email: actor }).firestore()
+    const duplicateBatch = writeBatch(actorDb)
+    duplicateBatch.set(doc(actorDb, 'invoices', `inv-duplicate-${actor}`), {
+      id: `inv-duplicate-${actor}`, order_id: 'order-a', order_code: 'order-a',
+      invoice_number: 'HD-TRUNG', invoice_status: 'HĐ nháp',
+      created_by: actor, ...ownership(), active: true, deleted: false,
+    })
+    duplicateBatch.update(doc(actorDb, 'orders', 'order-a'), {
+      ...relationMeta('invoices', 'create', `inv-duplicate-${actor}`, actor),
+      invoice_record_count: 2,
+      invoice_relation_revision: 2,
+      invoice_status: 'HĐ nháp',
+    })
+    await assertFails(duplicateBatch.commit())
+  }
+
+  const updateBatch = writeBatch(db)
+  updateBatch.update(doc(db, 'invoices', 'inv-a'), {
+    invoice_status: 'HĐ nháp',
+    updated_at: 'now-2',
+  })
+  updateBatch.update(doc(db, 'orders', 'order-a'), {
+    ...relationMeta('invoices', 'update', 'inv-a'),
+    invoice_record_count: 1,
+    invoice_relation_revision: 2,
+    invoice_status: 'HĐ nháp',
+  })
+  await assertSucceeds(updateBatch.commit())
+
   const deleteBatch = writeBatch(db)
   deleteBatch.update(doc(db, 'invoices', 'inv-a'), {
     deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now',
   })
   deleteBatch.update(doc(db, 'orders', 'order-a'), {
     ...relationMeta('invoices', 'delete', 'inv-a'), invoice_record_count: 0,
-    invoice_relation_revision: 2, invoice_status: 'Không xuất',
+    invoice_relation_revision: 3, invoice_status: 'Không xuất',
   })
   await assertSucceeds(deleteBatch.commit())
+
+  const replacementBatch = writeBatch(db)
+  replacementBatch.set(doc(db, 'invoices', 'inv-replacement'), {
+    id: 'inv-replacement', order_id: 'order-a', order_code: 'order-a',
+    invoice_number: 'HD-02', invoice_status: 'Yêu cầu xuất',
+    created_by: SALE, ...ownership(), active: true, deleted: false,
+  })
+  replacementBatch.update(doc(db, 'orders', 'order-a'), {
+    ...relationMeta('invoices', 'create', 'inv-replacement'),
+    invoice_record_count: 1,
+    invoice_relation_revision: 4,
+    invoice_status: 'Yêu cầu xuất',
+  })
+  await assertSucceeds(replacementBatch.commit())
 })
 
 test('shipment create/update/delete cập nhật count và tổng phí/COD', async () => {

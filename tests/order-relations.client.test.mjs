@@ -12,6 +12,7 @@ import {
   relationReconcileNeeded,
   removeRelationRecord,
   replaceRelationRecord,
+  selectCanonicalInvoice,
 } from '../utils/orderRelationState.mjs'
 
 const readyOrder = {
@@ -75,13 +76,23 @@ test('xóa phiếu khỏi tập tính toán trả công nợ về đúng giá tr
   assert.equal(computePaymentRelationSummary(readyOrder, next).payment_record_count, 1)
 })
 
-test('hóa đơn mới nhất quyết định invoice_status của đơn', () => {
-  const summary = computeInvoiceRelationSummary([
-    { id: 'inv-a', invoice_date: '2026-07-01', invoice_status: 'HĐ nháp' },
-    { id: 'inv-b', invoice_date: '2026-07-02', invoice_status: 'Đã xuất' },
-  ])
+test('dữ liệu trùng legacy chọn hóa đơn mới nhất để migration giữ lại', () => {
+  const invoices = [
+    { id: 'inv-a', invoice_date: '2026-07-01', updated_at: '2026-07-03', invoice_status: 'HĐ nháp' },
+    { id: 'inv-b', invoice_date: '2026-07-02', updated_at: '2026-07-02', invoice_status: 'Đã xuất' },
+  ]
+  const summary = computeInvoiceRelationSummary(invoices)
+  assert.equal(selectCanonicalInvoice(invoices)?.id, 'inv-b')
   assert.deepEqual(summary, { invoice_record_count: 2, invoice_status: 'Đã xuất' })
   assert.deepEqual(computeInvoiceRelationSummary([]), { invoice_record_count: 0, invoice_status: 'Không xuất' })
+})
+
+test('hóa đơn cùng ngày ưu tiên updated_at rồi ID', () => {
+  const invoices = [
+    { id: 'inv-a', invoice_date: '2026-07-02', updated_at: '2026-07-03' },
+    { id: 'inv-b', invoice_date: '2026-07-02', updated_at: '2026-07-04' },
+  ]
+  assert.equal(selectCanonicalInvoice(invoices)?.id, 'inv-b')
 })
 
 test('vận chuyển tổng hợp phí, COD và trạng thái bản ghi mới nhất', () => {
@@ -147,6 +158,7 @@ test('source thật dùng transaction nguyên tử và không còn saveDoc/softD
   const shipments = readFileSync('pages/shipments.vue', 'utf8')
   const orders = readFileSync('pages/orders.vue', 'utf8')
   const scopedQueries = readFileSync('composables/useScopedQueries.ts', 'utf8')
+  const migration = readFileSync('scripts/dedupe-order-invoices.mjs', 'utf8')
 
   assert.match(composable, /runTransaction/)
   assert.match(composable, /transaction\.update\(orderRef/)
@@ -163,6 +175,13 @@ test('source thật dùng transaction nguyên tử và không còn saveDoc/softD
   assert.match(composable, /relationReconcileNeeded/)
   assert.match(orders, /relation_lock_version: 1/)
   assert.match(orders, /discount_amount/)
+  assert.doesNotMatch(orders, /v-model="form\.invoice_status"/)
+  assert.match(orders, /invoice_status: 'Không xuất'/)
+  assert.match(invoices, /availableOrders/)
+  assert.match(invoices, /invoice_record_count/)
+  assert.match(composable, /DUPLICATE_ACTIVE_INVOICE_MESSAGE/)
+  assert.match(migration, /Dry-run only/)
+  assert.match(migration, /--apply/)
   assert.match(orders, /loadScopedExportRequestsForOrders,\s*loadScopedExportRequests,/)
   assert.match(scopedQueries, /payments\.create[\s\S]*fetchByFieldValues<PaymentDoc>\('payments', 'order_id', orderIds\)/)
   assert.match(shipments, /SearchableSelect/)

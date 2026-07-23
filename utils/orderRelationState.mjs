@@ -1,4 +1,5 @@
 export const ORDER_RELATION_LOCK_VERSION = 1
+export const DUPLICATE_ACTIVE_INVOICE_MESSAGE = 'Đơn hàng này đã có hóa đơn. Vui lòng sửa hoặc xóa hóa đơn hiện tại.'
 
 export const RELATION_MODULES = ['payments', 'invoices', 'shipments']
 
@@ -96,9 +97,19 @@ function latestRecord(records, fields) {
   })[0] || null
 }
 
+export function selectCanonicalInvoice(records = []) {
+  return [...records.filter(isActiveOrderRelation)].sort((left, right) => {
+    for (const field of ['invoice_date', 'updated_at', 'created_at']) {
+      const dateDiff = sortableDate(right, [field]) - sortableDate(left, [field])
+      if (dateDiff) return dateDiff
+    }
+    return text(right.id).localeCompare(text(left.id))
+  })[0] || null
+}
+
 export function computeInvoiceRelationSummary(records = []) {
   const active = records.filter(isActiveOrderRelation)
-  const latest = latestRecord(active, ['invoice_date', 'updated_at', 'created_at'])
+  const latest = selectCanonicalInvoice(active)
   return {
     invoice_record_count: active.length,
     invoice_status: latest?.invoice_status || 'Không xuất',

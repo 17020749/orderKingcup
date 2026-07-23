@@ -16,6 +16,7 @@ import { invalidateScopedCache } from '~/composables/useScopedQueries'
 import {
   buildOrderRelationPatch,
   buildReconciledOrderRelationPatch,
+  DUPLICATE_ACTIVE_INVOICE_MESSAGE,
   isActiveOrderRelation,
   relationCountField,
   relationLockReady,
@@ -146,6 +147,13 @@ export function useAtomicOrderRelations() {
       ...snapshot.data(),
       id: snapshot.id,
     }) as RelationRecord)
+    if (
+      module === 'invoices'
+      && mode === 'create'
+      && authoritativeRecords.some(isActiveOrderRelation)
+    ) {
+      throw new Error(DUPLICATE_ACTIVE_INVOICE_MESSAGE)
+    }
 
     let localRecord: RelationRecord = { ...input.record }
     let localOrderPatch: Record<string, any> = {}
@@ -163,6 +171,13 @@ export function useAtomicOrderRelations() {
       }
       if (!relationLockReady(currentOrder)) {
         throw new Error('Đơn hàng cũ chưa hoàn tất đồng bộ khóa thanh toán, hóa đơn và vận chuyển.')
+      }
+      if (
+        module === 'invoices'
+        && mode === 'create'
+        && toNumber(currentOrder.invoice_record_count) !== 0
+      ) {
+        throw new Error(DUPLICATE_ACTIVE_INVOICE_MESSAGE)
       }
       const currentRevision = toNumber((currentOrder as any)[revisionField])
       if (currentRevision !== expectedRevision) {
