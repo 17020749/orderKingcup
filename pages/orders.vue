@@ -31,6 +31,7 @@ const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
 const {
   loadScopedOrdersPage,
   loadScopedOrderItems,
+  loadPersistedOrder,
   loadScopedPaymentsForOrders,
   loadScopedExportRequestsForOrders,
   loadScopedExportRequests,
@@ -74,6 +75,7 @@ const selectedPrintOrder = ref<OrderDoc | null>(null)
 const showCustomerModal = ref(false)
 const savingCustomer = ref(false)
 const editing = ref<OrderDoc | null>(null)
+const pendingSyncOrderIds = ref<string[]>([])
 const form = reactive<any>({})
 const formItems = ref<any[]>([])
 const customerForm = reactive<any>({})
@@ -265,16 +267,58 @@ async function loadRows(force = false, append = false) {
     })
 
     rows.value = append ? appendUniqueRows(rows.value, enrichedRows) : enrichedRows
+    const loadedOrderIds = new Set(enrichedRows.map(order => order.id))
+    pendingSyncOrderIds.value = pendingSyncOrderIds.value.filter(id => !loadedOrderIds.has(id))
     pageCursor.value = page.cursor
     hasMoreRows.value = page.hasMore
     pageMode.value = page.mode
     if (!append) setTimeout(() => { void reconcileRelationLocksInBackground() }, 0)
+    return true
   } catch (error) {
-    showToast(reportFirebaseError(error, 'Không tải được danh sách đơn hàng.'), 'error')
+    showToast(reportFirebaseError(error, 'Không tải được danh sách đơn hàng.', {
+      module: 'orders',
+      operation: 'list',
+      stage: force ? 'forced_refresh' : 'initial_load',
+      actionPermission: 'orders.view',
+    }), 'error')
+    return false
   } finally {
     loading.value = false
     loadingMore.value = false
   }
+}
+
+function markOrderSyncPending(orderId: string, pending: boolean) {
+  const ids = new Set(pendingSyncOrderIds.value)
+  if (pending) ids.add(orderId)
+  else ids.delete(orderId)
+  pendingSyncOrderIds.value = Array.from(ids)
+}
+
+function isOrderSyncPending(rowOrId: OrderDoc | string) {
+  const id = typeof rowOrId === 'string' ? rowOrId : rowOrId.id
+  return pendingSyncOrderIds.value.includes(id)
+}
+
+async function synchronizePersistedOrder(orderId: string) {
+  const { order, items } = await loadPersistedOrder(orderId)
+  itemsByOrder.value = {
+    ...itemsByOrder.value,
+    [orderId]: items,
+  }
+
+  const orderRequests = exportRequests.value
+    .filter(request => request.order_id === orderId && isActive(request))
+  const canonicalOrder = {
+    ...order,
+    ...computePaymentStatus(order, paymentsByOrder.value[orderId] || []),
+    ...orderSummary(buildFulfillmentRows(items, orderRequests), orderRequests),
+  } as OrderDoc
+  const rowIndex = rows.value.findIndex(row => row.id === orderId)
+  if (rowIndex >= 0) rows.value[rowIndex] = canonicalOrder
+  else rows.value.unshift(canonicalOrder)
+  markOrderSyncPending(orderId, false)
+  return canonicalOrder
 }
 
 async function loadMoreRows() {
@@ -437,7 +481,7 @@ function itemLineTotal(item: any) {
 }
 
 function canEditRow(row: OrderDoc) {
-  return orderActionDecision('edit', row).allowed
+  return !isOrderSyncPending(row) && orderActionDecision('edit', row).allowed
 }
 
 function orderActionDecision(action: 'edit' | 'delete', row: OrderDoc) {
@@ -536,6 +580,9 @@ function requestStatusLabel(value: any) {
 }
 
 function openModal(row?: OrderDoc) {
+  if (row && isOrderSyncPending(row)) {
+    return showToast('Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.', 'warning')
+  }
   if (row && !canEditRow(row)) return showToast(orderActionError('edit', row), 'error')
   editing.value = row || null
   Object.keys(form).forEach(key => delete form[key])
@@ -620,6 +667,9 @@ function closePrint() {
 }
 
 async function saveOrder() {
+  if (editing.value && isOrderSyncPending(editing.value)) {
+    return showToast('Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.', 'warning')
+  }
   if (editing.value && !canEditRow(editing.value)) return showToast(orderActionError('edit', editing.value), 'error')
   if (!editing.value && !hasPermission('orders.create')) return showToast(reportPermissionError({
     module: 'orders',
@@ -631,6 +681,8 @@ async function saveOrder() {
   if (itemValidation) return showToast(itemValidation, 'error')
 
   saving.value = true
+  let saveStage = 'prepare_payload'
+  let commitSucceeded = false
   await withLoading(async () => {
     const ownerEmail = form.owner_email || appUser.value?.email || ''
     const saleEmail = form.sale_email || appUser.value?.email || ''
@@ -665,6 +717,7 @@ async function saveOrder() {
 
     const saveItems = buildSaveItems()
     if (editing.value) {
+      saveStage = 'load_edit_dependencies'
       const [latestRequests, latestPrinting] = await Promise.all([
         loadScopedExportRequests([editing.value], true),
         loadPrintingDependenciesForOrders([editing.value]),
@@ -758,7 +811,8 @@ async function saveOrder() {
       })
     }
 
-    const result = await saveOrderAtomic({
+    saveStage = 'atomic_transaction'
+    await saveOrderAtomic({
       mode: editing.value ? 'edit' : 'create',
       orderId: form.id,
       customerId: form.customer_id,
@@ -778,98 +832,67 @@ async function saveOrder() {
         ? { ...editing.value, items: existingItems }
         : null,
     })
-
-    form.order_code = result.orderCode
-    form.order_sequence = result.orderSequence
-    form.user_code = userCode
-    form.customer_code = customerCode
-    form.revision = result.revision
-    form.last_operation_id = result.operationId
-
-    const now = new Date().toISOString()
-    const previousItems = new Map(existingItems.map(item => [item.id, item]))
-    const localItems = totals.items.map((item: any) => ({
-      ...item,
-      order_id: form.id,
-      order_code: result.orderCode,
-      owner_email: ownerEmail,
-      sale_email: saleEmail,
-      created_by: createdBy,
-      order_revision: result.revision,
-      last_operation_id: result.operationId,
-      status: 'active',
-      active: true,
-      deleted: false,
-      created_at: previousItems.get(item.id)?.created_at || now,
-      updated_at: now
-    })) as OrderItemDoc[]
-    itemsByOrder.value[form.id] = localItems
-
-    const localOrder = {
-      ...(editing.value || {}),
-      ...baseOrder,
-      ...localPaymentSummary,
-      ...(!editing.value ? {
-        printing_progress_count: 0,
-        printing_lock_version: 1,
-        printing_last_action: 'reconcile',
-        printing_last_print_order_id: '',
-        printing_lock_updated_by: createdBy,
-        printing_lock_updated_at: now,
-        relation_lock_version: 1,
-        payment_record_count: 0,
-        invoice_record_count: 0,
-        shipment_record_count: 0,
-        payment_relation_revision: 0,
-        invoice_relation_revision: 0,
-        shipment_relation_revision: 0,
-        relation_last_module: 'all',
-        relation_last_action: 'reconcile',
-        relation_last_document_id: '',
-        relation_updated_by: createdBy,
-        relation_updated_at: now,
-        shipment_status: '',
-        shipping_fee_total: 0,
-        cod_amount_total: 0,
-      } : {}),
-      id: form.id,
-      order_code: result.orderCode,
-      order_sequence: result.orderSequence,
-      user_code: userCode,
-      customer_code: customerCode,
-      owner_email: ownerEmail,
-      sale_email: saleEmail,
-      created_by: createdBy,
-      revision: result.revision,
-      last_operation_id: result.operationId,
-      invoice_status: editing.value && !canManageInvoiceStatus.value
-        ? (editing.value.invoice_status || 'Không xuất')
-        : (form.invoice_status || 'Không xuất'),
-      items_count: localItems.length,
-      active: true,
-      deleted: false,
-      created_at: editing.value?.created_at || now,
-      updated_at: now
-    } as OrderDoc
-    const orderRequests = exportRequests.value.filter(request => request.order_id === form.id && isActive(request))
-    Object.assign(localOrder, orderSummary(buildFulfillmentRows(localItems, orderRequests), orderRequests))
-    const rowIndex = rows.value.findIndex(row => row.id === form.id)
-    if (rowIndex >= 0) rows.value[rowIndex] = localOrder
-    else rows.value.unshift(localOrder)
+    commitSucceeded = true
 
     invalidateScopedCache('orders')
     invalidateScopedCache('order_items')
     invalidateScopedCache('activity_logs')
+
+    saveStage = 'post_commit_sync'
+    markOrderSyncPending(form.id, true)
+    let synchronized = false
+    try {
+      await synchronizePersistedOrder(form.id)
+      synchronized = true
+    } catch (syncError) {
+      markOrderSyncPending(form.id, true)
+      reportFirebaseError(syncError, 'Không đồng bộ được đơn hàng vừa lưu.', {
+        module: 'orders',
+        operation: 'sync_after_save',
+        stage: 'post_commit_sync',
+        record: form.id,
+        actionPermission: 'orders.view',
+        scopePermission: 'orders.view_all',
+        scopeSatisfied: true,
+        context: {
+          collections: ['orders', 'order_items'],
+          commit_succeeded: true,
+        },
+      })
+      synchronized = await loadRows(true)
+        && rows.value.some(row => row.id === form.id)
+      if (synchronized) markOrderSyncPending(form.id, false)
+    }
+
     showModal.value = false
     showToast(editing.value ? 'Đã cập nhật đơn hàng' : 'Đã thêm đơn hàng', 'success')
+    if (!synchronized) {
+      showToast('Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.', 'warning')
+    }
   }).catch(error => showToast(
-    (error as any)?.code
+    commitSucceeded
+      ? 'Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.'
+      : (error as any)?.code
       ? reportFirebaseError(error, 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.', {
+          module: 'orders',
           operation: editing.value ? 'orders.edit' : 'orders.create',
+          stage: saveStage,
           record: form.id,
           status: editing.value?.status || form.status || 'new',
           actionPermission: editing.value ? 'orders.edit' : 'orders.create',
-          scopePermission: 'orders.view_all',
+          scopePermission: editing.value ? 'orders.view_all' : undefined,
+          scopeSatisfied: editing.value
+            ? orderActionDecision('edit', editing.value).allowed
+            : true,
+          context: {
+            collection: saveStage === 'load_edit_dependencies'
+              ? 'order_export_requests/print_orders'
+              : 'orders/order_items',
+            commit_succeeded: false,
+            permission_expression: editing.value
+              ? 'orders.edit AND (owner OR orders.view_all)'
+              : 'orders.create',
+          },
         })
       : ((error as any)?.message || 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.'),
     'error',

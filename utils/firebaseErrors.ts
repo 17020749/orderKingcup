@@ -10,6 +10,7 @@ export type FirebaseErrorContext = {
   actionPermissions?: string[]
   scopePermission?: string
   scopePermissions?: string[]
+  scopeSatisfied?: boolean
   immutableField?: string
   module?: string
   stage?: string
@@ -48,6 +49,7 @@ export function firebaseErrorMessage(
       actionPermissions: context.actionPermissions,
       scopePermission: context.scopePermission,
       scopePermissions: context.scopePermissions,
+      scopeSatisfied: context.scopeSatisfied,
       missingPermissions: context.missingPermissions,
       context: {
         ...context.context,
@@ -79,6 +81,7 @@ export function reportPermissionError(context: FirebaseErrorContext = {}) {
     actionPermissions: context.actionPermissions,
     scopePermission: context.scopePermission,
     scopePermissions: context.scopePermissions,
+    scopeSatisfied: context.scopeSatisfied,
     missingPermissions: context.missingPermissions,
     context: context.context,
   })

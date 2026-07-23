@@ -1,6 +1,9 @@
 import {
   collection,
+  doc,
   getDocs,
+  getDocFromServer,
+  getDocsFromServer,
   limit as queryLimit,
   onSnapshot,
   orderBy,
@@ -459,6 +462,37 @@ export function useScopedQueries() {
       20_000
     )
     return uniqueById(byEmail).filter(item => isActive(item) && orderIds.has(item.order_id)) as OrderItemDoc[]
+  }
+
+  async function loadPersistedOrder(orderId: string) {
+    const id = String(orderId || '').trim()
+    if (!id) throw new Error('Thiếu ID đơn hàng cần đồng bộ.')
+
+    const [orderSnapshot, itemSnapshot] = await Promise.all([
+      getDocFromServer(doc(db, 'orders', id)),
+      getDocsFromServer(query(
+        collection(db, 'order_items'),
+        where('order_id', '==', id),
+      )),
+    ])
+    if (!orderSnapshot.exists()) {
+      throw new Error('Đơn hàng vừa lưu không còn tồn tại trên Firestore.')
+    }
+
+    const order = {
+      ...orderSnapshot.data(),
+      id: orderSnapshot.id,
+      firestore_id: orderSnapshot.id,
+    } as OrderDoc
+    const items = itemSnapshot.docs
+      .map(item => ({
+        ...item.data(),
+        id: item.id,
+        firestore_id: item.id,
+      } as OrderItemDoc))
+      .filter(isActive)
+
+    return { order, items }
   }
 
   async function loadScopedPayments(orders: OrderDoc[] = [], force = false) {
@@ -976,6 +1010,7 @@ export function useScopedQueries() {
     loadScopedOrders,
     loadScopedOrdersPage,
     loadScopedOrderItems,
+    loadPersistedOrder,
     loadScopedPayments,
     loadScopedPaymentsPage,
     loadScopedPaymentsForOrders,

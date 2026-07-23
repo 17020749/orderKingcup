@@ -95,3 +95,33 @@ test('client thực tế dùng một transaction cho order, items, sequence và 
   assert.doesNotMatch(page, /commitWriteChunks/)
   assert.doesNotMatch(page, /await orderBatch\.commit\(\)/)
 })
+
+test('sau commit client đọc lại order và order_items chuẩn trước khi cho sửa tiếp', () => {
+  const page = readFileSync('pages/orders.vue', 'utf8')
+  const scopedQueries = readFileSync('composables/useScopedQueries.ts', 'utf8')
+
+  assert.match(scopedQueries, /async function loadPersistedOrder\(orderId: string\)/)
+  assert.match(scopedQueries, /getDocFromServer\(doc\(db, 'orders', id\)\)/)
+  assert.match(scopedQueries, /getDocsFromServer\(query\(/)
+  assert.match(scopedQueries, /where\('order_id', '==', id\)/)
+
+  const commitIndex = page.indexOf('await saveOrderAtomic({')
+  const syncIndex = page.indexOf('await synchronizePersistedOrder(form.id)')
+  const successIndex = page.indexOf("showToast(editing.value ? 'Đã cập nhật đơn hàng' : 'Đã thêm đơn hàng'")
+  assert.ok(commitIndex >= 0)
+  assert.ok(syncIndex > commitIndex)
+  assert.ok(successIndex > syncIndex)
+  assert.match(page, /commitSucceeded = true/)
+  assert.doesNotMatch(page, /itemsByOrder\.value\[form\.id\]\s*=/)
+  assert.doesNotMatch(page, /const localOrder\s*=/)
+})
+
+test('lỗi đồng bộ sau commit không bị báo thành lưu thất bại hoặc cho sửa row tạm', () => {
+  const page = readFileSync('pages/orders.vue', 'utf8')
+
+  assert.match(page, /markOrderSyncPending\(form\.id, true\)/)
+  assert.match(page, /synchronized = await loadRows\(true\)/)
+  assert.match(page, /commitSucceeded\s*\?\s*'Đơn đã được lưu\. Vui lòng làm mới dữ liệu trước khi sửa\.'/)
+  assert.match(page, /return !isOrderSyncPending\(row\) && orderActionDecision\('edit', row\)\.allowed/)
+  assert.match(page, /scopeSatisfied: editing\.value[\s\S]*orderActionDecision\('edit', editing\.value\)\.allowed/)
+})
