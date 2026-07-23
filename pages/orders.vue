@@ -110,7 +110,6 @@ function resetFilters() {
   ownerFilter.value = ''
 }
 
-const canManageInvoiceStatus = computed(() => !editing.value && hasPermission('invoices.create'))
 const itemCount = computed(() => `${formItems.value.length} dòng`)
 const modalTotals = computed(() => calcItems(formItems.value, form))
 const selectedDetailItems = computed(() => selectedDetail.value ? (itemsByOrder.value[selectedDetail.value.id] || []) : [])
@@ -601,7 +600,6 @@ function openModal(row?: OrderDoc) {
     owner_email: appUser.value?.email || '',
     order_status: 'Mới tạo',
     order_classification: 'Chăm sóc',
-    invoice_status: 'Không xuất',
     vat_rate: 0,
     discount_amount: 0,
     note: '',
@@ -757,9 +755,9 @@ async function saveOrder() {
         'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
         'payment_count', 'deposit_count', 'collect_count',
         'warehouse_fulfillment_status', 'warehouse_request_status',
+        'invoice_status',
         'deleted', 'active', 'status', 'deleted_at', 'created_at'
       ]
-      if (!canManageInvoiceStatus.value) protectedFields.push('invoice_status')
       protectedFields.forEach(key => delete baseOrder[key])
     }
 
@@ -780,7 +778,7 @@ async function saveOrder() {
       items_count: totals.items.length,
       search_text: normalizeText(`${form.order_code || ''} ${form.customer_name} ${form.phone}`),
       ...(editing.value ? {} : {
-        invoice_status: form.invoice_status || 'Không xuất',
+        invoice_status: 'Không xuất',
         warehouse_fulfillment_status: form.warehouse_fulfillment_status || 'chua_xuat',
         warehouse_request_status: form.warehouse_request_status || '',
         printing_progress_count: 0,
@@ -1285,13 +1283,6 @@ onMounted(loadRows)
         <div class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
         <div class="form-group"><label>Phân loại đơn</label><select v-model="form.order_classification" class="select"><option v-for="s in ORDER_CLASSIFICATION_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
-        <div class="form-group">
-          <label>Hóa đơn</label>
-          <select v-model="form.invoice_status" class="select" :disabled="!canManageInvoiceStatus">
-            <option v-for="s in INVOICE_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option>
-          </select>
-          <div v-if="!canManageInvoiceStatus" class="small subtle">Bạn không có quyền thực hiện thao tác này.</div>
-        </div>
         <div class="form-group"><label>VAT %</label><select v-model.number="form.vat_rate" class="select"><option v-for="s in VAT_RATE_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div class="form-group"><label>Số tiền giảm giá</label><input v-model.number="form.discount_amount" class="input" type="number" min="0" /></div>
       </div>

@@ -981,6 +981,18 @@ service cloud.firestore {
         && relationMetadataMatches(after, module, action, documentId);
     }
 
+    // An order may have at most one active invoice. The parent counter is the
+    // concurrency guard: the invoice and the 0 -> 1 transition must commit
+    // together, so a second concurrent create is rejected after retry.
+    function invoiceCreateCountTransitionMatches(orderId) {
+      let path = orderPath(orderId);
+      return orderId is string
+        && exists(path)
+        && existsAfter(path)
+        && get(path).data.get('invoice_record_count', -1) == 0
+        && getAfter(path).data.get('invoice_record_count', -1) == 1;
+    }
+
     // Evaluated only by the matching module branch on the parent order.
     function relationParentTransitionMatches(orderId, childPath, module, action, documentId, countField, revisionField) {
       let currentCount = resource.data.get(countField, -1);
@@ -1063,6 +1075,13 @@ service cloud.firestore {
           (action == 'create' && hasPerm('invoices.create'))
           || (action == 'update' && hasPerm('invoices.edit'))
           || (action == 'delete' && hasPerm('invoices.delete'))
+        )
+        && (
+          action != 'create'
+          || (
+            resource.data.get('invoice_record_count', -1) == 0
+            && request.resource.data.get('invoice_record_count', -1) == 1
+          )
         )
         && relationParentTransitionMatches(
           orderId, invoicePath(documentId), 'invoices', action, documentId,
@@ -2390,6 +2409,7 @@ service cloud.firestore {
 
       allow create: if hasPerm('invoices.create')
         && relationCreateBase(request.resource.data.order_id, 'invoices.view_all')
+        && invoiceCreateCountTransitionMatches(request.resource.data.order_id)
         && relationParentMarkerMatches(
           request.resource.data.order_id, 'invoices', 'create', docId,
           'invoice_relation_revision'

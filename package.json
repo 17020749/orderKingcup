@@ -18,7 +18,8 @@
     "deploy": "npm run generate && firebase deploy --only hosting",
     "test:indexes": "node --test tests/firestore-indexes.test.mjs && node scripts/validate-firestore-indexes.mjs",
     "test:pagination": "node --test tests/cursor-pagination.test.mjs",
-    "migrate:order-item-ownership": "node scripts/backfill-order-item-ownership.mjs"
+    "migrate:order-item-ownership": "node scripts/backfill-order-item-ownership.mjs",
+    "migrate:dedupe-order-invoices": "node scripts/dedupe-order-invoices.mjs"
   },
   "dependencies": {
     "@nuxtjs/google-fonts": "^3.2.0",
