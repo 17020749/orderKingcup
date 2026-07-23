@@ -1,0 +1,51 @@
+name: Apply bus transport feature
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: write
+
+jobs:
+  apply-feature:
+    if: github.head_ref == 'agent/add-bus-transport-printing'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply guarded source patches
+        run: node scripts/apply-bus-transport-feature.mjs
+
+      - name: Commit generated changes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No generated changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            types/models.ts \
+            constants/permissions.ts \
+            constants/accessMatrix.mjs \
+            pages/warehouse-export-requests.vue \
+            firestore.rules \
+            package.json
+          git commit -m "add bus transport permissions and rules"
+          git push origin "HEAD:${{ github.head_ref }}"
