@@ -643,6 +643,7 @@ onBeforeUnmount(() => {
               <td>
                 <div class="action-buttons">
                   <button class="btn-sm" @click="openDetail(row)">Xem</button>
+                  <WarehousePrintMenu :request="row" :order="orders.find(item => item.id === row.order_id) || null" />
                   <button v-if="canAcceptRequest(row)" class="btn-sm btn-view" @click="openAction(row, 'accept')">Tiếp nhận</button>
                   <button v-if="canReleaseRequest(row)" class="btn-sm btn-view" @click="openAction(row, 'release')">Cho xuất kho</button>
                   <button v-if="canCancelReleasedRequest(row)" class="btn-sm btn-delete" @click="openAction(row, 'cancel_release')">Hủy xuất/Hoàn tồn</button>

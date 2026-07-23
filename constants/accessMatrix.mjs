@@ -20,6 +20,7 @@ export const APP_ACCESS_MODULES = [
   { key: 'inventory', path: '/inventory', label: 'Tồn kho', permission: 'page.inventory', navSection: 'warehouse', navOrder: 50 },
   { key: 'warehouse_settings', path: '/warehouse-settings', label: 'Danh mục kho', permission: 'page.warehouse_settings', navSection: 'warehouse', navOrder: 60 },
   { key: 'shipments', path: '/shipments', label: 'Vận chuyển', permission: 'page.shipments', navSection: 'warehouse', navOrder: 70 },
+  { key: 'bus_transport', path: '/bus-transport', label: 'Vận chuyển nhà xe', permission: 'page.bus_transport', navSection: 'warehouse', navOrder: 80 },
 
   { key: 'products', path: '/products', label: 'Sản phẩm', permission: 'page.products', navSection: 'standalone', navOrder: 10 },
   { key: 'printing', path: '/printing', label: 'Tiến độ in ấn', permission: 'page.printing', navSection: 'standalone', navOrder: 20 },
@@ -137,6 +138,12 @@ export const PERMISSION_DEPENDENCIES = {
   'shipments.create': ['page.shipments', 'shipments.view', 'orders.view'],
   'shipments.edit': ['page.shipments', 'shipments.view', 'orders.view'],
   'shipments.delete': ['page.shipments', 'shipments.view', 'orders.view'],
+
+  'page.bus_transport': ['bus_transport.view'],
+  'bus_transport.view': ['page.bus_transport'],
+  'bus_transport.create': ['page.bus_transport', 'bus_transport.view'],
+  'bus_transport.edit': ['page.bus_transport', 'bus_transport.view'],
+  'bus_transport.delete': ['page.bus_transport', 'bus_transport.view'],
 
   'page.invoices': ['invoices.view', 'orders.view'],
   'invoices.view': ['page.invoices', 'orders.view'],

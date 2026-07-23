@@ -23,6 +23,7 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'page.payments', group: 'Thanh toán', name: 'Xem tab Thanh toán' },
   { key: 'page.printing', group: 'Tiến độ in ấn', name: 'Xem tab Tiến độ in ấn', emphasis: 'primary' },
   { key: 'page.shipments', group: 'Vận chuyển', name: 'Xem tab Vận chuyển' },
+  { key: 'page.bus_transport', group: 'Vận chuyển nhà xe', name: 'Xem tab Vận chuyển nhà xe' },
   { key: 'page.invoices', group: 'Hóa đơn', name: 'Xem tab Hóa đơn' },
   { key: 'page.settings', group: 'Cài đặt', name: 'Xem tab Cài đặt' },
   { key: 'page.activity_logs', group: 'Nhật ký', name: 'Xem tab Nhật ký hoạt động' },
@@ -106,6 +107,11 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'shipments.create', group: 'Vận chuyển', name: 'Thêm vận chuyển' },
   { key: 'shipments.edit', group: 'Vận chuyển', name: 'Sửa vận chuyển' },
   { key: 'shipments.delete', group: 'Vận chuyển', name: 'Xóa vận chuyển' },
+
+  { key: 'bus_transport.view', group: 'Vận chuyển nhà xe', name: 'Xem tất cả đơn vận chuyển nhà xe' },
+  { key: 'bus_transport.create', group: 'Vận chuyển nhà xe', name: 'Tạo đơn vận chuyển nhà xe' },
+  { key: 'bus_transport.edit', group: 'Vận chuyển nhà xe', name: 'Sửa đơn vận chuyển nhà xe' },
+  { key: 'bus_transport.delete', group: 'Vận chuyển nhà xe', name: 'Xóa đơn vận chuyển nhà xe' },
 
   { key: 'invoices.view', group: 'Hóa đơn', name: 'Xem hóa đơn của mình' },
   { key: 'invoices.view_all', group: 'Hóa đơn', name: 'Xem tất cả hóa đơn', emphasis: 'scope' },
