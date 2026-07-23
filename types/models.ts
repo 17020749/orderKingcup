@@ -297,6 +297,38 @@ export interface ShipmentDoc {
   deleted?: boolean
 }
 
+export interface BusTransportDoc {
+  id: string
+  transport_code?: string
+  export_order_id: string
+  export_order_code?: string
+  source_request_id?: string
+  order_id?: string
+  order_code?: string
+  customer_name?: string
+  receiver_name?: string
+  receiver_phone?: string
+  receiver_address?: string
+  carrier_name?: string
+  carrier_phone?: string
+  vehicle_plate?: string
+  driver_name?: string
+  departure_at?: string
+  transport_status?: string
+  note?: string
+  items_json?: string
+  status?: string
+  active?: boolean
+  deleted?: boolean
+  created_by?: string
+  created_at?: any
+  updated_by?: string
+  updated_at?: any
+  deleted_by?: string
+  deleted_at?: any
+  source?: string
+}
+
 export interface PrintOrderDoc {
   id: string
   order_id?: string
