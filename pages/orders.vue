@@ -5,7 +5,7 @@ import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, PrintOrderDoc, Pr
 import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
 import { customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, userCodeValidationError } from '~/utils/orderCode'
 import { generateCustomerCode } from '~/utils/customerCode'
-import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { reportFirebaseError, reportPermissionError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
 import { toDateKey } from '~/utils/listFilters'
@@ -310,7 +310,11 @@ function chooseCustomer() {
 
 function openCustomerModal() {
   if (!hasPermission('customers.create')) {
-    showToast('Bạn không có quyền thêm khách hàng.', 'error')
+    showToast(reportPermissionError({
+      module: 'customers',
+      operation: 'create',
+      missingPermissions: ['customers.create'],
+    }), 'error')
     return
   }
   Object.assign(customerForm, {
@@ -332,7 +336,11 @@ function openCustomerModal() {
 
 async function saveCustomer() {
   if (!hasPermission('customers.create')) {
-    showToast('Bạn không có quyền thêm khách hàng.', 'error')
+    showToast(reportPermissionError({
+      module: 'customers',
+      operation: 'create',
+      missingPermissions: ['customers.create'],
+    }), 'error')
     return
   }
   const customerName = String(customerForm.customer_name || '').trim()
@@ -596,7 +604,12 @@ function openDetail(row: OrderDoc) {
 
 function openPrint(row: OrderDoc) {
   if (!hasPermission('orders.print')) {
-    showToast('Bạn không có quyền in đơn hàng.', 'error')
+    showToast(reportPermissionError({
+      module: 'orders',
+      operation: 'print',
+      record: row.id,
+      missingPermissions: ['orders.print'],
+    }), 'error')
     return
   }
   selectedPrintOrder.value = row
@@ -608,7 +621,11 @@ function closePrint() {
 
 async function saveOrder() {
   if (editing.value && !canEditRow(editing.value)) return showToast(orderActionError('edit', editing.value), 'error')
-  if (!editing.value && !hasPermission('orders.create')) return showToast('Bạn không có quyền tạo đơn hàng', 'error')
+  if (!editing.value && !hasPermission('orders.create')) return showToast(reportPermissionError({
+    module: 'orders',
+    operation: 'create',
+    missingPermissions: ['orders.create'],
+  }), 'error')
   if (!form.customer_name) return showToast('Thiếu khách hàng', 'error')
   const itemValidation = validateOrderItems()
   if (itemValidation) return showToast(itemValidation, 'error')
@@ -621,7 +638,12 @@ async function saveOrder() {
     let selectedCustomer = customers.value.find(customer => customer.id === form.customer_id)
     if (!editing.value && selectedCustomer && !selectedCustomer.customer_code) {
       if (!hasPermission('customers.edit')) {
-        throw new Error('Khách hàng chưa có Mã khách tự động. Vui lòng cấp quyền sửa khách hàng hoặc cập nhật khách tại trang Khách hàng trước khi tạo đơn.')
+        throw new Error(reportPermissionError({
+          module: 'customers',
+          operation: 'assign_customer_code',
+          record: selectedCustomer.id,
+          missingPermissions: ['customers.edit'],
+        }))
       }
       selectedCustomer = await saveManagedCustomer({ ...selectedCustomer, customer_code: generateCustomerCode() }, selectedCustomer)
       customers.value = customers.value.map(customer => customer.id === selectedCustomer?.id ? selectedCustomer as CustomerDoc : customer)
@@ -1245,7 +1267,7 @@ onMounted(loadRows)
           <select v-model="form.invoice_status" class="select" :disabled="!canManageInvoiceStatus">
             <option v-for="s in INVOICE_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option>
           </select>
-          <div v-if="!canManageInvoiceStatus" class="small subtle">Bạn không có quyền thay đổi trạng thái hóa đơn.</div>
+          <div v-if="!canManageInvoiceStatus" class="small subtle">Bạn không có quyền thực hiện thao tác này.</div>
         </div>
         <div class="form-group"><label>VAT %</label><select v-model.number="form.vat_rate" class="select"><option v-for="s in VAT_RATE_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div class="form-group"><label>Số tiền giảm giá</label><input v-model.number="form.discount_amount" class="input" type="number" min="0" /></div>

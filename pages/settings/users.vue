@@ -3,6 +3,9 @@ import {
   collection,
   getDocs,
   doc,
+  limit,
+  orderBy,
+  query,
   runTransaction,
   setDoc,
   serverTimestamp,
@@ -28,16 +31,19 @@ import {
 import type { AppUser, RoleDoc } from "~/types/models";
 import { reportFirebaseError } from "~/utils/firebaseErrors";
 
-const PERMISSION_SCHEMA_VERSION = 2;
+const PERMISSION_SCHEMA_VERSION = 3;
 const { db } = useFirebaseServices();
 const { hasPermission, firebaseUser, loadProfile } = useAuth();
 const { showToast } = useUi();
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog();
 const loading = ref(false);
 const saving = ref(false);
-const activeTab = ref<"users" | "roles">("users");
+const activeTab = ref<"users" | "roles" | "permission_errors">("users");
 const users = ref<AppUser[]>([]);
 const roles = ref<RoleDoc[]>([]);
+const permissionErrors = ref<any[]>([]);
+const permissionErrorSearch = ref("");
+const permissionErrorsLoaded = ref(false);
 const showUserModal = ref(false);
 const showRoleModal = ref(false);
 const showDetailModal = ref(false);
@@ -47,6 +53,20 @@ const editingUserEmail = ref("");
 const userForm = reactive<any>({});
 const roleForm = reactive<any>({});
 const isEditingUser = computed(() => !!editingUserEmail.value);
+const filteredPermissionErrors = computed(() => {
+  const keyword = permissionErrorSearch.value.trim().toLowerCase();
+  if (!keyword) return permissionErrors.value;
+  return permissionErrors.value.filter((row) => [
+    row.user_email,
+    row.route,
+    row.module,
+    row.operation,
+    row.error_type,
+    row.record_id,
+    row.diagnostic_summary,
+    permissionListFromJson(row.missing_permissions_json).join(" "),
+  ].some((value) => String(value || "").toLowerCase().includes(keyword)));
+});
 
 const PERMISSION_GROUP_ORDER = [
   "Quản trị",
@@ -108,6 +128,63 @@ function permissionDependencyLabels(key: string) {
 
 function permissionIsDisabled(permission: PermissionItem) {
   return permission.assignable === false;
+}
+
+function permissionListFromJson(value: unknown) {
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function permissionErrorTime(value: any) {
+  const date = typeof value?.toDate === "function" ? value.toDate() : new Date(value || 0);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("vi-VN");
+}
+
+async function loadPermissionErrors(force = false) {
+  if (permissionErrorsLoaded.value && !force) return;
+  loading.value = true;
+  try {
+    const snapshot = await getDocs(query(
+      collection(db, "permission_error_logs"),
+      orderBy("created_at", "desc"),
+      limit(300),
+    ));
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    permissionErrors.value = snapshot.docs
+      .map((item) => ({ ...item.data(), id: item.id }))
+      .filter((row: any) => {
+        const createdAt = typeof row.created_at?.toMillis === "function"
+          ? row.created_at.toMillis()
+          : new Date(row.created_at || 0).getTime();
+        return createdAt >= cutoff;
+      });
+    permissionErrorsLoaded.value = true;
+  } catch (error) {
+    showToast(reportFirebaseError(error, "Không tải được lỗi phân quyền.", {
+      module: "permission_error_logs",
+      operation: "list",
+      record: "latest-30-days",
+    }), "error");
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function refreshCurrentTab() {
+  if (activeTab.value === "permission_errors") {
+    await loadPermissionErrors(true);
+    return;
+  }
+  await loadRows();
+}
+
+async function selectTab(tab: "users" | "roles" | "permission_errors") {
+  activeTab.value = tab;
+  if (tab === "permission_errors") await loadPermissionErrors();
 }
 
 async function loadRows() {
@@ -559,12 +636,13 @@ onMounted(loadRows);
 <template>
   <AppShell>
     <PageHeader title="Cài đặt" subtitle="Quản lý người dùng và vai trò">
-      <button class="btn" @click="loadRows">Làm mới</button>
+      <button class="btn" @click="refreshCurrentTab">Làm mới</button>
     </PageHeader>
     <div class="card" style="margin: 24px;">
       <div class="row" style="margin-bottom: 16px">
-        <button class="btn" :class="{ primary: activeTab === 'users' }" @click="activeTab = 'users'">Người dùng</button>
-        <button class="btn" :class="{ primary: activeTab === 'roles' }" @click="activeTab = 'roles'">Vai trò & quyền</button>
+        <button class="btn" :class="{ primary: activeTab === 'users' }" @click="selectTab('users')">Người dùng</button>
+        <button class="btn" :class="{ primary: activeTab === 'roles' }" @click="selectTab('roles')">Vai trò & quyền</button>
+        <button class="btn" :class="{ primary: activeTab === 'permission_errors' }" @click="selectTab('permission_errors')">Lỗi phân quyền</button>
       </div>
       <LoadingState v-if="loading" />
       <template v-else-if="activeTab === 'users'">
@@ -593,7 +671,7 @@ onMounted(loadRows);
           </table>
         </div>
       </template>
-      <template v-else>
+      <template v-else-if="activeTab === 'roles'">
         <div class="toolbar">
           <h3>Vai trò</h3>
           <button v-if="hasPermission('roles.manage')" class="btn primary" @click="openRoleModal()">+ Thêm vai trò</button>
@@ -609,6 +687,56 @@ onMounted(loadRows);
                   <button v-if="hasPermission('roles.manage')" class="btn-sm" @click="openRoleModal(r)">Sửa</button>
                   <button v-if="hasPermission('roles.manage')" class="btn-sm btn-delete" @click="deleteRole(r)">Xóa</button>
                 </div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+      <template v-else>
+        <div class="toolbar">
+          <div>
+            <h3>Lỗi phân quyền</h3>
+            <div class="small subtle">Chỉ admin được xem. Nhật ký hiển thị trong 30 ngày gần nhất.</div>
+          </div>
+          <input
+            v-model="permissionErrorSearch"
+            class="input"
+            style="max-width: 420px"
+            placeholder="Tìm email, route, thao tác, quyền thiếu..."
+          />
+        </div>
+        <div class="table-wrap">
+          <table style="min-width: 1250px">
+            <thead>
+              <tr>
+                <th>Thời gian</th>
+                <th>Người dùng</th>
+                <th>Route</th>
+                <th>Module / thao tác</th>
+                <th>Loại lỗi</th>
+                <th>Quyền thiếu</th>
+                <th>Bản ghi</th>
+                <th>Chi tiết</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in filteredPermissionErrors" :key="row.id">
+                <td>{{ permissionErrorTime(row.created_at) }}</td>
+                <td><b>{{ row.user_email }}</b></td>
+                <td><code>{{ row.route || "-" }}</code></td>
+                <td>{{ row.module }} / {{ row.operation }}</td>
+                <td><span class="badge" :class="row.error_type === 'missing_permission' ? 'orange' : 'blue'">{{ row.error_type }}</span></td>
+                <td>
+                  <code v-if="permissionListFromJson(row.missing_permissions_json).length">
+                    {{ permissionListFromJson(row.missing_permissions_json).join(", ") }}
+                  </code>
+                  <span v-else>-</span>
+                </td>
+                <td>{{ row.record_id || "-" }}</td>
+                <td><button class="btn-sm btn-view" @click="openDetail(row, 'Chi tiết lỗi phân quyền')">Xem</button></td>
+              </tr>
+              <tr v-if="!filteredPermissionErrors.length">
+                <td colspan="8" class="empty">Không có lỗi phân quyền phù hợp trong 30 ngày gần nhất.</td>
               </tr>
             </tbody>
           </table>
@@ -662,7 +790,7 @@ onMounted(loadRows);
       </div>
     </BaseModal>
 
-    <RecordDetailModal v-if="showDetailModal && selectedDetail" :title="detailTitle" :record="selectedDetail" :field-order="['id','user_code','email','display_name','name','description','roles','role','permissions','permissions_flat','is_admin','status','active','deleted','created_at','updated_at']" @close="showDetailModal = false" />
+    <RecordDetailModal v-if="showDetailModal && selectedDetail" :title="detailTitle" :record="selectedDetail" :field-order="['id','created_at','user_email','route','module','operation','stage','source','error_type','record_id','record_status','firebase_code','diagnostic_summary','required_permissions_json','missing_permissions_json','granted_permissions_json','firebase_message','context_json','stack','expires_at','user_code','email','display_name','name','description','roles','role','permissions','permissions_flat','is_admin','status','active','deleted','updated_at']" @close="showDetailModal = false" />
     <ConfirmModal :show="confirmState.show" :title="confirmState.title" :message="confirmState.message" :confirm-label="confirmState.confirmLabel" :cancel-label="confirmState.cancelLabel" :variant="confirmState.variant" @confirm="resolveConfirm(true)" @cancel="resolveConfirm(false)" />
   </AppShell>
 </template>

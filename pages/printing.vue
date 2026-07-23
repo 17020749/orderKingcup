@@ -16,7 +16,7 @@ import {
   safeJsonParse,
   toNumber,
 } from '~/utils/format'
-import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { reportFirebaseError, reportPermissionError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
 
@@ -360,7 +360,11 @@ function resetForm(order?: PrintOrderDoc) {
 }
 
 function openCreateModal() {
-  if (!canCreate.value) return showToast('Bạn không có quyền thêm tiến độ in ấn.', 'error')
+  if (!canCreate.value) return showToast(reportPermissionError({
+    module: 'printing',
+    operation: 'create',
+    missingPermissions: ['printing.create'],
+  }), 'error')
   resetForm()
   showFormModal.value = true
 }

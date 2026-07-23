@@ -640,7 +640,10 @@ test('Customer chỉ hiển thị và sửa dữ liệu của chính user', asyn
   const db = env.authenticatedContext(A, { email: A }).firestore()
   await assertSucceeds(getDoc(doc(db, 'customers', 'customer-a')))
   await assertFails(getDoc(doc(db, 'customers', 'customer-b')))
-  await assertSucceeds(updateDoc(doc(db, 'customers', 'customer-a'), { phone: '123' }))
+  await assertSucceeds(updateDoc(doc(db, 'customers', 'customer-a'), {
+    phone: '123',
+    updated_at: serverTimestamp()
+  }))
   await assertFails(updateDoc(doc(db, 'customers', 'customer-b'), { phone: '999' }))
 })
 
@@ -690,7 +693,9 @@ test('Khách hàng cũ chưa có mã được gán mã tự động đúng một
     active: true, deleted: false
   })
   batch.update(doc(db, 'customers', 'customer-legacy-code'), {
-    id: 'customer-legacy-code', customer_code: 'OLD001', updated_at: 'now'
+    id: 'customer-legacy-code',
+    customer_code: 'OLD001',
+    updated_at: serverTimestamp()
   })
   await assertSucceeds(batch.commit())
   await assertFails(updateDoc(doc(db, 'customers', 'customer-legacy-code'), {

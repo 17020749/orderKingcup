@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CustomerDoc } from '~/types/models'
 import { makeId, normalizeText } from '~/utils/format'
-import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { reportFirebaseError, reportPermissionError } from '~/utils/firebaseErrors'
 import { matchesKeyword, uniqueOptions } from '~/utils/listFilters'
 import { generateCustomerCode } from '~/utils/customerCode'
 
@@ -74,11 +74,21 @@ function isCustomerNotDeleted(row: any) {
   return !['deleted', 'da xoa'].includes(status)
 }
 
+function isOwnCustomer(row: CustomerDoc) {
+  const actor = String(appUser.value?.email || '').trim().toLowerCase()
+  return Boolean(actor && String(row?.created_by || '').trim().toLowerCase() === actor)
+}
+
+function canManageCustomer(row: CustomerDoc, actionPermission: string) {
+  return hasPermission(actionPermission)
+    && (isOwnCustomer(row) || hasPermission('customers.view_all'))
+}
+
 async function loadRows(force = false) {
   loading.value = true
   try {
     const currentEmail = String(appUser.value?.email || '').trim().toLowerCase()
-    const constraints = isAdmin.value || hasPermission('*')
+    const constraints = isAdmin.value || hasPermission('customers.view_all')
       ? []
       : currentEmail
         ? [q.where('created_by', '==', currentEmail)]
@@ -89,7 +99,14 @@ async function loadRows(force = false) {
     rows.value = (await listDocs('customers', constraints) as CustomerDoc[])
       .filter(isCustomerNotDeleted)
       .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))
-  } catch (error) { showToast(reportFirebaseError(error, 'Không tải được khách hàng.'), 'error') }
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không tải được khách hàng.', {
+      module: 'customers',
+      operation: 'list',
+      actionPermission: 'customers.view',
+      scopePermission: 'customers.view_all',
+    }), 'error')
+  }
   finally { loading.value = false }
 }
 function openDetail(row: CustomerDoc) {
@@ -99,13 +116,37 @@ function openDetail(row: CustomerDoc) {
 
 async function openCustomerOrders(row: CustomerDoc) {
   if (!hasPermission('customers.orders_view')) {
-    showToast('Bạn chưa được cấp quyền xem đơn hàng của khách.', 'error')
+    showToast(reportPermissionError({
+      module: 'customers',
+      operation: 'view_customer_orders',
+      record: row.id,
+      missingPermissions: ['customers.orders_view'],
+    }), 'error')
     return
   }
   await navigateTo(`/customers/${encodeURIComponent(row.id)}`)
 }
 
 function openModal(row?: CustomerDoc) {
+  if (row && !canManageCustomer(row, 'customers.edit')) {
+    showToast(reportPermissionError({
+      module: 'customers',
+      operation: 'edit',
+      record: row.id,
+      actionPermission: 'customers.edit',
+      scopePermission: 'customers.view_all',
+      missingPermissions: hasPermission('customers.edit') ? ['customers.view_all'] : ['customers.edit'],
+    }), 'error')
+    return
+  }
+  if (!row && !hasPermission('customers.create')) {
+    showToast(reportPermissionError({
+      module: 'customers',
+      operation: 'create',
+      missingPermissions: ['customers.create'],
+    }), 'error')
+    return
+  }
   editing.value = row || null
   Object.keys(form).forEach(key => delete form[key])
   Object.assign(form, row
@@ -114,6 +155,23 @@ function openModal(row?: CustomerDoc) {
   showModal.value = true
 }
 async function saveCustomer() {
+  const requiredPermission = editing.value ? 'customers.edit' : 'customers.create'
+  if (
+    (editing.value && !canManageCustomer(editing.value, requiredPermission))
+    || (!editing.value && !hasPermission(requiredPermission))
+  ) {
+    showToast(reportPermissionError({
+      module: 'customers',
+      operation: editing.value ? 'edit' : 'create',
+      record: editing.value?.id || form.id,
+      actionPermission: requiredPermission,
+      scopePermission: editing.value ? 'customers.view_all' : undefined,
+      missingPermissions: editing.value && hasPermission(requiredPermission)
+        ? ['customers.view_all']
+        : [requiredPermission],
+    }), 'error')
+    return
+  }
   if (!form.customer_name) return showToast('Thiếu tên khách hàng', 'error')
   saving.value = true
   try {
@@ -127,10 +185,29 @@ async function saveCustomer() {
     else rows.value.unshift(record as CustomerDoc)
     showModal.value = false
     showToast(editing.value ? 'Đã cập nhật khách hàng' : 'Đã thêm khách hàng', 'success')
-  } catch (error) { showToast(reportFirebaseError(error, 'Không lưu được khách hàng.'), 'error') }
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không lưu được khách hàng.', {
+      module: 'customers',
+      operation: editing.value ? 'edit' : 'create',
+      record: editing.value?.id || form.id,
+      actionPermission: editing.value ? 'customers.edit' : 'customers.create',
+      scopePermission: editing.value ? 'customers.view_all' : undefined,
+    }), 'error')
+  }
   finally { saving.value = false }
 }
 async function removeCustomer(row: CustomerDoc) {
+  if (!canManageCustomer(row, 'customers.delete')) {
+    showToast(reportPermissionError({
+      module: 'customers',
+      operation: 'delete',
+      record: row.id,
+      actionPermission: 'customers.delete',
+      scopePermission: 'customers.view_all',
+      missingPermissions: hasPermission('customers.delete') ? ['customers.view_all'] : ['customers.delete'],
+    }), 'error')
+    return
+  }
   const confirmed = await askConfirm({
     title: 'Xóa khách hàng',
     message: `Bạn chắc chắn muốn xóa khách hàng ${row.customer_name}?`,
@@ -140,7 +217,15 @@ async function removeCustomer(row: CustomerDoc) {
   try {
     await softDeleteDoc('customers', row.id)
     rows.value = rows.value.filter(r => r.id !== row.id)
-  } catch (error) { showToast(reportFirebaseError(error, 'Không xóa được khách hàng.'), 'error') }
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không xóa được khách hàng.', {
+      module: 'customers',
+      operation: 'delete',
+      record: row.id,
+      actionPermission: 'customers.delete',
+      scopePermission: 'customers.view_all',
+    }), 'error')
+  }
 }
 onMounted(() => loadRows())
 </script>
@@ -179,8 +264,8 @@ onMounted(() => loadRows())
               <td class="row" @click.stop>
                 <button class="btn" @click="openDetail(row)">Chi tiết</button>
                 <button v-if="hasPermission('customers.orders_view')" class="btn" @click="openCustomerOrders(row)">Đơn hàng</button>
-                <button v-if="hasPermission('customers.edit')" class="btn" @click="openModal(row)">Sửa</button>
-                <button v-if="hasPermission('customers.delete')" class="btn danger" @click="removeCustomer(row)">Xóa</button>
+                <button v-if="canManageCustomer(row, 'customers.edit')" class="btn" @click="openModal(row)">Sửa</button>
+                <button v-if="canManageCustomer(row, 'customers.delete')" class="btn danger" @click="removeCustomer(row)">Xóa</button>
               </td>
             </tr>
             <tr v-if="!filtered.length"><td colspan="7" class="empty">Không có khách hàng phù hợp.</td></tr>

@@ -1,5 +1,5 @@
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
-import { permissionDeniedDiagnosticMessage } from '~/utils/permissionDiagnostics.mjs'
+import { permissionDeniedUserMessage } from '~/utils/permissionErrorBus.mjs'
 
 export type FirebaseErrorContext = {
   operation?: string
@@ -11,6 +11,11 @@ export type FirebaseErrorContext = {
   scopePermission?: string
   scopePermissions?: string[]
   immutableField?: string
+  module?: string
+  stage?: string
+  source?: string
+  missingPermissions?: string[]
+  context?: Record<string, any>
 }
 
 export function firebaseErrorMessage(
@@ -30,9 +35,26 @@ export function firebaseErrorMessage(
     'resource-exhausted': 'Đã vượt giới hạn tài nguyên, vui lòng thử lại sau.'
   }
   if (code === 'permission-denied') {
-    return permissionDeniedDiagnosticMessage({
-      ...context,
-      diagnosticCode: context.diagnosticCode || code,
+    return permissionDeniedUserMessage({
+      module: context.module,
+      operation: context.operation,
+      stage: context.stage || 'firestore_denied',
+      source: context.source || 'firestore',
+      recordId: context.record,
+      recordStatus: context.status,
+      firebaseCode: code,
+      firebaseMessage: String(error?.message || ''),
+      actionPermission: context.actionPermission,
+      actionPermissions: context.actionPermissions,
+      scopePermission: context.scopePermission,
+      scopePermissions: context.scopePermissions,
+      missingPermissions: context.missingPermissions,
+      context: {
+        ...context.context,
+        immutable_field: context.immutableField || '',
+        diagnostic_code: context.diagnosticCode || code,
+      },
+      stack: String(error?.stack || ''),
     })
   }
   if (messages[code]) return messages[code]
@@ -43,4 +65,21 @@ export function firebaseErrorMessage(
 export function reportFirebaseError(error: any, fallback?: string, context: FirebaseErrorContext = {}) {
   if (import.meta.dev) console.error(error)
   return firebaseErrorMessage(error, fallback, context)
+}
+
+export function reportPermissionError(context: FirebaseErrorContext = {}) {
+  return permissionDeniedUserMessage({
+    module: context.module,
+    operation: context.operation,
+    stage: context.stage || 'client_preflight',
+    source: context.source || 'preflight',
+    recordId: context.record,
+    recordStatus: context.status,
+    actionPermission: context.actionPermission,
+    actionPermissions: context.actionPermissions,
+    scopePermission: context.scopePermission,
+    scopePermissions: context.scopePermissions,
+    missingPermissions: context.missingPermissions,
+    context: context.context,
+  })
 }

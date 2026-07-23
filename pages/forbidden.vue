@@ -13,7 +13,7 @@ const firstAllowed = computed(() => firstAllowedAppRoute(permissions.value))
           <span class="brand-wordmark-king">KING</span><span class="brand-wordmark-cup">CUP</span>
         </div>
       </div>
-      <h1>Bạn không có quyền truy cập</h1>
+      <h1>Bạn không có quyền thực hiện thao tác này.</h1>
       <p class="subtle">Tài khoản không được cấp quyền mở trang này.</p>
       <NuxtLink v-if="firstAllowed" class="btn primary" :to="firstAllowed.path">
         Về {{ firstAllowed.label }}
