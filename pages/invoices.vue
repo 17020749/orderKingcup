@@ -35,7 +35,7 @@ const form = reactive<any>({})
 
 const filterValues = computed(() => ({ status: invoiceStatusFilter.value, from: dateFrom.value, to: dateTo.value }))
 const toolbarFilters = [
-  { key: 'status', label: 'Trạng thái hóa đơn', allLabel: 'Tất cả trạng thái', options: ['Yêu cầu xuất', 'HĐ nháp', 'Đã xuất'].map(value => ({ label: value, value })) },
+  { key: 'status', label: 'Trạng thái hóa đơn', allLabel: 'Tất cả trạng thái', options: ['Khách lẻ','Yêu cầu xuất', 'HĐ nháp', 'Đã xuất'].map(value => ({ label: value, value })) },
   { key: 'from', label: 'Từ ngày', type: 'date' as const },
   { key: 'to', label: 'Đến ngày', type: 'date' as const },
 ]
@@ -242,7 +242,7 @@ onMounted(() => loadRows())
         <div class="form-group"><label>Số hóa đơn</label><input v-model="form.invoice_number" class="input"/></div>
         <div class="form-group"><label>Ngày hóa đơn</label><input v-model="form.invoice_date" class="input" type="date"/></div>
         <div class="form-group"><label>Giá trị</label><input v-model.number="form.invoice_amount" class="input" type="number" min="0"/></div>
-        <div class="form-group"><label>Trạng thái</label><select v-model="form.invoice_status" class="select"><option>Yêu cầu xuất</option><option>HĐ nháp</option><option>Đã xuất</option></select></div>
+        <div class="form-group"><label>Trạng thái</label><select v-model="form.invoice_status" class="select"><option>Khách lẻ</option><option>Yêu cầu xuất</option><option>HĐ nháp</option><option>Đã xuất</option></select></div>
         <div class="form-group"><label>Mã số thuế</label><input v-model="form.tax_code" class="input"/></div>
         <div class="form-group"><label>Tên công ty</label><input v-model="form.company_name" class="input"/></div>
       </div>
