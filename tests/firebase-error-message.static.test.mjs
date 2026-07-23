@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 const source = readFileSync('utils/firebaseErrors.ts', 'utf8')
+const busSource = readFileSync('utils/permissionErrorBus.mjs', 'utf8')
 
 test('firebase error reporter keeps custom business error messages visible', () => {
   assert.match(source, /const message = String\(error\?\.message \|\| ''\)\.trim\(\)/)
@@ -10,9 +11,9 @@ test('firebase error reporter keeps custom business error messages visible', () 
 })
 
 test('permission-denied uses structured diagnostics instead of a generic missing-permission claim', () => {
-  assert.match(source, /permissionDeniedDiagnosticMessage/)
-  assert.match(source, /diagnosticCode: context\.diagnosticCode \|\| code/)
-  assert.doesNotMatch(source, /Bạn chưa có quyền thực hiện thao tác này/)
+  assert.match(source, /permissionDeniedUserMessage/)
+  assert.match(source, /firebaseCode: code/)
+  assert.match(busSource, /Bạn không có quyền thực hiện thao tác này\./)
 })
 
 test('production reporter does not leave unconditional diagnostic logs', () => {

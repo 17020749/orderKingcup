@@ -799,7 +799,7 @@ export function useScopedQueries() {
   }
 
   async function loadScopedCustomers(force = false) {
-    if (isAdminUser()) {
+    if (isAdminUser() || hasPermission('customers.view_all')) {
       return (await listCollection<CustomerDoc>('customers', [], {
         cacheKey: 'all', ttlMs: 60_000, force
       })).filter(isActive)

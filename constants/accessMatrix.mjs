@@ -101,6 +101,7 @@ export const PERMISSION_DEPENDENCIES = {
 
   'page.customers': ['customers.view'],
   'customers.view': ['page.customers'],
+  'customers.view_all': ['page.customers', 'customers.view'],
   'customers.orders_view': ['page.customers', 'customers.view', 'orders.view'],
   'customers.create': ['page.customers', 'customers.view'],
   'customers.edit': ['page.customers', 'customers.view'],

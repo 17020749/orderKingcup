@@ -623,7 +623,7 @@ onBeforeUnmount(() => {
       </div>
 
       <LoadingState v-if="loading" />
-      <div v-else-if="!canOpenPage" class="empty">Bạn chưa có quyền mở trang Kho xử lý yêu cầu xuất.</div>
+      <div v-else-if="!canOpenPage" class="empty">Bạn không có quyền thực hiện thao tác này.</div>
       <div v-else class="table-wrap">
         <table style="min-width: 980px">
           <thead>

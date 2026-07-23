@@ -1,3 +1,5 @@
+import { permissionDeniedUserMessage } from './permissionErrorBus.mjs'
+
 const DEFAULT_OWNER_FIELDS = [
   'owner_email',
   'created_by',
@@ -175,18 +177,21 @@ export function exportRequestActionDecision({
 }
 
 export function permissionDecisionMessage(decision, context = {}) {
-  const operation = String(context.operation || 'operation')
-  const record = String(context.record || '(unknown)')
-  const status = String(context.status || '(unknown)')
-  const missing = (decision?.missingPermissions || []).map(value => `[${value}]`).join(', ')
-  if (decision?.code === 'missing_action') return `Thiếu quyền ${missing} cho ${operation}.`
-  if (decision?.code === 'missing_scope') return `Bản ghi không thuộc phạm vi của bạn; cần ${missing} cho ${operation}.`
-  if (decision?.code === 'missing_parent') return `Không tìm thấy đơn hàng cha để thực hiện ${operation}.`
-  if (decision?.code === 'missing_record') return `Không tìm thấy bản ghi để thực hiện ${operation}.`
-  if (decision?.allowed === false) {
-    return `${operation} bị chặn (record=${record}, code=${decision.code}, status=${status}).`
-  }
-  return ''
+  if (decision?.allowed !== false) return ''
+  return permissionDeniedUserMessage({
+    module: context.module,
+    operation: context.operation,
+    stage: decision.code || 'decision_denied',
+    source: 'preflight',
+    recordId: context.record,
+    recordStatus: context.status,
+    missingPermissions: decision.missingPermissions || [],
+    context: {
+      decision_code: decision.code || 'denied',
+      owns_record: decision.ownsRecord === true,
+      ...context.context,
+    },
+  })
 }
 
 export { DEFAULT_OWNER_FIELDS, ownsDocument }

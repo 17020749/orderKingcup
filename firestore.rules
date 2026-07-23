@@ -139,6 +139,60 @@ service cloud.firestore {
       && data.get('deleted', false) == false;
   }
 
+    function validPermissionErrorLogCreate(data) {
+      return activeUser()
+        && data.keys().hasAll([
+          'user_email', 'route', 'module', 'operation', 'stage', 'source',
+          'error_type', 'record_id', 'record_status', 'firebase_code',
+          'firebase_message', 'required_permissions_json',
+          'missing_permissions_json', 'granted_permissions_json',
+          'diagnostic_summary', 'context_json', 'stack',
+          'created_at', 'expires_at', 'active', 'deleted'
+        ])
+        && data.keys().hasOnly([
+          'user_email', 'route', 'module', 'operation', 'stage', 'source',
+          'error_type', 'record_id', 'record_status', 'firebase_code',
+          'firebase_message', 'required_permissions_json',
+          'missing_permissions_json', 'granted_permissions_json',
+          'diagnostic_summary', 'context_json', 'stack',
+          'created_at', 'expires_at', 'active', 'deleted'
+        ])
+        && validBoundedString(data.get('user_email', ''), 3, 254)
+        && data.get('user_email', '').lower() == email()
+        && data.get('route', '') is string
+        && data.get('route', '').size() <= 500
+        && validBoundedString(data.get('module', ''), 1, 100)
+        && validBoundedString(data.get('operation', ''), 1, 150)
+        && validBoundedString(data.get('stage', ''), 1, 80)
+        && validBoundedString(data.get('source', ''), 1, 80)
+        && validBoundedString(data.get('error_type', ''), 1, 80)
+        && validBoundedString(data.get('record_id', ''), 1, 500)
+        && validBoundedString(data.get('record_status', ''), 1, 200)
+        && data.get('firebase_code', '') is string
+        && data.get('firebase_code', '').size() <= 100
+        && data.get('firebase_message', '') is string
+        && data.get('firebase_message', '').size() <= 1000
+        && data.get('required_permissions_json', '') is string
+        && data.get('required_permissions_json', '').size() <= 12000
+        && data.get('missing_permissions_json', '') is string
+        && data.get('missing_permissions_json', '').size() <= 12000
+        && data.get('granted_permissions_json', '') is string
+        && data.get('granted_permissions_json', '').size() <= 12000
+        && data.get('diagnostic_summary', '') is string
+        && data.get('diagnostic_summary', '').size() <= 1500
+        && data.get('context_json', '') is string
+        && data.get('context_json', '').size() <= 12000
+        && data.get('stack', '') is string
+        && data.get('stack', '').size() <= 4000
+        && data.get('created_at', null) is timestamp
+        && data.get('created_at', null) == request.time
+        && data.get('expires_at', null) is timestamp
+        && data.get('expires_at', null) >= request.time + duration.value(719, 'h')
+        && data.get('expires_at', null) <= request.time + duration.value(721, 'h')
+        && data.get('active', false) == true
+        && data.get('deleted', true) == false;
+    }
+
   function notificationRequestPath(data) {
       return /databases/$(database)/documents/order_export_requests/$(data.get('entity_id', ''));
     }
@@ -439,6 +493,49 @@ service cloud.firestore {
         );
     }
 
+    function validOptionalCustomerString(data, field, maxSize) {
+      return data.get(field, '') is string
+        && data.get(field, '').size() <= maxSize;
+    }
+
+    function validCustomerEditData(data) {
+      return validBoundedString(data.get('customer_name', ''), 1, 500)
+        && validOptionalCustomerString(data, 'company_name', 500)
+        && validOptionalCustomerString(data, 'phone', 50)
+        && validOptionalCustomerString(data, 'email', 320)
+        && validOptionalCustomerString(data, 'tax_code', 100)
+        && validOptionalCustomerString(data, 'billing_address', 2000)
+        && validOptionalCustomerString(data, 'shipping_address', 2000)
+        && validOptionalCustomerString(data, 'source', 200)
+        && validOptionalCustomerString(data, 'note', 5000)
+        && validOptionalCustomerString(data, 'customer_name_norm', 500)
+        && validOptionalCustomerString(data, 'phone_norm', 50)
+        && (
+          data.get('customer_code', '') == ''
+          || validCustomerCode(data)
+        )
+        && data.get('updated_at', null) is timestamp
+        && data.get('updated_at', null) == request.time;
+    }
+
+    function customerIdUpdateSafe(customerId) {
+      return unchanged(['id'])
+        || (
+          resource.data.get('id', '') == ''
+          && request.resource.data.get('id', '') == customerId
+        );
+    }
+
+    function customerEditOnly(customerId) {
+      return onlyChanged([
+          'id', 'customer_code', 'customer_name', 'company_name', 'phone', 'email',
+          'tax_code', 'billing_address', 'shipping_address', 'source', 'note',
+          'customer_name_norm', 'phone_norm', 'updated_at'
+        ])
+        && customerIdUpdateSafe(customerId)
+        && validCustomerEditData(request.resource.data);
+    }
+
     function ownsCustomerById(customerId) {
       let path = customerPath(customerId);
       return customerId is string
@@ -453,7 +550,11 @@ service cloud.firestore {
         && exists(path)
         && get(path).data.get('deleted', false) != true
         && validCustomerCode(get(path).data)
-        && (isAdmin() || ownEmailField(get(path).data, 'created_by'));
+        && (
+          isAdmin()
+          || hasPerm('customers.view_all')
+          || ownEmailField(get(path).data, 'created_by')
+        );
     }
 
     function orderSequencePath(customerId) {
@@ -501,6 +602,15 @@ service cloud.firestore {
         'deleted_at',
         'updated_at'
       ]);
+    }
+
+    function customerSoftDeleteOnly() {
+      return softDeleteOnly()
+        && request.resource.data.get('deleted', false) == true
+        && request.resource.data.get('active', true) == false
+        && request.resource.data.get('status', '') == 'deleted'
+        && request.resource.data.get('deleted_at', null) is timestamp
+        && request.resource.data.get('updated_at', null) is timestamp;
     }
 
     function warehouseSoftDeleteOnly() {
@@ -1764,7 +1874,10 @@ service cloud.firestore {
       allow read: if isAdmin()
         || (
           hasPerm('customers.view')
-          && ownEmailField(resource.data, 'created_by')
+          && (
+            hasPerm('customers.view_all')
+            || ownEmailField(resource.data, 'created_by')
+          )
         );
 
       allow create: if customerCodeReservationMatches(docId, request.resource.data)
@@ -1780,16 +1893,20 @@ service cloud.firestore {
         && (
           isAdmin()
           || (
-            ownEmailField(resource.data, 'created_by')
-            && unchanged(['created_by', 'created_at'])
+            unchanged(['created_by', 'created_at'])
+            && (
+              ownEmailField(resource.data, 'created_by')
+              || hasPerm('customers.view_all')
+            )
             && (
               (
                 hasPerm('customers.edit')
+                && customerEditOnly(docId)
                 && unchanged(['deleted', 'active', 'status', 'deleted_at'])
               )
               || (
                 hasPerm('customers.delete')
-                && softDeleteOnly()
+                && customerSoftDeleteOnly()
               )
             )
           )
@@ -1809,9 +1926,15 @@ service cloud.firestore {
         && ownEmailField(request.resource.data, 'created_by')
         && existsAfter(customerPath(request.resource.data.get('customer_id', '')))
         && getAfter(customerPath(request.resource.data.get('customer_id', ''))).data.get('customer_code', '') == customerCode
-        && ownEmailField(
-          getAfter(customerPath(request.resource.data.get('customer_id', ''))).data,
-          'created_by'
+        && (
+          ownEmailField(
+            getAfter(customerPath(request.resource.data.get('customer_id', ''))).data,
+            'created_by'
+          )
+          || (
+            hasPerm('customers.view_all')
+            && hasPerm('customers.edit')
+          )
         );
       allow update, delete: if false;
     }
@@ -2553,6 +2676,12 @@ service cloud.firestore {
       // Client-side logs are append-only and actor/time-bound. They improve
       // traceability but are not a substitute for a trusted backend audit log.
       allow create: if validActivityLogCreate(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    match /permission_error_logs/{docId} {
+      allow read: if isAdmin();
+      allow create: if validPermissionErrorLogCreate(request.resource.data);
       allow update, delete: if false;
     }
 

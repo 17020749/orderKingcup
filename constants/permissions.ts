@@ -78,6 +78,7 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'units.manage', group: 'Danh mục kho', name: 'Thêm/sửa/xóa đơn vị tính' },
 
   { key: 'customers.view', group: 'Khách hàng', name: 'Xem khách hàng' },
+  { key: 'customers.view_all', group: 'Khách hàng', name: 'Xem tất cả khách hàng', emphasis: 'scope' },
   { key: 'customers.orders_view', group: 'Khách hàng', name: 'Xem danh sách đơn hàng của khách' },
   { key: 'customers.create', group: 'Khách hàng', name: 'Thêm khách hàng' },
   { key: 'customers.edit', group: 'Khách hàng', name: 'Sửa khách hàng' },

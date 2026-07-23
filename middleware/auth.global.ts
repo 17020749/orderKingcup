@@ -1,5 +1,6 @@
 import { appRoutePermission } from '~/constants/appRoutes'
 import { permissionDebug } from '~/utils/permissionDebug'
+import { reportPermissionError } from '~/utils/firebaseErrors'
 
 export default defineNuxtRouteMiddleware(async (to) => {
   if (process.server) return
@@ -31,6 +32,13 @@ export default defineNuxtRouteMiddleware(async (to) => {
     }],
     payload: { access_module: accessRule.key },
     note: 'Route và sidebar cùng đọc constants/accessMatrix.mjs.',
+  })
+  reportPermissionError({
+    module: 'route',
+    operation: 'navigate',
+    record: to.path,
+    missingPermissions: [accessRule.adminOnly ? 'admin.only' : String(accessRule.permission || '')].filter(Boolean),
+    context: { access_module: accessRule.key },
   })
   return navigateTo('/forbidden', { replace: true })
 })
