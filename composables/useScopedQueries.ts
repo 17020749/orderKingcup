@@ -187,7 +187,7 @@ export function useScopedQueries() {
   }
 
   function scopePrefix(name: string) {
-    const scope = hasPermission('*') || appUser.value?.is_admin === true ? 'admin' : email()
+    const scope = hasPermission('*') ? 'admin' : email()
     return `${scope}:${name}:`
   }
 
@@ -196,7 +196,7 @@ export function useScopedQueries() {
   }
 
   function isAdminUser() {
-    return hasPermission('*') || appUser.value?.is_admin === true
+    return hasPermission('*')
   }
 
 
@@ -551,7 +551,7 @@ export function useScopedQueries() {
     pageSize = 50,
     force = false,
   ): Promise<CursorPage<InvoiceDoc>> {
-    if (!isAdminUser()) return fullCursorPage(await loadScopedInvoices(force))
+    if (!canAll('invoices.view_all')) return fullCursorPage(await loadScopedInvoices(force))
     const page = await fetchOrderedPage<InvoiceDoc>('invoices', 'invoice_date', cursor, pageSize)
     return { ...page, rows: page.rows.filter(isActive) as InvoiceDoc[] }
   }
@@ -602,6 +602,30 @@ export function useScopedQueries() {
     return sortNewest(
       (await fetchByFieldValues<PaymentDoc>('payments', 'order_id', orderIds)).filter(isActive) as PaymentDoc[],
       'payment_date',
+    )
+  }
+
+  async function loadScopedInvoicesForOrders(orders: OrderDoc[], force = false) {
+    const orderIds = cleanIds(orders)
+    if (!orderIds.length) return [] as InvoiceDoc[]
+    const canReadForRelation = canAll('invoices.view_all')
+      || ['invoices.view', 'invoices.create', 'invoices.edit', 'invoices.delete'].some(key => hasPermission(key))
+    if (!canReadForRelation) return [] as InvoiceDoc[]
+    return sortNewest(
+      (await fetchByFieldValues<InvoiceDoc>('invoices', 'order_id', orderIds)).filter(isActive) as InvoiceDoc[],
+      'invoice_date',
+    )
+  }
+
+  async function loadScopedShipmentsForOrders(orders: OrderDoc[], force = false) {
+    const orderIds = cleanIds(orders)
+    if (!orderIds.length) return [] as ShipmentDoc[]
+    const canReadForRelation = canAll('shipments.view_all')
+      || ['shipments.view', 'shipments.create', 'shipments.edit', 'shipments.delete'].some(key => hasPermission(key))
+    if (!canReadForRelation) return [] as ShipmentDoc[]
+    return sortNewest(
+      (await fetchByFieldValues<ShipmentDoc>('shipments', 'order_id', orderIds)).filter(isActive) as ShipmentDoc[],
+      'shipped_date',
     )
   }
 
@@ -775,7 +799,7 @@ export function useScopedQueries() {
   }
 
   async function loadScopedCustomers(force = false) {
-    if (isAdminUser()) {
+    if (isAdminUser() || hasPermission('customers.view_all')) {
       return (await listCollection<CustomerDoc>('customers', [], {
         cacheKey: 'all', ttlMs: 60_000, force
       })).filter(isActive)
@@ -933,7 +957,7 @@ export function useScopedQueries() {
   }
 
   async function loadScopedInvoices(force = false) {
-    if (isAdminUser()) {
+    if (canAll('invoices.view_all')) {
       return (await listCollection<InvoiceDoc>('invoices', [], {
         cacheKey: 'all', ttlMs: 20_000, force
       })).filter(isActive)
@@ -955,6 +979,8 @@ export function useScopedQueries() {
     loadScopedPayments,
     loadScopedPaymentsPage,
     loadScopedPaymentsForOrders,
+    loadScopedInvoicesForOrders,
+    loadScopedShipmentsForOrders,
     loadScopedExportRequests,
     loadScopedExportRequestsForOrders,
     loadWarehouseExportRequests,

@@ -5,6 +5,7 @@ import type {
   OrderDoc,
   OrderItemDoc,
 } from '~/types/models'
+import { reportFirebaseError, reportPermissionError } from '~/utils/firebaseErrors'
 
 const route = useRoute()
 const { hasPermission } = useAuth()
@@ -46,7 +47,12 @@ function exportOrderCode(row: ExportOrderDoc) {
 
 async function openRequestPrint(code: string, button: HTMLButtonElement) {
   if (!canPrintRequest.value) {
-    showToast('Bạn không có quyền in chứng từ đơn hàng.', 'error')
+    showToast(reportPermissionError({
+      module: 'orders',
+      operation: 'print_export_request',
+      record: code,
+      missingPermissions: ['orders.print'],
+    }), 'error')
     return
   }
 
@@ -62,7 +68,7 @@ async function openRequestPrint(code: string, button: HTMLButtonElement) {
     ])
     const request = requests.find((item: any) => String(item.request_id || item.id).trim() === code)
     if (!request) {
-      showToast(`Không tìm thấy yêu cầu xuất kho ${code} hoặc bạn không có quyền xem phiếu này.`, 'error')
+      showToast(`Không tìm thấy yêu cầu xuất kho ${code}.`, 'error')
       return
     }
     const order = orders.find(item => item.id === request.order_id)
@@ -75,7 +81,13 @@ async function openRequestPrint(code: string, button: HTMLButtonElement) {
     selectedOrder.value = order
     selectedItems.value = items.filter(item => item.order_id === order.id)
   } catch (error: any) {
-    showToast(error?.message || 'Không tải được dữ liệu để in phiếu xuất hàng.', 'error')
+    showToast(reportFirebaseError(error, 'Không tải được dữ liệu để in phiếu xuất hàng.', {
+      module: 'export_requests',
+      operation: 'load_for_print',
+      record: code,
+      actionPermission: 'orders.print',
+      scopePermission: 'export_requests.view_all',
+    }), 'error')
   } finally {
     button.disabled = false
     button.textContent = oldText || 'In'
@@ -84,7 +96,12 @@ async function openRequestPrint(code: string, button: HTMLButtonElement) {
 
 async function openExportPrint(code: string, button: HTMLButtonElement) {
   if (!canPrintExport.value) {
-    showToast('Bạn không có quyền in phiếu xuất kho thật.', 'error')
+    showToast(reportPermissionError({
+      module: 'export',
+      operation: 'print',
+      record: code,
+      missingPermissions: ['export.print'],
+    }), 'error')
     return
   }
 
@@ -99,14 +116,19 @@ async function openExportPrint(code: string, button: HTMLButtonElement) {
     ])
     const exportOrder = orders.find(item => exportOrderCode(item) === code)
     if (!exportOrder) {
-      showToast(`Không tìm thấy phiếu xuất kho ${code} hoặc bạn không có quyền xem phiếu này.`, 'error')
+      showToast(`Không tìm thấy phiếu xuất kho ${code}.`, 'error')
       return
     }
 
     selectedExportOrder.value = exportOrder
     selectedExportItems.value = items.filter(item => item.export_order_id === exportOrder.id)
   } catch (error: any) {
-    showToast(error?.message || 'Không tải được dữ liệu để in phiếu xuất kho.', 'error')
+    showToast(reportFirebaseError(error, 'Không tải được dữ liệu để in phiếu xuất kho.', {
+      module: 'export',
+      operation: 'load_for_print',
+      record: code,
+      actionPermission: 'export.print',
+    }), 'error')
   } finally {
     button.disabled = false
     button.textContent = oldText || 'In'

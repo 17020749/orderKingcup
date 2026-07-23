@@ -1,6 +1,6 @@
 import { resolvePermissionDependencies } from '../constants/accessMatrix.mjs'
 
-export const PERMISSION_SCHEMA_VERSION = 2
+export const PERMISSION_SCHEMA_VERSION = 3
 
 function text(value) {
   return String(value || '').trim()

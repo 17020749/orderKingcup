@@ -78,6 +78,7 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'units.manage', group: 'Danh mục kho', name: 'Thêm/sửa/xóa đơn vị tính' },
 
   { key: 'customers.view', group: 'Khách hàng', name: 'Xem khách hàng' },
+  { key: 'customers.view_all', group: 'Khách hàng', name: 'Xem tất cả khách hàng', emphasis: 'scope' },
   { key: 'customers.orders_view', group: 'Khách hàng', name: 'Xem danh sách đơn hàng của khách' },
   { key: 'customers.create', group: 'Khách hàng', name: 'Thêm khách hàng' },
   { key: 'customers.edit', group: 'Khách hàng', name: 'Sửa khách hàng' },
@@ -106,7 +107,8 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'shipments.edit', group: 'Vận chuyển', name: 'Sửa vận chuyển' },
   { key: 'shipments.delete', group: 'Vận chuyển', name: 'Xóa vận chuyển' },
 
-  { key: 'invoices.view', group: 'Hóa đơn', name: 'Xem dữ liệu' },
+  { key: 'invoices.view', group: 'Hóa đơn', name: 'Xem hóa đơn của mình' },
+  { key: 'invoices.view_all', group: 'Hóa đơn', name: 'Xem tất cả hóa đơn', emphasis: 'scope' },
   { key: 'invoices.create', group: 'Hóa đơn', name: 'Thêm dữ liệu' },
   { key: 'invoices.edit', group: 'Hóa đơn', name: 'Sửa dữ liệu' },
   { key: 'invoices.delete', group: 'Hóa đơn', name: 'Xóa dữ liệu' },

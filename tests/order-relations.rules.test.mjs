@@ -96,8 +96,8 @@ async function seed() {
         permissions_flat: [
           'orders.view_all',
           'payments.view_all', 'payments.create', 'payments.edit', 'payments.delete',
-          'invoices.view', 'invoices.create', 'invoices.edit', 'invoices.delete',
-          'shipments.view', 'shipments.create', 'shipments.edit', 'shipments.delete',
+          'invoices.view', 'invoices.view_all', 'invoices.create', 'invoices.edit', 'invoices.delete',
+          'shipments.view', 'shipments.view_all', 'shipments.create', 'shipments.edit', 'shipments.delete',
         ],
       }),
       setDoc(doc(db, 'users', CASHIER), {
@@ -156,7 +156,7 @@ test('non-admin có orders.view_all được thêm thanh toán cho đơn của s
   await assertSucceeds(batch.commit())
 })
 
-test('non-admin chỉ có payments.create vẫn đọc đủ payment của đơn được xem và thêm payment thứ hai', async () => {
+test('orders.view_all không thay thế payments.view_all khi đọc hoặc tạo payment ngoài phạm vi', async () => {
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore()
     await setDoc(doc(db, 'payments', 'pay-existing'), {
@@ -171,7 +171,7 @@ test('non-admin chỉ có payments.create vẫn đọc đủ payment của đơn
   })
 
   const db = env.authenticatedContext(CASHIER, { email: CASHIER }).firestore()
-  await assertSucceeds(getDoc(doc(db, 'payments', 'pay-existing')))
+  await assertFails(getDoc(doc(db, 'payments', 'pay-existing')))
 
   const batch = writeBatch(db)
   batch.set(doc(db, 'payments', 'pay-cashier'), {
@@ -191,7 +191,7 @@ test('non-admin chỉ có payments.create vẫn đọc đủ payment của đơn
     deposit_count: 1,
     collect_count: 1,
   })
-  await assertSucceeds(batch.commit())
+  await assertFails(batch.commit())
 })
 
 test('payment create phải ghi child và summary parent trong cùng batch', async () => {

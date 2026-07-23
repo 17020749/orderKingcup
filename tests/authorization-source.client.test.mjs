@@ -96,6 +96,14 @@ test('useAuth không còn đọc collection roles hoặc cờ is_admin để sin
   assert.match(source, /invalidateScopedCache\(\)/)
 })
 
+test('các điểm quyết định quyền không dùng role hoặc is_admin làm nguồn thay thế', () => {
+  const scopedQueries = readFileSync('composables/useScopedQueries.ts', 'utf8')
+  const generalSettings = readFileSync('pages/settings/general.vue', 'utf8')
+  assert.doesNotMatch(scopedQueries, /appUser\.value\?\.is_admin/)
+  assert.doesNotMatch(generalSettings, /\.role|\.roles|is_admin/)
+  assert.match(generalSettings, /computed\(\(\) => hasPermission\('\*'\)\)/)
+})
+
 test('plugin reload đúng một lần khi revision quyền thay đổi sau khởi tạo', () => {
   const source = readFileSync('plugins/authorization-refresh.client.ts', 'utf8')
   assert.match(source, /watch\(authorizationRevision/)

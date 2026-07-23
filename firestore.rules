@@ -30,30 +30,8 @@ service cloud.firestore {
     }
 
     function adminUserData(user) {
-      return user.get('is_admin', false) == true
-        || (
-          user.get('permissions_flat', []) is list
-          && '*' in user.get('permissions_flat', [])
-        )
-        || (
-          user.get('roles', []) is list
-          && (
-            'admin' in user.get('roles', [])
-            || 'Admin' in user.get('roles', [])
-            || 'role_admin' in user.get('roles', [])
-          )
-        )
-        || (
-          user.get('role', '') is list
-          && (
-            'admin' in user.get('role', [])
-            || 'Admin' in user.get('role', [])
-            || 'role_admin' in user.get('role', [])
-          )
-        )
-        || user.get('role', '') == 'admin'
-        || user.get('role', '') == 'Admin'
-        || user.get('role', '') == 'role_admin';
+      return user.get('permissions_flat', []) is list
+        && '*' in user.get('permissions_flat', []);
     }
 
     function activeUser() {
@@ -64,7 +42,8 @@ service cloud.firestore {
         && activeUserData(user);
     }
 
-    // Keep compatibility with the role formats already used by the project.
+    // permissions_flat is the only authorization source. Legacy role and
+    // is_admin fields remain profile metadata and never grant access directly.
     function isAdmin() {
       let path = userPath();
       let user = get(path).data;
@@ -159,6 +138,60 @@ service cloud.firestore {
       && data.get('active', true) == true
       && data.get('deleted', false) == false;
   }
+
+    function validPermissionErrorLogCreate(data) {
+      return activeUser()
+        && data.keys().hasAll([
+          'user_email', 'route', 'module', 'operation', 'stage', 'source',
+          'error_type', 'record_id', 'record_status', 'firebase_code',
+          'firebase_message', 'required_permissions_json',
+          'missing_permissions_json', 'granted_permissions_json',
+          'diagnostic_summary', 'context_json', 'stack',
+          'created_at', 'expires_at', 'active', 'deleted'
+        ])
+        && data.keys().hasOnly([
+          'user_email', 'route', 'module', 'operation', 'stage', 'source',
+          'error_type', 'record_id', 'record_status', 'firebase_code',
+          'firebase_message', 'required_permissions_json',
+          'missing_permissions_json', 'granted_permissions_json',
+          'diagnostic_summary', 'context_json', 'stack',
+          'created_at', 'expires_at', 'active', 'deleted'
+        ])
+        && validBoundedString(data.get('user_email', ''), 3, 254)
+        && data.get('user_email', '').lower() == email()
+        && data.get('route', '') is string
+        && data.get('route', '').size() <= 500
+        && validBoundedString(data.get('module', ''), 1, 100)
+        && validBoundedString(data.get('operation', ''), 1, 150)
+        && validBoundedString(data.get('stage', ''), 1, 80)
+        && validBoundedString(data.get('source', ''), 1, 80)
+        && validBoundedString(data.get('error_type', ''), 1, 80)
+        && validBoundedString(data.get('record_id', ''), 1, 500)
+        && validBoundedString(data.get('record_status', ''), 1, 200)
+        && data.get('firebase_code', '') is string
+        && data.get('firebase_code', '').size() <= 100
+        && data.get('firebase_message', '') is string
+        && data.get('firebase_message', '').size() <= 1000
+        && data.get('required_permissions_json', '') is string
+        && data.get('required_permissions_json', '').size() <= 12000
+        && data.get('missing_permissions_json', '') is string
+        && data.get('missing_permissions_json', '').size() <= 12000
+        && data.get('granted_permissions_json', '') is string
+        && data.get('granted_permissions_json', '').size() <= 12000
+        && data.get('diagnostic_summary', '') is string
+        && data.get('diagnostic_summary', '').size() <= 1500
+        && data.get('context_json', '') is string
+        && data.get('context_json', '').size() <= 12000
+        && data.get('stack', '') is string
+        && data.get('stack', '').size() <= 4000
+        && data.get('created_at', null) is timestamp
+        && data.get('created_at', null) == request.time
+        && data.get('expires_at', null) is timestamp
+        && data.get('expires_at', null) >= request.time + duration.value(719, 'h')
+        && data.get('expires_at', null) <= request.time + duration.value(721, 'h')
+        && data.get('active', false) == true
+        && data.get('deleted', true) == false;
+    }
 
   function notificationRequestPath(data) {
       return /databases/$(database)/documents/order_export_requests/$(data.get('entity_id', ''));
@@ -413,6 +446,10 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields);
     }
 
+    function changedAny(fields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
     function validUserCode(data) {
       return data.get('user_code', '') is string
         && data.get('user_code', '').matches('^[A-Z0-9]{1,12}$');
@@ -456,6 +493,49 @@ service cloud.firestore {
         );
     }
 
+    function validOptionalCustomerString(data, field, maxSize) {
+      return data.get(field, '') is string
+        && data.get(field, '').size() <= maxSize;
+    }
+
+    function validCustomerEditData(data) {
+      return validBoundedString(data.get('customer_name', ''), 1, 500)
+        && validOptionalCustomerString(data, 'company_name', 500)
+        && validOptionalCustomerString(data, 'phone', 50)
+        && validOptionalCustomerString(data, 'email', 320)
+        && validOptionalCustomerString(data, 'tax_code', 100)
+        && validOptionalCustomerString(data, 'billing_address', 2000)
+        && validOptionalCustomerString(data, 'shipping_address', 2000)
+        && validOptionalCustomerString(data, 'source', 200)
+        && validOptionalCustomerString(data, 'note', 5000)
+        && validOptionalCustomerString(data, 'customer_name_norm', 500)
+        && validOptionalCustomerString(data, 'phone_norm', 50)
+        && (
+          data.get('customer_code', '') == ''
+          || validCustomerCode(data)
+        )
+        && data.get('updated_at', null) is timestamp
+        && data.get('updated_at', null) == request.time;
+    }
+
+    function customerIdUpdateSafe(customerId) {
+      return unchanged(['id'])
+        || (
+          resource.data.get('id', '') == ''
+          && request.resource.data.get('id', '') == customerId
+        );
+    }
+
+    function customerEditOnly(customerId) {
+      return onlyChanged([
+          'id', 'customer_code', 'customer_name', 'company_name', 'phone', 'email',
+          'tax_code', 'billing_address', 'shipping_address', 'source', 'note',
+          'customer_name_norm', 'phone_norm', 'updated_at'
+        ])
+        && customerIdUpdateSafe(customerId)
+        && validCustomerEditData(request.resource.data);
+    }
+
     function ownsCustomerById(customerId) {
       let path = customerPath(customerId);
       return customerId is string
@@ -470,7 +550,11 @@ service cloud.firestore {
         && exists(path)
         && get(path).data.get('deleted', false) != true
         && validCustomerCode(get(path).data)
-        && (isAdmin() || ownEmailField(get(path).data, 'created_by'));
+        && (
+          isAdmin()
+          || hasPerm('customers.view_all')
+          || ownEmailField(get(path).data, 'created_by')
+        );
     }
 
     function orderSequencePath(customerId) {
@@ -518,6 +602,15 @@ service cloud.firestore {
         'deleted_at',
         'updated_at'
       ]);
+    }
+
+    function customerSoftDeleteOnly() {
+      return softDeleteOnly()
+        && request.resource.data.get('deleted', false) == true
+        && request.resource.data.get('active', true) == false
+        && request.resource.data.get('status', '') == 'deleted'
+        && request.resource.data.get('deleted_at', null) is timestamp
+        && request.resource.data.get('updated_at', null) is timestamp;
     }
 
     function warehouseSoftDeleteOnly() {
@@ -627,6 +720,7 @@ service cloud.firestore {
         && orderDataIsActive(order)
         && (
           isAdmin()
+          || hasPerm('orders.view_all')
           || ownsOrderData(order)
         );
     }
@@ -639,6 +733,7 @@ service cloud.firestore {
         && orderDataIsActive(order)
         && (
           isAdmin()
+          || hasPerm('orders.view_all')
           || ownsOrderData(order)
         );
     }
@@ -850,41 +945,40 @@ service cloud.firestore {
 
     // Reads the parent only once for child validation. Ownership fields must
     // match the active parent, and the relation summary must advance atomically.
-    function relationCreateBase(orderId) {
+    function relationCreateBase(orderId, moduleViewAllPermission) {
       let path = orderPath(orderId);
       let order = get(path).data;
       return orderId is string
         && exists(path)
         && orderDataIsActive(order)
-        && (ownsOrderData(order) || hasPerm('orders.view_all') || isAdmin())
+        && (ownsOrderData(order) || hasPerm(moduleViewAllPermission) || isAdmin())
         && requestMatchesOrderData(order)
         && ownEmailField(request.resource.data, 'created_by');
     }
 
-    function relationExistingChildBase(orderId) {
+    function relationExistingChildBase(orderId, moduleViewAllPermission) {
       let path = orderPath(orderId);
       let order = get(path).data;
       return orderId is string
         && exists(path)
         && orderDataIsActive(order)
-        && (ownsOrderData(order) || hasPerm('orders.view_all') || isAdmin())
+        && (ownsOrderData(order) || hasPerm(moduleViewAllPermission) || isAdmin())
         && request.resource.data.order_id == resource.data.order_id
         && childIdentityUnchanged()
         && childOwnershipSafe(orderId);
     }
 
+    // The parent rule validates the complete before/after transition, including
+    // the revision increment and child state. The child only needs to require
+    // the matching after-marker so both writes must still be committed together
+    // without evaluating the same expensive transition twice.
     function relationParentMarkerMatches(orderId, module, action, documentId, revisionField) {
       let path = orderPath(orderId);
-      let before = get(path).data;
       let after = getAfter(path).data;
-      return exists(path)
-        && existsAfter(path)
-        && orderDataIsActive(before)
+      return existsAfter(path)
         && orderDataIsActive(after)
-        && before.get('relation_lock_version', 0) == 1
         && after.get('relation_lock_version', 0) == 1
-        && relationMetadataMatches(after, module, action, documentId)
-        && after.get(revisionField, -1) == before.get(revisionField, -1) + 1;
+        && relationMetadataMatches(after, module, action, documentId);
     }
 
     // Evaluated only by the matching module branch on the parent order.
@@ -935,7 +1029,7 @@ service cloud.firestore {
     function orderPaymentSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
+      return (ownsOrderData(resource.data) || hasPerm('payments.view_all'))
         && orderIdentityUnchanged()
         && onlyChanged([
           'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
@@ -958,7 +1052,7 @@ service cloud.firestore {
     function orderInvoiceSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
+      return (ownsOrderData(resource.data) || hasPerm('invoices.view_all'))
         && orderIdentityUnchanged()
         && onlyChanged([
           'invoice_status', 'invoice_record_count', 'invoice_relation_revision',
@@ -979,7 +1073,7 @@ service cloud.firestore {
     function orderShipmentSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
+      return (ownsOrderData(resource.data) || hasPerm('shipments.view_all'))
         && orderIdentityUnchanged()
         && onlyChanged([
           'shipment_status', 'shipping_fee_total', 'cod_amount_total',
@@ -1076,23 +1170,20 @@ service cloud.firestore {
         && exists(path)
         && activeUserData(user)
         && (
-          user.get('is_admin', false) == true
-          || (
-            permissions is list
-            && (
-              '*' in permissions
-              || permissions.hasAny([
-                'import.create',
-                'import.edit',
-                'import.delete',
-                'export.create',
-                'export.edit',
-                'export.delete',
-                'inventory.adjust',
-                'export_requests.release',
-                'export_requests.process'
-              ])
-            )
+          permissions is list
+          && (
+            '*' in permissions
+            || permissions.hasAny([
+              'import.create',
+              'import.edit',
+              'import.delete',
+              'export.create',
+              'export.edit',
+              'export.delete',
+              'inventory.adjust',
+              'export_requests.release',
+              'export_requests.process'
+            ])
           )
         );
     }
@@ -1369,7 +1460,17 @@ service cloud.firestore {
         && (
           (
             hasPerm('orders.warehouse_export')
-            && ownsOrderData(resource.data)
+            && (
+              ownsOrderData(resource.data)
+              || hasPerm('export_requests.view_all')
+            )
+          )
+          || (
+            hasPerm('export_requests.delete')
+            && (
+              ownsOrderData(resource.data)
+              || hasPerm('export_requests.view_all')
+            )
           )
           || hasAnyPerm([
             'export_requests.accept',
@@ -1564,6 +1665,7 @@ service cloud.firestore {
         && orderDataIsActive(order)
         && (
           adminUserData(user)
+          || userHasPermData(user, 'export_requests.view_all')
           || ownsOrderData(order)
         )
         && requestMatchesOrderData(order)
@@ -1573,8 +1675,29 @@ service cloud.firestore {
     function exportSoftDeleteAllowed() {
       return softDeleteOnly()
         && exportRequestCanBeDeleted()
-        && hasAnyPerm(['export_requests.delete', 'orders.delete'])
-        && ownsOrderChildData(resource.data);
+        && hasPerm('export_requests.delete')
+        && (
+          hasPerm('export_requests.view_all')
+          || ownsOrderChildData(resource.data)
+        );
+    }
+
+    function exportOrderCascadeDeleteAllowed() {
+      let orderId = resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      return softDeleteOnly()
+        && exportRequestCanBeDeleted()
+        && hasPerm('orders.delete')
+        && orderId is string
+        && exists(path)
+        && existsAfter(path)
+        && (
+          ownsOrderData(get(path).data)
+          || hasPerm('orders.view_all')
+          || isAdmin()
+        )
+        && getAfter(path).data.get('deleted', false) == true
+        && getAfter(path).data.get('active', true) == false;
     }
 
     function exportOwnerEditAllowed() {
@@ -1589,7 +1712,10 @@ service cloud.firestore {
           'updated_at'
         ])
         && hasPerm('orders.warehouse_export')
-        && ownsOrderChildData(resource.data)
+        && (
+          hasPerm('export_requests.view_all')
+          || ownsOrderChildData(resource.data)
+        )
         && ownEmailField(request.resource.data, 'updated_by');
     }
 
@@ -1748,7 +1874,10 @@ service cloud.firestore {
       allow read: if isAdmin()
         || (
           hasPerm('customers.view')
-          && ownEmailField(resource.data, 'created_by')
+          && (
+            hasPerm('customers.view_all')
+            || ownEmailField(resource.data, 'created_by')
+          )
         );
 
       allow create: if customerCodeReservationMatches(docId, request.resource.data)
@@ -1764,16 +1893,20 @@ service cloud.firestore {
         && (
           isAdmin()
           || (
-            ownEmailField(resource.data, 'created_by')
-            && unchanged(['created_by', 'created_at'])
+            unchanged(['created_by', 'created_at'])
+            && (
+              ownEmailField(resource.data, 'created_by')
+              || hasPerm('customers.view_all')
+            )
             && (
               (
                 hasPerm('customers.edit')
+                && customerEditOnly(docId)
                 && unchanged(['deleted', 'active', 'status', 'deleted_at'])
               )
               || (
                 hasPerm('customers.delete')
-                && softDeleteOnly()
+                && customerSoftDeleteOnly()
               )
             )
           )
@@ -1793,9 +1926,15 @@ service cloud.firestore {
         && ownEmailField(request.resource.data, 'created_by')
         && existsAfter(customerPath(request.resource.data.get('customer_id', '')))
         && getAfter(customerPath(request.resource.data.get('customer_id', ''))).data.get('customer_code', '') == customerCode
-        && ownEmailField(
-          getAfter(customerPath(request.resource.data.get('customer_id', ''))).data,
-          'created_by'
+        && (
+          ownEmailField(
+            getAfter(customerPath(request.resource.data.get('customer_id', ''))).data,
+            'created_by'
+          )
+          || (
+            hasPerm('customers.view_all')
+            && hasPerm('customers.edit')
+          )
         );
       allow update, delete: if false;
     }
@@ -1859,58 +1998,79 @@ service cloud.firestore {
         && ownsOrderData(request.resource.data)
         && validOrderNumberCreate();
 
-      // Soft-delete is evaluated first so the order cascade stays below the
-      // Firestore Rules expression budget.
-      allow update: if (
+      // Dispatch by the fields actually changed. Firestore lazily evaluates
+      // the selected ternary branch, so a relation batch never spends its
+      // 1000-expression budget evaluating warehouse/printing/normal branches.
+      allow update: if changedAny(['deleted', 'active', 'deleted_at'])
+        ? (
           softDeleteOnly()
           && hasPerm('orders.delete')
-          && ownsOrderData(resource.data)
+          && (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
           && orderIdentityUnchanged()
           && orderCanBeDeleted()
         )
-        || orderWarehouseSummaryUpdateAllowed()
-        || (
-          request.resource.data.get('relation_last_module', '') == 'all'
-          && orderRelationReconcileAllowed()
-        )
-        // Dispatch relation summaries by the cheap module marker first. This
-        // prevents Firestore from evaluating all three expensive parent/child
-        // relation branches for every order update.
-        || (
-          request.resource.data.get('relation_last_module', '') == 'payments'
-          && orderPaymentSummaryUpdateAllowed(docId)
-        )
-        || (
-          request.resource.data.get('relation_last_module', '') == 'invoices'
-          && orderInvoiceSummaryUpdateAllowed(docId)
-        )
-        || (
-          request.resource.data.get('relation_last_module', '') == 'shipments'
-          && orderShipmentSummaryUpdateAllowed(docId)
-        )
-        || (
-          request.resource.data.get('printing_last_action', '') == 'reconcile'
-          && orderPrintingReconcileAllowed()
-        )
-        || orderPrintingSummaryUpdateAllowed(docId)
-        || (
-          isAdmin()
-          && fulfillmentStatus() != 'da_xuat_du'
-        )
-        || (
-          // Normal business edit by an owner.
-          hasPerm('orders.edit')
-          && ownsOrderData(resource.data)
-          && orderIdentityUnchanged()
-          && normalOrderEditKeepsSystemFields()
-          && fulfillmentStatus() != 'da_xuat_du'
-        )
-        ;
+        : (
+            changedAny(['warehouse_fulfillment_status', 'warehouse_request_status'])
+            || (
+              onlyChanged(['updated_at'])
+              && hasAnyPerm([
+                'orders.warehouse_export', 'export_requests.delete',
+                'export_requests.accept', 'export_requests.reject',
+                'export_requests.release', 'export_requests.process'
+              ])
+            )
+          )
+          ? orderWarehouseSummaryUpdateAllowed()
+          : changedAny([
+              'relation_last_module', 'relation_last_action',
+              'relation_last_document_id', 'relation_updated_by',
+              'relation_updated_at'
+            ])
+            ? (
+              (
+                request.resource.data.get('relation_last_module', '') == 'all'
+                && orderRelationReconcileAllowed()
+              )
+              || (
+                request.resource.data.get('relation_last_module', '') == 'payments'
+                && orderPaymentSummaryUpdateAllowed(docId)
+              )
+              || (
+                request.resource.data.get('relation_last_module', '') == 'invoices'
+                && orderInvoiceSummaryUpdateAllowed(docId)
+              )
+              || (
+                request.resource.data.get('relation_last_module', '') == 'shipments'
+                && orderShipmentSummaryUpdateAllowed(docId)
+              )
+            )
+            : changedAny([
+                'printing_progress_count', 'printing_last_action',
+                'printing_last_print_order_id', 'printing_lock_updated_by',
+                'printing_lock_updated_at'
+              ])
+              ? (
+                (
+                  request.resource.data.get('printing_last_action', '') == 'reconcile'
+                  && orderPrintingReconcileAllowed()
+                )
+                || orderPrintingSummaryUpdateAllowed(docId)
+              )
+              : (
+                hasPerm('orders.edit')
+                && (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
+                && orderIdentityUnchanged()
+                && normalOrderEditKeepsSystemFields()
+                && fulfillmentStatus() != 'da_xuat_du'
+              );
 
       allow delete: if isAdmin()
         || (
           hasPerm('orders.delete')
-          && ownsOrderData(resource.data)
+          && (
+            ownsOrderData(resource.data)
+            || hasPerm('orders.view_all')
+          )
           && orderCanBeDeleted()
         );
     }
@@ -1995,15 +2155,9 @@ service cloud.firestore {
     match /payments/{docId} {
       allow read: if hasPerm('payments.view_all')
         || (
-          hasAnyPerm([
-            'payments.view',
-            'payments.create',
-            'payments.edit',
-            'payments.delete'
-          ])
+          hasPerm('payments.view')
           && (
-            hasPerm('orders.view_all')
-            || ownsOrderChildData(resource.data)
+            ownsOrderChildData(resource.data)
             || (
               resource.data.order_id is string
               && ownsOrderById(resource.data.order_id)
@@ -2012,34 +2166,35 @@ service cloud.firestore {
         );
 
       allow create: if hasPerm('payments.create')
-        && relationCreateBase(request.resource.data.order_id)
+        && relationCreateBase(request.resource.data.order_id, 'payments.view_all')
         && relationParentMarkerMatches(
           request.resource.data.order_id, 'payments', 'create', docId,
           'payment_relation_revision'
         );
 
-      allow update: if isAdmin()
-        || (
-          relationExistingChildBase(resource.data.order_id)
+      allow update: if (
+          relationExistingChildBase(resource.data.order_id, 'payments.view_all')
           && (
-            (
-              hasPerm('payments.edit')
-              && unchanged(['deleted', 'active', 'status', 'deleted_at'])
-              && relationParentMarkerMatches(
-                resource.data.order_id, 'payments', 'update', docId,
-                'payment_relation_revision'
+            changedAny(['deleted', 'active', 'deleted_at'])
+              ? (
+                hasPerm('payments.delete')
+                && softDeleteOnly()
+                && relationParentMarkerMatches(
+                  resource.data.order_id, 'payments', 'delete', docId,
+                  'payment_relation_revision'
+                )
               )
-            )
-            || (
-              hasPerm('payments.delete')
-              && softDeleteOnly()
-              && relationParentMarkerMatches(
-                resource.data.order_id, 'payments', 'delete', docId,
-                'payment_relation_revision'
+              : (
+                hasPerm('payments.edit')
+                && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+                && relationParentMarkerMatches(
+                  resource.data.order_id, 'payments', 'update', docId,
+                  'payment_relation_revision'
+                )
               )
-            )
           )
-        );
+        )
+        || isAdmin();
 
       allow delete: if isAdmin();
     }
@@ -2070,28 +2225,24 @@ service cloud.firestore {
 
       allow create: if exportCreateAllowed();
 
-      // Dispatch release/cancel by the lifecycle marker before evaluating
-      // legacy owner/warehouse branches. This keeps multi-write batches below
-      // Firestore's 1000-expression evaluation limit.
-      allow update: if (
-          request.resource.data.get('lifecycle_status', '') == 'released'
-          && exportRequestReleaseAllowed(docId)
-        )
-        || (
-          request.resource.data.get('lifecycle_status', '') == 'release_cancelled'
-          && exportRequestCancelAllowed(docId)
-        )
-        || exportSoftDeleteAllowed()
-        || exportOwnerEditAllowed()
-        || exportWarehouseProcessAllowed()
-        || isAdmin();
+      // Soft delete, lifecycle and ordinary edits have disjoint payloads. Lazy
+      // dispatch keeps the valid path small enough for a multi-document batch.
+      allow update: if changedAny(['deleted', 'active', 'deleted_at'])
+        ? (exportSoftDeleteAllowed() || exportOrderCascadeDeleteAllowed())
+        : request.resource.data.get('lifecycle_status', '') == 'released'
+          ? exportRequestReleaseAllowed(docId)
+          : request.resource.data.get('lifecycle_status', '') == 'release_cancelled'
+            ? exportRequestCancelAllowed(docId)
+            : (exportOwnerEditAllowed() || exportWarehouseProcessAllowed() || isAdmin());
 
       allow delete: if isAdmin()
         || (
-          hasAnyPerm(['export_requests.delete', 'orders.delete'])
+          hasPerm('export_requests.delete')
           && exportRequestCanBeDeleted()
-          && resource.data.order_id is string
-          && canMutateOrderById(resource.data.order_id)
+          && (
+            hasPerm('export_requests.view_all')
+            || ownsOrderChildData(resource.data)
+          )
         );
     }
 
@@ -2105,6 +2256,11 @@ service cloud.firestore {
       allow create: if hasPerm('printing.create')
         && request.resource.data.get('order_code', '') is string
         && request.resource.data.get('order_code', '') != ''
+        && request.resource.data.get('order_id', '') is string
+        && (
+          hasPerm('printing.view_all')
+          || ownsOrderById(request.resource.data.get('order_id', ''))
+        )
         && printCreateHasParentLock(docId, request.resource.data)
         && ownEmailField(request.resource.data, 'created_by');
 
@@ -2175,15 +2331,9 @@ service cloud.firestore {
     match /shipments/{docId} {
       allow read: if hasPerm('shipments.view_all')
         || (
-          hasAnyPerm([
-            'shipments.view',
-            'shipments.create',
-            'shipments.edit',
-            'shipments.delete'
-          ])
+          hasPerm('shipments.view')
           && (
-            hasPerm('orders.view_all')
-            || ownsOrderChildData(resource.data)
+            ownsOrderChildData(resource.data)
             || (
               resource.data.order_id is string
               && ownsOrderById(resource.data.order_id)
@@ -2191,40 +2341,42 @@ service cloud.firestore {
           )
         );
       allow create: if hasPerm('shipments.create')
-        && relationCreateBase(request.resource.data.order_id)
+        && relationCreateBase(request.resource.data.order_id, 'shipments.view_all')
         && relationParentMarkerMatches(
           request.resource.data.order_id, 'shipments', 'create', docId,
           'shipment_relation_revision'
         );
 
-      allow update: if isAdmin()
-        || (
-          relationExistingChildBase(resource.data.order_id)
+      allow update: if (
+          relationExistingChildBase(resource.data.order_id, 'shipments.view_all')
           && (
-            (
-              hasPerm('shipments.edit')
-              && unchanged(['deleted', 'active', 'status', 'deleted_at'])
-              && relationParentMarkerMatches(
-                resource.data.order_id, 'shipments', 'update', docId,
-                'shipment_relation_revision'
+            changedAny(['deleted', 'active', 'deleted_at'])
+              ? (
+                hasPerm('shipments.delete')
+                && softDeleteOnly()
+                && relationParentMarkerMatches(
+                  resource.data.order_id, 'shipments', 'delete', docId,
+                  'shipment_relation_revision'
+                )
               )
-            )
-            || (
-              hasPerm('shipments.delete')
-              && softDeleteOnly()
-              && relationParentMarkerMatches(
-                resource.data.order_id, 'shipments', 'delete', docId,
-                'shipment_relation_revision'
+              : (
+                hasPerm('shipments.edit')
+                && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+                && relationParentMarkerMatches(
+                  resource.data.order_id, 'shipments', 'update', docId,
+                  'shipment_relation_revision'
+                )
               )
-            )
           )
-        );
+        )
+        || isAdmin();
 
       allow delete: if isAdmin();
     }
 
     match /invoices/{docId} {
       allow read: if isAdmin()
+        || hasPerm('invoices.view_all')
         || (
           hasPerm('invoices.view')
           && (
@@ -2237,34 +2389,35 @@ service cloud.firestore {
         );
 
       allow create: if hasPerm('invoices.create')
-        && relationCreateBase(request.resource.data.order_id)
+        && relationCreateBase(request.resource.data.order_id, 'invoices.view_all')
         && relationParentMarkerMatches(
           request.resource.data.order_id, 'invoices', 'create', docId,
           'invoice_relation_revision'
         );
 
-      allow update: if isAdmin()
-        || (
-          relationExistingChildBase(resource.data.order_id)
+      allow update: if (
+          relationExistingChildBase(resource.data.order_id, 'invoices.view_all')
           && (
-            (
-              hasPerm('invoices.edit')
-              && unchanged(['deleted', 'active', 'status', 'deleted_at'])
-              && relationParentMarkerMatches(
-                resource.data.order_id, 'invoices', 'update', docId,
-                'invoice_relation_revision'
+            changedAny(['deleted', 'active', 'deleted_at'])
+              ? (
+                hasPerm('invoices.delete')
+                && softDeleteOnly()
+                && relationParentMarkerMatches(
+                  resource.data.order_id, 'invoices', 'delete', docId,
+                  'invoice_relation_revision'
+                )
               )
-            )
-            || (
-              hasPerm('invoices.delete')
-              && softDeleteOnly()
-              && relationParentMarkerMatches(
-                resource.data.order_id, 'invoices', 'delete', docId,
-                'invoice_relation_revision'
+              : (
+                hasPerm('invoices.edit')
+                && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+                && relationParentMarkerMatches(
+                  resource.data.order_id, 'invoices', 'update', docId,
+                  'invoice_relation_revision'
+                )
               )
-            )
           )
-        );
+        )
+        || isAdmin();
 
       allow delete: if isAdmin();
     }
@@ -2523,6 +2676,12 @@ service cloud.firestore {
       // Client-side logs are append-only and actor/time-bound. They improve
       // traceability but are not a substitute for a trusted backend audit log.
       allow create: if validActivityLogCreate(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    match /permission_error_logs/{docId} {
+      allow read: if isAdmin();
+      allow create: if validPermissionErrorLogCreate(request.resource.data);
       allow update, delete: if false;
     }
 

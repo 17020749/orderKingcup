@@ -16,7 +16,9 @@ import {
   safeJsonParse,
   toNumber,
 } from '~/utils/format'
-import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { reportFirebaseError, reportPermissionError } from '~/utils/firebaseErrors'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
 
 type PrintStatus = 'Đang in' | 'Cảnh báo' | 'Quá hạn' | 'Hoàn thành'
 
@@ -91,37 +93,35 @@ const canViewAll = computed(() => hasPermission('printing.view_all') || hasPermi
 const canViewOwnOrders = computed(() => hasPermission('printing.orders_view') || hasPermission('*'))
 const canViewOwnRecords = computed(() => hasPermission('printing.view') || hasPermission('*'))
 const canCreate = computed(() => hasPermission('printing.create') || hasPermission('*'))
-const canEdit = computed(() => hasPermission('printing.edit') || hasPermission('*'))
-const canDelete = computed(() => hasPermission('printing.delete') || hasPermission('*'))
 const currentEmail = computed(() => String(appUser.value?.email || '').trim().toLowerCase())
 
-function sourceOrderForProgress(order: PrintOrderDoc | null | undefined) {
-  if (!order) return undefined
-  return sourceOrders.value.find(source => source.id === order.order_id)
-    || sourceOrders.value.find(source => source.order_code === order.order_code)
+function printingActionDecision(action: 'create' | 'edit' | 'delete', order?: PrintOrderDoc | null, sourceOrder?: OrderDoc | null) {
+  return moduleActionDecision({
+    actionPermission: `printing.${action}`,
+    viewAllPermission: 'printing.view_all',
+    permissions: permissions.value,
+    record: order || null,
+    parent: action === 'create' ? (sourceOrder || null) : null,
+    currentUserEmail: currentEmail.value,
+    ownerFields: ['created_by'],
+    parentOwnerFields: ['owner_email', 'created_by', 'sale_email'],
+  })
 }
 
-function ownsSourceOrder(order: PrintOrderDoc | null | undefined) {
-  const source = sourceOrderForProgress(order)
-  if (!source || !currentEmail.value) return false
-  return [source.owner_email, source.created_by, source.sale_email]
-    .some(value => String(value || '').trim().toLowerCase() === currentEmail.value)
-}
-
-function ownsProgressRecord(order: PrintOrderDoc | null | undefined) {
-  return Boolean(order && String(order.created_by || '').trim().toLowerCase() === currentEmail.value)
+function printingActionError(action: 'create' | 'edit' | 'delete', order?: PrintOrderDoc | null, sourceOrder?: OrderDoc | null) {
+  return permissionDecisionMessage(printingActionDecision(action, order, sourceOrder), {
+    operation: `${action === 'create' ? 'tạo' : action === 'edit' ? 'sửa' : 'xóa'} tiến độ in`,
+    record: order?.order_code || order?.id || form.order_code || '(mới)',
+    status: order?.status || '',
+  })
 }
 
 function canEditOrder(order: PrintOrderDoc | null | undefined) {
-  return isAdmin.value || (canEdit.value && (
-    canViewAll.value || ownsSourceOrder(order) || ownsProgressRecord(order)
-  ))
+  return printingActionDecision('edit', order || null).allowed
 }
 
 function canDeleteOrder(order: PrintOrderDoc | null | undefined) {
-  return isAdmin.value || (canDelete.value && (
-    canViewAll.value || ownsSourceOrder(order) || ownsProgressRecord(order)
-  ))
+  return printingActionDecision('delete', order || null).allowed
 }
 
 const pageSubtitle = computed(() => {
@@ -360,13 +360,17 @@ function resetForm(order?: PrintOrderDoc) {
 }
 
 function openCreateModal() {
-  if (!canCreate.value) return showToast('Bạn không có quyền thêm tiến độ in ấn.', 'error')
+  if (!canCreate.value) return showToast(reportPermissionError({
+    module: 'printing',
+    operation: 'create',
+    missingPermissions: ['printing.create'],
+  }), 'error')
   resetForm()
   showFormModal.value = true
 }
 
 function openEditModal(order: PrintOrderDoc) {
-  if (!canEditOrder(order)) return showToast('Bạn không có quyền sửa tiến độ in ấn này.', 'error')
+  if (!canEditOrder(order)) return showToast(printingActionError('edit', order), 'error')
   resetForm(order)
   showFormModal.value = true
 }
@@ -431,13 +435,13 @@ function collectItems(): PrintItemInput[] {
 }
 
 async function submitForm() {
-  if (editing.value ? !canEditOrder(editing.value) : !canCreate.value) {
-    return showToast(editing.value
-      ? 'Bạn không có quyền sửa tiến độ in ấn này.'
-      : 'Bạn không có quyền tạo tiến độ in ấn.', 'error')
-  }
   if (!form.order_id || !form.order_code) {
     return showToast('Vui lòng chọn mã đơn hàng.', 'error')
+  }
+  const sourceOrder = sourceOrders.value.find(order => order.id === form.order_id) || null
+  const action = editing.value ? 'edit' : 'create'
+  if (!printingActionDecision(action, editing.value, sourceOrder).allowed) {
+    return showToast(printingActionError(action, editing.value, sourceOrder), 'error')
   }
 
   let printItems: PrintItemInput[]
@@ -468,14 +472,20 @@ async function submitForm() {
     showToast(isEditing ? `Đã cập nhật đơn in ${result.order_code}.` : `Đã thêm đơn in ${result.order_code}.`, 'success')
     await loadRows(true)
   } catch (error) {
-    showToast(reportFirebaseError(error, 'Không lưu được tiến độ in ấn.'), 'error')
+    showToast(reportFirebaseError(error, 'Không lưu được tiến độ in ấn.', {
+      operation: `printing.${action}`,
+      record: editing.value?.id || form.order_id,
+      status: editing.value?.status || 'new',
+      actionPermission: `printing.${action}`,
+      scopePermission: 'printing.view_all',
+    }), 'error')
   } finally {
     saving.value = false
   }
 }
 
 async function removeOrder(order: PrintOrderDoc) {
-  if (!canDeleteOrder(order)) return showToast('Bạn không có quyền xóa tiến độ in ấn này.', 'error')
+  if (!canDeleteOrder(order)) return showToast(printingActionError('delete', order), 'error')
   const confirmed = await askConfirm({
     title: 'Xóa tiến độ in ấn',
     message: `Bạn chắc chắn muốn xóa đơn in ${order.order_code}? Đơn và toàn bộ dòng tiến độ sẽ được xóa mềm.`,
@@ -490,7 +500,10 @@ async function removeOrder(order: PrintOrderDoc) {
     items.value = items.value.filter(item => item.print_order_id !== order.id)
     showToast(`Đã xóa đơn in ${order.order_code}.`, 'success')
   } catch (error) {
-    showToast(reportFirebaseError(error, 'Không xóa được tiến độ in ấn.'), 'error')
+    showToast(reportFirebaseError(error, 'Không xóa được tiến độ in ấn.', {
+      operation: 'printing.delete', record: order.id, status: order.status,
+      actionPermission: 'printing.delete', scopePermission: 'printing.view_all',
+    }), 'error')
   } finally {
     saving.value = false
   }

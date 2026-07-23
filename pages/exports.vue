@@ -12,7 +12,7 @@ import {
   toNumber,
   todayKey,
 } from "~/utils/format";
-import { reportFirebaseError } from "~/utils/firebaseErrors";
+import { reportFirebaseError, reportPermissionError } from "~/utils/firebaseErrors";
 
 const { loadExportOrdersPage, loadExportOrderItemsForOrders, loadProducts, loadWarehouses } =
   useScopedQueries();
@@ -291,7 +291,12 @@ function openEditModal(row: ExportOrderDoc) {
     return showToast(
       isRequestGenerated(row)
         ? "Phiếu sinh từ yêu cầu sale chỉ được xem, không được sửa tại đây."
-        : "Bạn không có quyền sửa phiếu xuất này.",
+        : reportPermissionError({
+            module: "export",
+            operation: "edit",
+            record: row.id,
+            missingPermissions: ["export.edit"],
+          }),
       "error",
     );
   }
@@ -329,7 +334,12 @@ async function cancelExportOrder(row: ExportOrderDoc) {
     return showToast(
       isRequestGenerated(row)
         ? "Phiếu sinh từ yêu cầu sale không được hủy tại trang Xuất kho thật."
-        : "Bạn không có quyền hủy phiếu xuất này.",
+        : reportPermissionError({
+            module: "export",
+            operation: "delete",
+            record: row.id,
+            missingPermissions: ["export.delete"],
+          }),
       "error",
     );
   }

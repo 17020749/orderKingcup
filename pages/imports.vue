@@ -13,7 +13,7 @@ import {
   toNumber,
   todayKey,
 } from '~/utils/format'
-import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { reportFirebaseError, reportPermissionError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 
@@ -235,7 +235,12 @@ function openCreateModal() {
 }
 
 function openEditModal(row: ImportOrderDoc) {
-  if (!canEdit.value) return showToast('Bạn không có quyền sửa phiếu nhập kho.', 'error')
+  if (!canEdit.value) return showToast(reportPermissionError({
+    module: 'import',
+    operation: 'edit',
+    record: row.id,
+    missingPermissions: ['import.edit'],
+  }), 'error')
   editing.value = row
   const orderItems = itemsForOrder(row)
   Object.assign(form, {
@@ -260,7 +265,12 @@ function openEditModal(row: ImportOrderDoc) {
 }
 
 async function confirmDeleteImport(row: ImportOrderDoc) {
-  if (!canDelete.value) return showToast('Bạn không có quyền xóa phiếu nhập kho.', 'error')
+  if (!canDelete.value) return showToast(reportPermissionError({
+    module: 'import',
+    operation: 'delete',
+    record: row.id,
+    missingPermissions: ['import.delete'],
+  }), 'error')
   const ok = await askConfirm({
     title: 'Xóa phiếu nhập kho',
     message: `Bạn chắc chắn muốn xóa mềm phiếu ${codeOf(row)}? Chỉ được xóa khi các lô của phiếu chưa được xuất.`,

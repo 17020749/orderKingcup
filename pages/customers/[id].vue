@@ -2,14 +2,14 @@
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
 import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc } from '~/types/models'
 import { formatDateTime, money, normalizeText, safeJsonParse, toNumber } from '~/utils/format'
-import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { reportFirebaseError, reportPermissionError } from '~/utils/firebaseErrors'
 
 const route = useRoute()
 const { db } = useFirebaseServices()
-const { hasPermission } = useAuth()
+const { appUser, hasPermission } = useAuth()
 const { showToast } = useUi()
 const { computePaymentStatus } = useOrderLogic()
-const { loadScopedOrders, loadScopedPayments } = useScopedQueries()
+const { loadScopedPayments } = useScopedQueries()
 
 const loading = ref(false)
 const customer = ref<CustomerDoc | null>(null)
@@ -20,6 +20,7 @@ const selectedOrder = ref<OrderDoc | null>(null)
 const selectedOrderItems = ref<OrderItemDoc[]>([])
 const detailLoading = ref(false)
 const showDetailModal = ref(false)
+const ordersDenied = ref(false)
 
 const customerId = computed(() => String(route.params.id || ''))
 const filtered = computed(() => orders.value.filter(order => normalizeText(
@@ -68,7 +69,13 @@ async function openOrderDetail(order: OrderDoc) {
       .map(item => ({ ...item.data(), id: item.id }) as OrderItemDoc)
       .filter(item => item.deleted !== true && item.status !== 'deleted')
   } catch (error) {
-    showToast(reportFirebaseError(error, 'Không tải được chi tiết sản phẩm của đơn hàng.'), 'error')
+    showToast(reportFirebaseError(error, 'Không tải được chi tiết sản phẩm của đơn hàng.', {
+      module: 'order_items',
+      operation: 'query_by_order_id',
+      record: order.id,
+      actionPermission: 'customers.orders_view',
+      scopePermission: 'orders.view_all',
+    }), 'error')
   } finally {
     detailLoading.value = false
   }
@@ -76,24 +83,51 @@ async function openOrderDetail(order: OrderDoc) {
 
 async function loadData(force = false) {
   if (!hasPermission('customers.orders_view')) {
+    reportPermissionError({
+      module: 'customers',
+      operation: 'view_customer_orders',
+      record: customerId.value,
+      missingPermissions: ['customers.orders_view'],
+    })
     await navigateTo('/forbidden', { replace: true })
     return
   }
 
   loading.value = true
+  ordersDenied.value = false
   try {
-    const [customerSnapshot, scopedOrders] = await Promise.all([
-      getDoc(doc(db, 'customers', customerId.value)),
-      loadScopedOrders(force),
-    ])
-    if (!customerSnapshot.exists()) throw new Error('Không tìm thấy khách hàng hoặc bạn không có quyền xem.')
+    const customerSnapshot = await getDoc(doc(db, 'customers', customerId.value))
+    if (!customerSnapshot.exists()) throw new Error('Không tìm thấy khách hàng.')
 
     customer.value = {
       ...customerSnapshot.data(),
       id: customerSnapshot.id,
     } as CustomerDoc
-    const customerOrders = scopedOrders
-      .filter(order => order.customer_id === customerId.value)
+
+    const actor = String(appUser.value?.email || '').trim().toLowerCase()
+    const customerOwner = String(customer.value.created_by || '').trim().toLowerCase()
+    const ownsCustomer = Boolean(actor && actor === customerOwner)
+    if (!ownsCustomer && !hasPermission('orders.view_all')) {
+      orders.value = []
+      paymentsByOrder.value = {}
+      ordersDenied.value = true
+      showToast(reportPermissionError({
+        module: 'orders',
+        operation: 'list_by_customer',
+        record: customerId.value,
+        missingPermissions: ['orders.view_all'],
+        context: { customer_owner: customerOwner },
+      }), 'error')
+      return
+    }
+
+    const orderSnapshot = await getDocs(query(
+      collection(db, 'orders'),
+      where('customer_id', '==', customerId.value),
+    ))
+    const customerOrders = orderSnapshot.docs
+      .map(order => ({ ...order.data(), id: order.id }) as OrderDoc)
+      .filter(order => order.deleted !== true && order.status !== 'deleted')
 
     if (hasPermission('payments.view')) {
       const loadedPayments = await loadScopedPayments(customerOrders, force)
@@ -114,7 +148,13 @@ async function loadData(force = false) {
     }
   } catch (error: any) {
     showToast(error?.code
-      ? reportFirebaseError(error, 'Không tải được đơn hàng của khách.')
+      ? reportFirebaseError(error, 'Không tải được đơn hàng của khách.', {
+          module: customer.value ? 'orders' : 'customers',
+          operation: customer.value ? 'list_by_customer' : 'get',
+          record: customerId.value,
+          actionPermission: customer.value ? 'customers.orders_view' : 'customers.view',
+          scopePermission: customer.value ? 'orders.view_all' : 'customers.view_all',
+        })
       : (error?.message || 'Không tải được đơn hàng của khách.'), 'error')
   } finally {
     loading.value = false
@@ -141,6 +181,7 @@ onMounted(loadData)
       </div>
 
       <LoadingState v-if="loading" />
+      <div v-else-if="ordersDenied" class="alert warning">Bạn không có quyền thực hiện thao tác này.</div>
       <div v-else class="table-wrap">
         <table style="min-width:1100px">
           <thead>

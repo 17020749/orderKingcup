@@ -6,7 +6,7 @@ import {
 } from 'firebase/firestore'
 import type { OrderItemDoc } from '~/types/models'
 import { buildOrderCode, ORDER_SEQUENCE_START } from '~/utils/orderCode'
-import { toNumber } from '~/utils/format'
+import { normalizeEmail, toNumber } from '~/utils/format'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import {
   assertAtomicOrderWriteLimit,
@@ -15,6 +15,8 @@ import {
   nextOrderRevision,
   planAtomicOrderItems,
 } from '~/utils/orderAtomicSave.mjs'
+// @ts-ignore Shared ESM helpers are executed directly by Node client tests.
+import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
 
 type AtomicOrderMode = 'create' | 'edit'
 
@@ -50,11 +52,33 @@ export type AtomicOrderSaveResult = {
 
 export function useAtomicOrderSave() {
   const { db } = useFirebaseServices()
+  const { appUser, permissions } = useAuth()
 
   async function saveOrderAtomic(input: AtomicOrderSaveInput): Promise<AtomicOrderSaveResult> {
     if (!input.orderId) throw new Error('Thiếu ID đơn hàng.')
     if (!input.customerId) throw new Error('Thiếu khách hàng của đơn.')
     if (!input.nextItems.length) throw new Error('Vui lòng thêm ít nhất một sản phẩm.')
+    const actor = normalizeEmail(input.changedBy || appUser.value?.email || '')
+    if (!actor) throw new Error('Không xác định được người thao tác.')
+    if (input.mode === 'create') {
+      const ownerEmail = normalizeEmail(input.ownerEmail)
+      const createdBy = normalizeEmail(input.createdBy)
+      if (ownerEmail !== actor || createdBy !== actor) {
+        throw new Error('Tạo đơn bị chặn (code=forged_order_ownership, immutable_field=owner_email/created_by).')
+      }
+      const decision = moduleActionDecision({
+        actionPermission: 'orders.create',
+        viewAllPermission: 'orders.view_all',
+        permissions: permissions.value,
+        record: { owner_email: ownerEmail, created_by: createdBy },
+        currentUserEmail: actor,
+      })
+      if (!decision.allowed) {
+        throw new Error(permissionDecisionMessage(decision, {
+          operation: 'orders.create', record: input.orderId, status: 'new',
+        }))
+      }
+    }
 
     const writeCount = assertAtomicOrderWriteLimit({
       mode: input.mode,
@@ -84,6 +108,20 @@ export function useAtomicOrderSave() {
       }
 
       const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}
+      if (input.mode === 'edit') {
+        const decision = moduleActionDecision({
+          actionPermission: 'orders.edit',
+          viewAllPermission: 'orders.view_all',
+          permissions: permissions.value,
+          record: { ...existingOrder, id: input.orderId },
+          currentUserEmail: actor,
+        })
+        if (!decision.allowed) {
+          throw new Error(permissionDecisionMessage(decision, {
+            operation: 'orders.edit', record: input.orderId, status: existingOrder.status,
+          }))
+        }
+      }
       const actualRevision = input.mode === 'edit'
         ? assertExpectedOrderRevision(input.expectedRevision, existingOrder.revision)
         : 0

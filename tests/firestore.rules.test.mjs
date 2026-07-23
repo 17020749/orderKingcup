@@ -224,7 +224,7 @@ async function seed() {
         email: PRINTING,
         active: true,
         deleted: false,
-        permissions_flat: ['page.printing', 'printing.view', 'printing.create', 'printing.edit', 'printing.delete']
+        permissions_flat: ['page.printing', 'printing.view', 'printing.view_all', 'printing.create', 'printing.edit', 'printing.delete']
       }),
       setDoc(doc(db, 'users', PRINTING_VIEWER), {
         email: PRINTING_VIEWER,
@@ -640,7 +640,10 @@ test('Customer chỉ hiển thị và sửa dữ liệu của chính user', asyn
   const db = env.authenticatedContext(A, { email: A }).firestore()
   await assertSucceeds(getDoc(doc(db, 'customers', 'customer-a')))
   await assertFails(getDoc(doc(db, 'customers', 'customer-b')))
-  await assertSucceeds(updateDoc(doc(db, 'customers', 'customer-a'), { phone: '123' }))
+  await assertSucceeds(updateDoc(doc(db, 'customers', 'customer-a'), {
+    phone: '123',
+    updated_at: serverTimestamp()
+  }))
   await assertFails(updateDoc(doc(db, 'customers', 'customer-b'), { phone: '999' }))
 })
 
@@ -690,7 +693,9 @@ test('Khách hàng cũ chưa có mã được gán mã tự động đúng một
     active: true, deleted: false
   })
   batch.update(doc(db, 'customers', 'customer-legacy-code'), {
-    id: 'customer-legacy-code', customer_code: 'OLD001', updated_at: 'now'
+    id: 'customer-legacy-code',
+    customer_code: 'OLD001',
+    updated_at: serverTimestamp()
   })
   await assertSucceeds(batch.commit())
   await assertFails(updateDoc(doc(db, 'customers', 'customer-legacy-code'), {
@@ -887,12 +892,12 @@ test('User thường không thể tạo, sửa hoặc xóa role', async () => {
   await assertFails(deleteDoc(doc(db, 'roles', 'missing-role')))
 })
 
-test('Tương thích user status Hoạt động và role Admin cũ', async () => {
+test('Tương thích user status Hoạt động nhưng role Admin cũ không tự cấp quyền', async () => {
   const legacyDb = env.authenticatedContext(LEGACY, { email: LEGACY }).firestore()
   await assertSucceeds(getDoc(doc(legacyDb, 'orders', 'order-legacy')))
 
   const roleAdminDb = env.authenticatedContext(ROLE_ADMIN, { email: ROLE_ADMIN }).firestore()
-  await assertSucceeds(getDocs(collection(roleAdminDb, 'users')))
+  await assertFails(getDocs(collection(roleAdminDb, 'users')))
 })
 
 test('Order item dùng owner_email/created_by/sale_email và đối chiếu parent thật', async () => {

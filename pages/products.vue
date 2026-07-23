@@ -2,7 +2,7 @@
 import { deleteField } from 'firebase/firestore'
 import type { ProductDoc } from '~/types/models'
 import { formatDateTime, makeId, normalizeText, toNumber } from '~/utils/format'
-import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { reportFirebaseError, reportPermissionError } from '~/utils/firebaseErrors'
 import { matchesKeyword, uniqueOptions } from '~/utils/listFilters'
 
 const { appUser, hasPermission } = useAuth()
@@ -122,8 +122,17 @@ function emptyProduct() {
 }
 
 function openModal(row?: ProductDoc) {
-  if (row && !canEdit.value) return showToast('Bạn không có quyền sửa sản phẩm.', 'error')
-  if (!row && !canCreate.value) return showToast('Bạn không có quyền thêm sản phẩm.', 'error')
+  if (row && !canEdit.value) return showToast(reportPermissionError({
+    module: 'products',
+    operation: 'edit',
+    record: row.id,
+    missingPermissions: ['products.edit'],
+  }), 'error')
+  if (!row && !canCreate.value) return showToast(reportPermissionError({
+    module: 'products',
+    operation: 'create',
+    missingPermissions: ['products.create'],
+  }), 'error')
 
   editing.value = row || null
   const source = withoutLegacyCost((row || emptyProduct()) as any)
@@ -165,6 +174,15 @@ function validateProduct() {
 }
 
 async function saveProduct() {
+  const requiredPermission = editing.value ? 'products.edit' : 'products.create'
+  if (!hasPermission(requiredPermission)) {
+    return showToast(reportPermissionError({
+      module: 'products',
+      operation: editing.value ? 'edit' : 'create',
+      record: editing.value?.id || form.id,
+      missingPermissions: [requiredPermission],
+    }), 'error')
+  }
   const validation = validateProduct()
   if (validation) return showToast(validation, 'error')
 
@@ -203,7 +221,12 @@ async function saveProduct() {
 }
 
 async function removeProduct(row: ProductDoc) {
-  if (!canDelete.value) return showToast('Bạn không có quyền xóa sản phẩm.', 'error')
+  if (!canDelete.value) return showToast(reportPermissionError({
+    module: 'products',
+    operation: 'delete',
+    record: row.id,
+    missingPermissions: ['products.delete'],
+  }), 'error')
   const confirmed = await askConfirm({
     title: 'Xóa sản phẩm',
     message: `Bạn chắc chắn muốn xóa sản phẩm ${row.product_code} - ${row.product_name}?\nSản phẩm sẽ được ẩn nhưng dữ liệu cũ trong đơn hàng vẫn được giữ.`,

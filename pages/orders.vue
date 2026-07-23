@@ -5,7 +5,9 @@ import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, PrintOrderDoc, Pr
 import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
 import { customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, userCodeValidationError } from '~/utils/orderCode'
 import { generateCustomerCode } from '~/utils/customerCode'
-import { reportFirebaseError } from '~/utils/firebaseErrors'
+import { reportFirebaseError, reportPermissionError } from '~/utils/firebaseErrors'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
 import { toDateKey } from '~/utils/listFilters'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
@@ -22,7 +24,7 @@ import {
 import { validateOrderItemEdit } from '~/utils/orderItemDependencies.mjs'
 
 const { db } = useFirebaseServices()
-const { appUser, hasPermission, isAdmin } = useAuth()
+const { appUser, permissions, hasPermission, isAdmin } = useAuth()
 const { calcItems, computePaymentStatus, parseLogoLines } = useOrderLogic()
 const { invalidateScopedCache } = useRepo()
 const { saveCustomer: saveManagedCustomer } = useCustomerManagement()
@@ -106,7 +108,6 @@ function resetFilters() {
   ownerFilter.value = ''
 }
 
-const canEditOrders = computed(() => hasPermission('orders.edit'))
 const canManageInvoiceStatus = computed(() => !editing.value && hasPermission('invoices.create'))
 const itemCount = computed(() => `${formItems.value.length} dòng`)
 const modalTotals = computed(() => calcItems(formItems.value, form))
@@ -309,7 +310,11 @@ function chooseCustomer() {
 
 function openCustomerModal() {
   if (!hasPermission('customers.create')) {
-    showToast('Bạn không có quyền thêm khách hàng.', 'error')
+    showToast(reportPermissionError({
+      module: 'customers',
+      operation: 'create',
+      missingPermissions: ['customers.create'],
+    }), 'error')
     return
   }
   Object.assign(customerForm, {
@@ -331,7 +336,11 @@ function openCustomerModal() {
 
 async function saveCustomer() {
   if (!hasPermission('customers.create')) {
-    showToast('Bạn không có quyền thêm khách hàng.', 'error')
+    showToast(reportPermissionError({
+      module: 'customers',
+      operation: 'create',
+      missingPermissions: ['customers.create'],
+    }), 'error')
     return
   }
   const customerName = String(customerForm.customer_name || '').trim()
@@ -428,7 +437,32 @@ function itemLineTotal(item: any) {
 }
 
 function canEditRow(row: OrderDoc) {
-  return canEditOrders.value && String(row.warehouse_fulfillment_status || '') !== 'da_xuat_du'
+  return orderActionDecision('edit', row).allowed
+}
+
+function orderActionDecision(action: 'edit' | 'delete', row: OrderDoc) {
+  const blocker = action === 'delete'
+    ? orderDeleteBlocker(row)
+    : String(row.warehouse_fulfillment_status || '') === 'da_xuat_du'
+      ? 'order_fulfilled'
+      : ''
+  return moduleActionDecision({
+    actionPermission: `orders.${action}`,
+    viewAllPermission: 'orders.view_all',
+    permissions: permissions.value,
+    record: row,
+    currentUserEmail: appUser.value?.email || '',
+    businessAllowed: !blocker,
+    businessCode: blocker || 'order_locked',
+  })
+}
+
+function orderActionError(action: 'edit' | 'delete', row: OrderDoc) {
+  return permissionDecisionMessage(orderActionDecision(action, row), {
+    operation: `${action === 'edit' ? 'sửa' : 'xóa'} đơn hàng`,
+    record: row.order_code || row.id,
+    status: row.warehouse_fulfillment_status || row.order_status || '',
+  })
 }
 
 function itemQuantityMap(items: any[]) {
@@ -473,7 +507,7 @@ function orderDeleteBlocker(
 }
 
 function canDeleteRow(row: OrderDoc) {
-  return hasPermission('orders.delete') && !orderDeleteBlocker(row)
+  return orderActionDecision('delete', row).allowed
 }
 
 function fulfillmentLabel(value: any) {
@@ -502,7 +536,7 @@ function requestStatusLabel(value: any) {
 }
 
 function openModal(row?: OrderDoc) {
-  if (row && !canEditRow(row)) return showToast('Đơn hàng đã xuất đủ trên Warehouse, không thể sửa.', 'error')
+  if (row && !canEditRow(row)) return showToast(orderActionError('edit', row), 'error')
   editing.value = row || null
   Object.keys(form).forEach(key => delete form[key])
   Object.assign(form, row ? { ...row, order_date: dateTimeLocal(row.order_date) || row.order_date } : {
@@ -570,7 +604,12 @@ function openDetail(row: OrderDoc) {
 
 function openPrint(row: OrderDoc) {
   if (!hasPermission('orders.print')) {
-    showToast('Bạn không có quyền in đơn hàng.', 'error')
+    showToast(reportPermissionError({
+      module: 'orders',
+      operation: 'print',
+      record: row.id,
+      missingPermissions: ['orders.print'],
+    }), 'error')
     return
   }
   selectedPrintOrder.value = row
@@ -581,8 +620,12 @@ function closePrint() {
 }
 
 async function saveOrder() {
-  if (editing.value && !canEditRow(editing.value)) return showToast('Bạn không có quyền sửa đơn hàng này', 'error')
-  if (!editing.value && !hasPermission('orders.create')) return showToast('Bạn không có quyền tạo đơn hàng', 'error')
+  if (editing.value && !canEditRow(editing.value)) return showToast(orderActionError('edit', editing.value), 'error')
+  if (!editing.value && !hasPermission('orders.create')) return showToast(reportPermissionError({
+    module: 'orders',
+    operation: 'create',
+    missingPermissions: ['orders.create'],
+  }), 'error')
   if (!form.customer_name) return showToast('Thiếu khách hàng', 'error')
   const itemValidation = validateOrderItems()
   if (itemValidation) return showToast(itemValidation, 'error')
@@ -595,7 +638,12 @@ async function saveOrder() {
     let selectedCustomer = customers.value.find(customer => customer.id === form.customer_id)
     if (!editing.value && selectedCustomer && !selectedCustomer.customer_code) {
       if (!hasPermission('customers.edit')) {
-        throw new Error('Khách hàng chưa có Mã khách tự động. Vui lòng cấp quyền sửa khách hàng hoặc cập nhật khách tại trang Khách hàng trước khi tạo đơn.')
+        throw new Error(reportPermissionError({
+          module: 'customers',
+          operation: 'assign_customer_code',
+          record: selectedCustomer.id,
+          missingPermissions: ['customers.edit'],
+        }))
       }
       selectedCustomer = await saveManagedCustomer({ ...selectedCustomer, customer_code: generateCustomerCode() }, selectedCustomer)
       customers.value = customers.value.map(customer => customer.id === selectedCustomer?.id ? selectedCustomer as CustomerDoc : customer)
@@ -816,7 +864,13 @@ async function saveOrder() {
     showToast(editing.value ? 'Đã cập nhật đơn hàng' : 'Đã thêm đơn hàng', 'success')
   }).catch(error => showToast(
     (error as any)?.code
-      ? reportFirebaseError(error, 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.')
+      ? reportFirebaseError(error, 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.', {
+          operation: editing.value ? 'orders.edit' : 'orders.create',
+          record: form.id,
+          status: editing.value?.status || form.status || 'new',
+          actionPermission: editing.value ? 'orders.edit' : 'orders.create',
+          scopePermission: 'orders.view_all',
+        })
       : ((error as any)?.message || 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.'),
     'error',
   )).finally(() => {
@@ -841,7 +895,7 @@ async function reconcileRelationLocksInBackground() {
 }
 
 async function softDeleteOrder(row: OrderDoc) {
-  if (!hasPermission('orders.delete')) return showToast('Bạn không có quyền xóa đơn hàng.', 'error')
+  if (!orderActionDecision('delete', row).allowed) return showToast(orderActionError('delete', row), 'error')
   const initialBlocker = orderDeleteBlocker(row)
   if (initialBlocker) return showToast(initialBlocker, 'error')
 
@@ -939,7 +993,10 @@ async function softDeleteOrder(row: OrderDoc) {
     showToast('Đã xóa đơn hàng', 'success')
   }).catch(error => {
     const message = (error as any)?.code
-      ? reportFirebaseError(error, 'Không xóa được đơn hàng.')
+      ? reportFirebaseError(error, 'Không xóa được đơn hàng.', {
+          operation: 'orders.delete', record: row.id, status: latestOrder.status,
+          actionPermission: 'orders.delete', scopePermission: 'orders.view_all',
+        })
       : ((error as any)?.message || 'Không xóa được đơn hàng.')
     showToast(message, 'error')
   })
@@ -1210,7 +1267,7 @@ onMounted(loadRows)
           <select v-model="form.invoice_status" class="select" :disabled="!canManageInvoiceStatus">
             <option v-for="s in INVOICE_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option>
           </select>
-          <div v-if="!canManageInvoiceStatus" class="small subtle">Bạn không có quyền thay đổi trạng thái hóa đơn.</div>
+          <div v-if="!canManageInvoiceStatus" class="small subtle">Bạn không có quyền thực hiện thao tác này.</div>
         </div>
         <div class="form-group"><label>VAT %</label><select v-model.number="form.vat_rate" class="select"><option v-for="s in VAT_RATE_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div class="form-group"><label>Số tiền giảm giá</label><input v-model.number="form.discount_amount" class="input" type="number" min="0" /></div>

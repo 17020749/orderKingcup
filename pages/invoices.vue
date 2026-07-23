@@ -3,12 +3,14 @@ import type { InvoiceDoc, OrderDoc } from '~/types/models'
 import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 import { toDateKey } from '~/utils/listFilters'
 
 const { mutateOrderRelation } = useAtomicOrderRelations()
-const { loadScopedOrders, loadScopedInvoicesPage } = useScopedQueries()
-const { appUser, hasPermission } = useAuth()
+const { loadScopedOrders, loadScopedInvoicesPage, loadScopedInvoicesForOrders } = useScopedQueries()
+const { appUser, permissions, hasPermission } = useAuth()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
@@ -64,6 +66,28 @@ function resetFilters() {
 
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id))
 
+function invoiceActionDecision(action: 'create' | 'edit' | 'delete', row?: InvoiceDoc | null, order?: OrderDoc | null) {
+  return moduleActionDecision({
+    actionPermission: `invoices.${action}`,
+    viewAllPermission: 'invoices.view_all',
+    permissions: permissions.value,
+    record: row || null,
+    parent: order || (row ? orders.value.find(item => item.id === row.order_id) : selectedOrder.value) || null,
+    currentUserEmail: appUser.value?.email || '',
+  })
+}
+
+function invoiceActionError(action: 'create' | 'edit' | 'delete', row?: InvoiceDoc | null) {
+  return permissionDecisionMessage(invoiceActionDecision(action, row), {
+    operation: `${action === 'create' ? 'tạo' : action === 'edit' ? 'sửa' : 'xóa'} hóa đơn`,
+    record: row?.invoice_number || row?.id || form.id || '(mới)',
+    status: row?.status || form.status || '',
+  })
+}
+
+function canEditInvoice(row: InvoiceDoc) { return invoiceActionDecision('edit', row).allowed }
+function canDeleteInvoice(row: InvoiceDoc) { return invoiceActionDecision('delete', row).allowed }
+
 async function loadRows(force = false, append = false) {
   if (append && (!hasMoreRows.value || loadingMore.value)) return
   if (append) loadingMore.value = true
@@ -99,7 +123,7 @@ function openDetail(row: InvoiceDoc) {
 }
 
 function openModal(row?: InvoiceDoc) {
-  if (row && !hasPermission('invoices.edit') && !hasPermission('*')) return showToast('Bạn không có quyền sửa hóa đơn.', 'error')
+  if (row && !canEditInvoice(row)) return showToast(invoiceActionError('edit', row), 'error')
   editing.value = row || null
   Object.assign(form, row ? { ...row } : {
     id: makeId('inv'),
@@ -119,11 +143,11 @@ function openModal(row?: InvoiceDoc) {
 }
 
 async function save() {
-  if (editing.value && !hasPermission('invoices.edit') && !hasPermission('*')) return showToast('Bạn không có quyền sửa hóa đơn.', 'error')
-  if (!editing.value && !hasPermission('invoices.create') && !hasPermission('*')) return showToast('Bạn không có quyền tạo hóa đơn.', 'error')
   if (!form.order_id) return showToast('Vui lòng chọn đơn hàng.', 'error')
   const order = selectedOrder.value
   if (!order) return showToast('Không tìm thấy đơn hàng.', 'error')
+  const action = editing.value ? 'edit' : 'create'
+  if (!invoiceActionDecision(action, editing.value, order).allowed) return showToast(invoiceActionError(action, editing.value), 'error')
 
   saving.value = true
   await withLoading(async () => {
@@ -137,7 +161,7 @@ async function save() {
         invoice_amount: toNumber(form.invoice_amount),
         created_by: editing.value?.created_by || appUser.value?.email || '',
       },
-      existingRecords: rows.value.filter(row => row.order_id === order.id),
+      existingRecords: await loadScopedInvoicesForOrders([order], true),
       actor: appUser.value?.email || '',
     })
 
@@ -148,14 +172,18 @@ async function save() {
     Object.assign(order, result.orderPatch)
     showModal.value = false
     showToast('Đã lưu hóa đơn và cập nhật trạng thái đơn hàng.', 'success')
-  }).catch(error => showToast(reportFirebaseError(error, 'Không lưu được hóa đơn. Toàn bộ thay đổi đã hoàn tác.'), 'error'))
+  }).catch(error => showToast(reportFirebaseError(error, 'Không lưu được hóa đơn. Toàn bộ thay đổi đã hoàn tác.', {
+    operation: `invoices.${action}`, record: form.id || form.order_id,
+    status: editing.value?.status || form.status, actionPermission: `invoices.${action}`,
+    scopePermission: 'invoices.view_all',
+  }), 'error'))
     .finally(() => { saving.value = false })
 }
 
 async function remove(row: InvoiceDoc) {
-  if (!hasPermission('invoices.delete') && !hasPermission('*')) return showToast('Bạn không có quyền xóa hóa đơn.', 'error')
   const order = orders.value.find(item => item.id === row.order_id)
   if (!order) return showToast('Không tìm thấy đơn hàng cha của hóa đơn.', 'error')
+  if (!invoiceActionDecision('delete', row, order).allowed) return showToast(invoiceActionError('delete', row), 'error')
   const confirmed = await askConfirm({
     title: 'Xóa hóa đơn',
     message: `Bạn chắc chắn muốn xóa hóa đơn ${row.invoice_number || row.order_code}?`,
@@ -168,13 +196,16 @@ async function remove(row: InvoiceDoc) {
       mode: 'delete',
       order,
       record: row,
-      existingRecords: rows.value.filter(item => item.order_id === order.id),
+      existingRecords: await loadScopedInvoicesForOrders([order], true),
       actor: appUser.value?.email || '',
     })
     rows.value = rows.value.filter(item => item.id !== row.id)
     Object.assign(order, result.orderPatch)
     showToast('Đã xóa hóa đơn và cập nhật trạng thái đơn hàng.', 'success')
-  }).catch(error => showToast(reportFirebaseError(error, 'Không xóa được hóa đơn. Toàn bộ thay đổi đã hoàn tác.'), 'error'))
+  }).catch(error => showToast(reportFirebaseError(error, 'Không xóa được hóa đơn. Toàn bộ thay đổi đã hoàn tác.', {
+    operation: 'invoices.delete', record: row.id, status: row.status,
+    actionPermission: 'invoices.delete', scopePermission: 'invoices.view_all',
+  }), 'error'))
 }
 
 onMounted(() => loadRows())
@@ -193,7 +224,7 @@ onMounted(() => loadRows())
         <table>
           <thead><tr><th>Đơn hàng</th><th>Số hóa đơn</th><th>Ngày</th><th>Công ty</th><th>Giá trị</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
-            <tr v-for="row in filtered" :key="row.id"><td>{{row.order_code}}</td><td>{{row.invoice_number||'-'}}</td><td>{{row.invoice_date}}</td><td>{{row.company_name}}</td><td>{{money(row.invoice_amount)}}</td><td><span class="badge">{{row.invoice_status}}</span></td><td><div class="action-buttons"><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button><button v-if="hasPermission('invoices.edit') || hasPermission('*')" class="btn-sm" @click="openModal(row)">Sửa</button><button v-if="hasPermission('invoices.delete') || hasPermission('*')" class="btn-sm btn-delete" @click="remove(row)">Xóa</button></div></td></tr>
+            <tr v-for="row in filtered" :key="row.id"><td>{{row.order_code}}</td><td>{{row.invoice_number||'-'}}</td><td>{{row.invoice_date}}</td><td>{{row.company_name}}</td><td>{{money(row.invoice_amount)}}</td><td><span class="badge">{{row.invoice_status}}</span></td><td><div class="action-buttons"><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button><button v-if="canEditInvoice(row)" class="btn-sm" @click="openModal(row)">Sửa</button><button v-if="canDeleteInvoice(row)" class="btn-sm btn-delete" @click="remove(row)">Xóa</button></div></td></tr>
             <tr v-if="!filtered.length"><td colspan="7" class="empty">Không có hóa đơn phù hợp.</td></tr>
           </tbody>
         </table>
