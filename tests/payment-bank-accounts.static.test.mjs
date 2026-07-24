@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
+// Regression boundary: existing payment permissions stay unchanged; the new
+// setup collection is readable for payment workflows and writable by admin only.
 test('payments page exposes transfer recipient setup without adding permission keys', () => {
   const page = readFileSync('pages/payments.vue', 'utf8')
   const permissions = readFileSync('constants/permissions.ts', 'utf8')
