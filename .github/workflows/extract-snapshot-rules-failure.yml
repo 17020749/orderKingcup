@@ -1,0 +1,35 @@
+name: Extract snapshot rules failure
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    if: github.event.pull_request.head.ref == 'agent/warehouse-request-snapshot-isolation'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/warehouse-request-snapshot-isolation
+          fetch-depth: 0
+      - name: Extract failed test context
+        shell: bash
+        run: |
+          grep -n -B 20 -A 45 "not ok" RULES_TEST_ERROR.txt > RULES_TEST_FAILURE_SUMMARY.txt || true
+          rm -f RULES_TEST_ERROR.txt
+          rm -f .github/workflows/diagnose-snapshot-rules.yml
+          rm -f .github/workflows/extract-snapshot-rules-failure.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Extract snapshot rules failure summary"
+          git push origin HEAD:agent/warehouse-request-snapshot-isolation
