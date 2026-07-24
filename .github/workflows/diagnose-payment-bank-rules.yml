@@ -1,0 +1,62 @@
+name: Diagnose payment bank rules
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: github.event.pull_request.head.ref == 'agent/payment-bank-accounts'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/payment-bank-accounts
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm install --global npm@10.9.2 --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run rules suite and capture concise failure
+        shell: bash
+        run: |
+          set +e
+          npm run test:rules > /tmp/rules.log 2>&1
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            rm -f .github/workflows/diagnose-payment-bank-rules.yml
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/workflows/diagnose-payment-bank-rules.yml
+            git commit -m "Remove payment bank rules diagnostic"
+            git push origin HEAD:agent/payment-bank-accounts
+            exit 0
+          fi
+          {
+            echo '=== MATCHED FAILURE LINES ==='
+            grep -n -B 12 -A 28 -E 'not ok|Syntax error|ERROR|Error:|Failed to load|Unexpected|AssertionError' /tmp/rules.log || true
+            echo '=== LOG TAIL ==='
+            tail -n 180 /tmp/rules.log
+          } > PAYMENT_RULES_ERROR.txt
+          rm -f .github/workflows/diagnose-payment-bank-rules.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PAYMENT_RULES_ERROR.txt .github/workflows/diagnose-payment-bank-rules.yml
+          git commit -m "Record payment bank rules failure"
+          git push origin HEAD:agent/payment-bank-accounts
+          exit "$status"
