@@ -1,0 +1,279 @@
+=== MATCHED FAILURE LINES ===
+1483-  ...
+1484-# Subtest: đối soát chạy ngầm chỉ ghi khi dữ liệu khóa thực sự lệch
+1485-ok 232 - đối soát chạy ngầm chỉ ghi khi dữ liệu khóa thực sự lệch
+1486-  ---
+1487-  duration_ms: 0.36563
+1488-  ...
+1489-# Subtest: thay chứng từ theo ID không làm trùng dữ liệu client
+1490-ok 233 - thay chứng từ theo ID không làm trùng dữ liệu client
+1491-  ---
+1492-  duration_ms: 0.297488
+1493-  ...
+1494-# Subtest: source thật dùng transaction nguyên tử và không còn saveDoc/softDeleteDoc ở ba page
+1495:not ok 234 - source thật dùng transaction nguyên tử và không còn saveDoc/softDeleteDoc ở ba page
+1496-  ---
+1497-  duration_ms: 4.161864
+1498-  location: '/home/runner/work/orderKingcup/orderKingcup/tests/order-relations.client.test.mjs:154:1'
+1499-  failureType: 'testCodeFailure'
+1500-  error: |-
+1501-    The input was expected to not match the regular expression /saveDoc\(/. Input:
+1502-    
+1503-    '<script setup lang="ts">\n' +
+1504-      "import { PAYMENT_METHODS, PAYMENT_STATUSES, PAYMENT_TYPES } from '~/constants/permissions'\n" +
+1505-      "import type { OrderDoc, PaymentDoc } from '~/types/models'\n" +
+1506-      "import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'\n" +
+1507-      "import { reportFirebaseError } from '~/utils/firebaseErrors'\n" +
+1508-      '// @ts-ignore Shared ESM helper is executed directly by Node client tests.\n' +
+1509-      "import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'\n" +
+1510-      '// @ts-ignore Shared ESM helper is executed directly by Node client tests.\n' +
+1511-      "import { appendUniqueRows } from '~/utils/cursorPagination.mjs'\n" +
+1512-      "import { toDateKey } from '~/utils/listFilters'\n" +
+1513-      '\n' +
+1514-      'type PaymentRow = PaymentDoc & {\n' +
+1515-      '  recipient_account_id?: string\n' +
+1516-      '  recipient_name?: string\n' +
+1517-      '  recipient_account_number?: string\n' +
+1518-      '  recipient_bank_name?: string\n' +
+1519-      '  sender_image_url?: string\n' +
+1520-      '}\n' +
+1521-      '\n' +
+1522-      'type PaymentBankAccount = {\n' +
+1523-      '  id: string\n' +
+--
+1751-      '  await loadBankAccounts()\n' +
+1752-      '}\n' +
+1753-      '\n' +
+1754-      'function editBankAccount(account: PaymentBankAccount) {\n' +
+1755-      '  if (!isAdmin.value) return\n' +
+1756-      '  bankAccountEditing.value = account\n' +
+1757-      '  Object.assign(bankAccountForm, {\n' +
+1758-      '    id: account.id,\n' +
+1759-      '    recipient_name: account.recipient_name,\n' +
+1760-      '    account_number: account.account_nu'... 19280 more characters
+1761-    
+1762-  code: 'ERR_ASSERTION'
+1763:  name: 'AssertionError'
+1764-  expected:
+1765-  actual: |-
+1766-    <script setup lang="ts">
+1767-    import { PAYMENT_METHODS, PAYMENT_STATUSES, PAYMENT_TYPES } from '~/constants/permissions'
+1768-    import type { OrderDoc, PaymentDoc } from '~/types/models'
+1769-    import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
+1770-    import { reportFirebaseError } from '~/utils/firebaseErrors'
+1771-    // @ts-ignore Shared ESM helper is executed directly by Node client tests.
+1772-    import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
+1773-    // @ts-ignore Shared ESM helper is executed directly by Node client tests.
+1774-    import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
+1775-    import { toDateKey } from '~/utils/listFilters'
+1776-    
+1777-    type PaymentRow = PaymentDoc & {
+1778-      recipient_account_id?: string
+1779-      recipient_name?: string
+1780-      recipient_account_number?: string
+1781-      recipient_bank_name?: string
+1782-      sender_image_url?: string
+1783-    }
+1784-    
+1785-    type PaymentBankAccount = {
+1786-      id: string
+1787-      recipient_name: string
+1788-      account_number: string
+1789-      bank_name: string
+1790-      status?: string
+1791-      active?: boolean
+--
+2926-# pass 330
+2927-# fail 1
+2928-# cancelled 0
+2929-# skipped 0
+2930-# todo 0
+2931-# duration_ms 69378.222542
+2932-[33m[1m⚠ [22m[39m Script exited unsuccessfully (code 1)
+2933-[36m[1mi  emulators:[22m[39m Shutting down emulators.
+2934-[36m[1mi  firestore:[22m[39m Stopping Firestore Emulator
+2935-[36m[1mi  hub:[22m[39m Stopping emulator hub
+2936-[36m[1mi  logging:[22m[39m Stopping Logging Emulator
+2937-
+2938:[1m[31mError:[39m[22m Script "[1mnode --test --test-concurrency=1 tests/order-code.test.mjs tests/business-date.test.mjs tests/cursor-pagination.test.mjs tests/firestore.rules.test.mjs tests/activity-notifications.rules.test.mjs tests/warehouse.transactions.test.mjs tests/warehouse-cost.rules.test.mjs tests/warehouse-lot-allocation.static.test.mjs tests/warehouse-client-payload.static.test.mjs tests/warehouse-export-client.runtime.test.mjs tests/permission-audit.client.test.mjs tests/authorization-source.client.test.mjs tests/permission-matrix.client.test.mjs tests/order-items-by-order.client.test.mjs tests/order-items-by-order.rules.test.mjs tests/order-atomic-save.client.test.mjs tests/order-atomic-save.rules.test.mjs tests/order-item-dependencies.client.test.mjs tests/order-item-dependencies.rules.test.mjs tests/order-printing-delete-lock.rules.test.mjs tests/order-printing-delete-lock.client.test.mjs tests/order-export-delete-lock.client.test.mjs tests/order-export-delete-lock.rules.test.mjs tests/order-relations.client.test.mjs tests/order-relations.rules.test.mjs tests/order-relation-reconcile.rules.test.mjs tests/export-lifecycle.client.test.mjs tests/export-lifecycle.rules.test.mjs tests/runtime-export-sync.client.test.mjs tests/firebase-error-message.static.test.mjs tests/printing-owner.rules.test.mjs tests/printing-permission.static.test.mjs tests/customer-create-flow.test.mjs tests/export-print-permission.test.mjs tests/shipment-permission-flow.client.test.mjs tests/shipment-permissions.rules.test.mjs tests/unified-permission-decisions.client.test.mjs tests/unified-permission-matrix.rules.test.mjs tests/export-request-permission-matrix.rules.test.mjs tests/bus-transport-permissions.rules.test.mjs tests/bus-transport-permission-matrix.client.test.mjs tests/warehouse-print-menu.static.test.mjs tests/bus-transport-followup.static.test.mjs[22m" exited with code 1
+=== LOG TAIL ===
+  duration_ms: 0.415425
+  ...
+# Subtest: warehouse cost transaction shortage message includes product warehouse logo and quantities
+ok 300 - warehouse cost transaction shortage message includes product warehouse logo and quantities
+  ---
+  duration_ms: 0.242214
+  ...
+# Subtest: Kho không đọc được chi tiết phiếu nhập có giá vốn
+ok 301 - Kho không đọc được chi tiết phiếu nhập có giá vốn
+  ---
+  duration_ms: 2113.316077
+  ...
+# Subtest: Người có quyền nhập kho đọc được giá của phiếu nhập
+ok 302 - Người có quyền nhập kho đọc được giá của phiếu nhập
+  ---
+  duration_ms: 69.874473
+  ...
+# [2026-07-24T08:30:17.731Z]  @firebase/firestore: Firestore (11.10.0): GrpcConnection RPC 'Write' stream 0x1db37f54 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L2904:40 for 'update' @ L2904, false for 'update' @ L2904
+# Subtest: Kho chỉ đọc cấu hình chiến lược nhưng không sửa được
+ok 303 - Kho chỉ đọc cấu hình chiến lược nhưng không sửa được
+  ---
+  duration_ms: 65.033107
+  ...
+# Subtest: Admin sửa được cấu hình xuất kho
+ok 304 - Admin sửa được cấu hình xuất kho
+  ---
+  duration_ms: 56.819826
+  ...
+# Subtest: Kho được cập nhật số lượng và metadata lô trong cùng operation hợp lệ
+ok 305 - Kho được cập nhật số lượng và metadata lô trong cùng operation hợp lệ
+  ---
+  duration_ms: 73.947232
+  ...
+# Subtest: Dòng phiếu xuất có parent hợp lệ chỉ cần mã lô và số lượng, không cần giá nhập
+ok 306 - Dòng phiếu xuất có parent hợp lệ chỉ cần mã lô và số lượng, không cần giá nhập
+  ---
+  duration_ms: 47.519748
+  ...
+# Subtest: chuyển kho dùng logo nguồn trống và logo nhận A độc lập
+ok 307 - chuyển kho dùng logo nguồn trống và logo nhận A độc lập
+  ---
+  duration_ms: 1.497464
+  ...
+# Subtest: khóa tồn hàng trơn dùng no_logo thay vì logo A của kho nhận
+ok 308 - khóa tồn hàng trơn dùng no_logo thay vì logo A của kho nhận
+  ---
+  duration_ms: 7.067527
+  ...
+# Subtest: preflight đọc tồn hàng trơn ở kho xuất, không đọc logo A của kho nhận
+ok 309 - preflight đọc tồn hàng trơn ở kho xuất, không đọc logo A của kho nhận
+  ---
+  duration_ms: 0.384098
+  ...
+# Subtest: cộng gộp nhiều dòng cùng sản phẩm, kho và logo trước khi kiểm tra tồn
+ok 310 - cộng gộp nhiều dòng cùng sản phẩm, kho và logo trước khi kiểm tra tồn
+  ---
+  duration_ms: 0.278008
+  ...
+# Subtest: lỗi thiếu tồn nêu sản phẩm, kho, logo, tồn, cần, thiếu và có tồn hay không
+ok 311 - lỗi thiếu tồn nêu sản phẩm, kho, logo, tồn, cần, thiếu và có tồn hay không
+  ---
+  duration_ms: 0.713895
+  ...
+# Subtest: thông báo nói rõ không có tồn khi số lượng bằng 0
+ok 312 - thông báo nói rõ không có tồn khi số lượng bằng 0
+  ---
+  duration_ms: 0.17926
+  ...
+# Subtest: Nuxt auto-import dùng wrapper có preflight trước cost transaction
+ok 313 - Nuxt auto-import dùng wrapper có preflight trước cost transaction
+  ---
+  duration_ms: 1.007106
+  ...
+# Subtest: lot engine supports configured issue policies
+ok 314 - lot engine supports configured issue policies
+  ---
+  duration_ms: 1.212986
+  ...
+# Subtest: export transaction stores only lot references and quantities
+ok 315 - export transaction stores only lot references and quantities
+  ---
+  duration_ms: 0.366952
+  ...
+# Subtest: priced fields are limited to import transaction payloads
+ok 316 - priced fields are limited to import transaction payloads
+  ---
+  duration_ms: 0.918603
+  ...
+# Subtest: product catalog removes legacy cost_price and settings provides migration
+ok 317 - product catalog removes legacy cost_price and settings provides migration
+  ---
+  duration_ms: 0.208063
+  ...
+# Subtest: inventory cost details require import.view and join prices only in the viewer
+ok 318 - inventory cost details require import.view and join prices only in the viewer
+  ---
+  duration_ms: 0.172059
+  ...
+# Subtest: warehouse users can load inventory without reading priced import documents
+ok 319 - warehouse users can load inventory without reading priced import documents
+  ---
+  duration_ms: 0.177718
+  ...
+# Subtest: order logo color is saved as metadata and shown beside logo
+ok 320 - order logo color is saved as metadata and shown beside logo
+  ---
+  duration_ms: 0.232761
+  ...
+# Subtest: warehouse quantity identity remains product plus logo only
+ok 321 - warehouse quantity identity remains product plus logo only
+  ---
+  duration_ms: 0.261995
+  ...
+# Subtest: printing source order includes only products with valid logo lines
+ok 322 - printing source order includes only products with valid logo lines
+  ---
+  duration_ms: 0.362395
+  ...
+# Subtest: inventory keeps zero stock after import or transfer-in history
+ok 323 - inventory keeps zero stock after import or transfer-in history
+  ---
+  duration_ms: 0.253902
+  ...
+# Subtest: inventory ignores deleted or cancelled import sources when validating inbound history
+ok 324 - inventory ignores deleted or cancelled import sources when validating inbound history
+  ---
+  duration_ms: 0.231558
+  ...
+# Subtest: inventory does not show a movement-only outbound row
+ok 325 - inventory does not show a movement-only outbound row
+  ---
+  duration_ms: 0.255104
+  ...
+# Subtest: warehouse request page prints entirely from request snapshots
+ok 326 - warehouse request page prints entirely from request snapshots
+  ---
+  duration_ms: 1.557484
+  ...
+# Subtest: warehouse print menu has three choices without order or customer reads
+ok 327 - warehouse print menu has three choices without order or customer reads
+  ---
+  duration_ms: 0.255294
+  ...
+# Subtest: request and parcel print modals use snapshot recipient data only
+ok 328 - request and parcel print modals use snapshot recipient data only
+  ---
+  duration_ms: 0.987576
+  ...
+# Subtest: warehouse request actions have a defined pure status patch helper
+ok 329 - warehouse request actions have a defined pure status patch helper
+  ---
+  duration_ms: 0.334163
+  ...
+# Subtest: V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction chạy đồng thời
+ok 330 - V7.5 cùng operation id chỉ áp tồn một lần khi hai transaction chạy đồng thời
+  ---
+  duration_ms: 3103.136653
+  ...
+# Subtest: V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tại cùng phiên bản
+ok 331 - V7.5 revision chỉ cho một transaction cập nhật phiếu xuất tại cùng phiên bản
+  ---
+  duration_ms: 921.873553
+  ...
+1..331
+# tests 331
+# suites 0
+# pass 330
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 69378.222542
+[33m[1m⚠ [22m[39m Script exited unsuccessfully (code 1)
+[36m[1mi  emulators:[22m[39m Shutting down emulators.
+[36m[1mi  firestore:[22m[39m Stopping Firestore Emulator
+[36m[1mi  hub:[22m[39m Stopping emulator hub
+[36m[1mi  logging:[22m[39m Stopping Logging Emulator
+
+[1m[31mError:[39m[22m Script "[1mnode --test --test-concurrency=1 tests/order-code.test.mjs tests/business-date.test.mjs tests/cursor-pagination.test.mjs tests/firestore.rules.test.mjs tests/activity-notifications.rules.test.mjs tests/warehouse.transactions.test.mjs tests/warehouse-cost.rules.test.mjs tests/warehouse-lot-allocation.static.test.mjs tests/warehouse-client-payload.static.test.mjs tests/warehouse-export-client.runtime.test.mjs tests/permission-audit.client.test.mjs tests/authorization-source.client.test.mjs tests/permission-matrix.client.test.mjs tests/order-items-by-order.client.test.mjs tests/order-items-by-order.rules.test.mjs tests/order-atomic-save.client.test.mjs tests/order-atomic-save.rules.test.mjs tests/order-item-dependencies.client.test.mjs tests/order-item-dependencies.rules.test.mjs tests/order-printing-delete-lock.rules.test.mjs tests/order-printing-delete-lock.client.test.mjs tests/order-export-delete-lock.client.test.mjs tests/order-export-delete-lock.rules.test.mjs tests/order-relations.client.test.mjs tests/order-relations.rules.test.mjs tests/order-relation-reconcile.rules.test.mjs tests/export-lifecycle.client.test.mjs tests/export-lifecycle.rules.test.mjs tests/runtime-export-sync.client.test.mjs tests/firebase-error-message.static.test.mjs tests/printing-owner.rules.test.mjs tests/printing-permission.static.test.mjs tests/customer-create-flow.test.mjs tests/export-print-permission.test.mjs tests/shipment-permission-flow.client.test.mjs tests/shipment-permissions.rules.test.mjs tests/unified-permission-decisions.client.test.mjs tests/unified-permission-matrix.rules.test.mjs tests/export-request-permission-matrix.rules.test.mjs tests/bus-transport-permissions.rules.test.mjs tests/bus-transport-permission-matrix.client.test.mjs tests/warehouse-print-menu.static.test.mjs tests/bus-transport-followup.static.test.mjs[22m" exited with code 1
