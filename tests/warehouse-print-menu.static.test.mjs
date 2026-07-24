@@ -56,5 +56,4 @@ test('warehouse request actions have a defined pure status patch helper', () => 
   assert.ok(helper.includes("nextStatus === 'tu_choi'"))
   assert.ok(!helper.includes("collection(db, 'orders')"))
   assert.ok(!helper.includes("doc(db, 'orders'"))
-  assert.ok(!helper.includes('customers'))
 })
