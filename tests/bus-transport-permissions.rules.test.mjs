@@ -63,9 +63,20 @@ function request(id = 'request-1', overrides = {}) {
     request_id: 'YCXK-001',
     order_id: 'order-1',
     order_code: 'DH-001',
-    customer_name: 'Tên dự phòng',
+    customer_id: 'customer-1',
+    customer_name: 'Khách hàng chuẩn',
+    receiver_name: 'Khách hàng chuẩn',
+    receiver_phone: '0909000000',
+    receiver_address: 'Địa chỉ giao hàng chuẩn',
+    request_snapshot_version: 1,
+    source_items: {},
     status: 'cho_xu_ly',
-    payload_json: JSON.stringify({ items: [{ product_code: 'SP-001', product_name: 'Cốc giấy', logo: 'KINGCUP', export_quantity: 100 }] }),
+    payload_json: JSON.stringify({
+      receiver_name: 'Khách hàng chuẩn',
+      receiver_phone: '0909000000',
+      receiver_address: 'Địa chỉ giao hàng chuẩn',
+      items: [{ product_code: 'SP-001', product_name: 'Cốc giấy', logo: 'KINGCUP', export_quantity: 100 }],
+    }),
     requested_by: 'sale@example.com',
     order_owner_email: 'sale@example.com',
     order_created_by: 'sale@example.com',
@@ -139,18 +150,19 @@ beforeEach(async () => {
 
 after(async () => env.cleanup())
 
-test('bus_transport.view đọc module, yêu cầu, đơn và get đúng khách hàng', async () => {
+test('bus_transport.view chỉ đọc module và snapshot yêu cầu, không đọc đơn hoặc khách hàng', async () => {
   const db = env.authenticatedContext(VIEWER, { email: VIEWER }).firestore()
   await assertSucceeds(getDocs(collection(db, 'bus_transport_orders')))
   await assertSucceeds(getDocs(collection(db, 'order_export_requests')))
-  await assertSucceeds(getDocs(collection(db, 'orders')))
-  await assertSucceeds(getDoc(doc(db, 'customers', 'customer-1')))
+  await assertFails(getDocs(collection(db, 'orders')))
+  await assertFails(getDoc(doc(db, 'orders', 'order-1')))
+  await assertFails(getDoc(doc(db, 'customers', 'customer-1')))
   await assertFails(getDocs(collection(db, 'customers')))
 })
 
-test('export.print được get khách hàng để in nhưng không được list bảng khách hàng', async () => {
+test('export.print không tự cấp quyền đọc bảng khách hàng', async () => {
   const db = env.authenticatedContext(PRINTER, { email: PRINTER }).firestore()
-  await assertSucceeds(getDoc(doc(db, 'customers', 'customer-1')))
+  await assertFails(getDoc(doc(db, 'customers', 'customer-1')))
   await assertFails(getDocs(collection(db, 'customers')))
 })
 
@@ -210,7 +222,7 @@ test('bus_transport.delete chỉ xóa mềm, không được xóa cứng', async
   await assertFails(deleteDoc(doc(db, 'bus_transport_orders', 'bus-1')))
 })
 
-test('quyền nhà xe chỉ đọc nguồn, không được ghi đơn, khách hàng hoặc yêu cầu xuất', async () => {
+test('quyền nhà xe không được ghi đơn, khách hàng hoặc yêu cầu xuất', async () => {
   const db = env.authenticatedContext(CREATOR, { email: CREATOR }).firestore()
   await assertFails(updateDoc(doc(db, 'orders', 'order-1'), { note: 'không được phép' }))
   await assertFails(updateDoc(doc(db, 'customers', 'customer-1'), { phone: '000' }))
