@@ -1,0 +1,41 @@
+name: Run payment bank account patch
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.ref == 'agent/payment-bank-accounts'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/payment-bank-accounts
+          fetch-depth: 0
+
+      - name: Extract and apply guarded patch
+        shell: bash
+        run: |
+          awk '/cat > \/tmp\/apply.py/{copy=1; next} /^          PY$/{copy=0} copy { sub(/^          /, ""); print }' .github/workflows/apply-payment-bank-accounts.yml > /tmp/apply.py
+          python /tmp/apply.py
+
+      - name: Commit intended files and remove temporary workflows
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-payment-bank-accounts.yml
+          rm -f .github/workflows/run-payment-bank-accounts.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pages/payments.vue firestore.rules tests/payment-bank-accounts.static.test.mjs tests/payment-bank-accounts.rules.test.mjs .github/workflows/apply-payment-bank-accounts.yml .github/workflows/run-payment-bank-accounts.yml
+          git commit -m "Add transfer recipient bank account setup"
+          git push origin HEAD:agent/payment-bank-accounts
