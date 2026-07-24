@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
+// Security boundary: Warehouse and bus transport operate on request snapshots,
+// while Firestore Rules alone validate the original order-item references.
 function matchBlock(source, start, end) {
   const from = source.indexOf(start)
   assert.notEqual(from, -1, `Missing block start: ${start}`)
