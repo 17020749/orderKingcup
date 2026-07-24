@@ -28,17 +28,20 @@ test('CRUD nhà xe chỉ phụ thuộc page và quyền xem của module mới',
     for (const unrelated of [
       'orders.view',
       'orders.view_all',
+      'customers.view',
+      'customers.view_all',
       'shipments.view',
       'shipments.view_all',
       'export.view',
       'page.exports',
+      'page.warehouse_export_requests',
     ]) {
       assert.equal(grants.has(unrelated), false, `${action} không được tự cấp ${unrelated}`)
     }
   }
 })
 
-test('permission catalog có đủ quyền mới và không tạo view_all', () => {
+test('permission catalog giữ nguyên namespace, không tạo view_all', () => {
   const source = readFileSync('constants/permissions.ts', 'utf8')
   for (const key of [
     'page.bus_transport',
@@ -52,10 +55,12 @@ test('permission catalog có đủ quyền mới và không tạo view_all', () 
   assert.doesNotMatch(source, /bus_transport\.view_all/)
 })
 
-test('rule nguồn chỉ mở read phiếu xuất cho module mới, không mở write', () => {
+test('rules chỉ mở đọc nguồn cần thiết và không mở ghi collection cũ', () => {
   const rules = readFileSync('firestore.rules', 'utf8')
   assert.match(rules, /match \/bus_transport_orders\/\{docId\}/)
   assert.match(rules, /allow read: if hasPerm\('bus_transport\.view'\)/)
-  assert.match(rules, /export\.view', 'export_requests\.release', 'export_requests\.process', 'bus_transport\.view'/)
+  assert.match(rules, /order_export_requests[\s\S]*bus_transport\.view/)
+  assert.match(rules, /match \/orders\/\{docId\}[\s\S]*hasPerm\('bus_transport\.view'\)/)
+  assert.match(rules, /match \/customers\/\{docId\}[\s\S]*hasAnyPerm\(\['export\.print', 'bus_transport\.view'\]\)/)
   assert.doesNotMatch(rules, /allow (create|update): if hasPerm\('bus_transport\.view'\)/)
 })
