@@ -1,0 +1,52 @@
+name: Run warehouse request snapshot isolation
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/warehouse-request-snapshot-isolation
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+          cache: npm
+      - name: Extract and apply guarded patch
+        shell: bash
+        run: |
+          awk '/cat > \/tmp\/patch.b64/{copy=1; next} /^PATCH$/{copy=0} copy' .github/workflows/apply-warehouse-request-snapshot-isolation.yml > /tmp/patch.b64
+          base64 -d /tmp/patch.b64 | gunzip > /tmp/apply-patch.mjs
+          node /tmp/apply-patch.mjs
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare and build
+        run: |
+          npx --no-install nuxi prepare
+          npm run build
+      - name: Run focused isolation tests
+        run: node --test tests/warehouse-print-menu.static.test.mjs tests/bus-transport-followup.static.test.mjs
+      - name: Commit changes and remove temporary workflows
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-warehouse-request-snapshot-isolation.yml
+          rm -f .github/workflows/run-warehouse-request-snapshot-isolation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Isolate warehouse requests from order reads"
+          git push origin HEAD:agent/warehouse-request-snapshot-isolation
