@@ -21,8 +21,9 @@ test('printing suppliers are selected and stored per print item', () => {
 
 test('printing permission and rules dependencies remain unchanged', () => {
   const page = readFileSync('pages/printing.vue', 'utf8')
-  assert.match(page, /printing\.create/)
-  assert.match(page, /printing\.edit/)
-  assert.match(page, /printing\.delete/)
+  assert.match(page, /actionPermission: `printing\.\$\{action\}`/)
+  assert.match(page, /const canCreate = computed/)
+  assert.match(page, /function canEditOrder/)
+  assert.match(page, /function canDeleteOrder/)
   assert.match(page, /loadSuppliers/)
 })
