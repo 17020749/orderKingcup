@@ -25,6 +25,8 @@ type PrintStatus = 'Đang in' | 'Cảnh báo' | 'Quá hạn' | 'Hoàn thành'
 type PrintLineForm = {
   id?: string
   source_order_item_id: string
+  supplier_id: string
+  supplier_name: string
   logo: string
   logo_color: string
   print_quantity: number
@@ -77,14 +79,12 @@ const form = reactive<{
   order_id: string
   order_code: string
   am_code: string
-  supplier_id: string
   note: string
   products: PrintProductForm[]
 }>({
   order_id: '',
   order_code: '',
   am_code: '',
-  supplier_id: '',
   note: '',
   products: [],
 })
@@ -213,9 +213,11 @@ const enrichedRows = computed(() => rows.value.map(order => {
     .filter(item => !isCompleted(item.is_completed))
     .map(item => toEpoch(item.expected_done_at))
     .filter(epoch => !Number.isNaN(epoch))
+  const supplierNames = [...new Set(detailItems.map(item => String(item.supplier_name || '').trim()).filter(Boolean))]
   return {
     ...order,
     detailItems,
+    supplier_summary: supplierNames.join(', '),
     print_status: orderStatus(detailItems),
     total_print_quantity: detailItems.reduce((sum, item) => sum + toNumber(item.print_quantity), 0),
     total_actual_quantity: detailItems.reduce((sum, item) => sum + toNumber(item.actual_print_quantity), 0),
@@ -230,10 +232,10 @@ const filtered = computed(() => {
     if (statusFilter.value && row.print_status !== statusFilter.value) return false
     if (!queryText) return true
     const itemText = row.detailItems.map(item =>
-      `${item.product_code || ''} ${item.product_name || ''} ${item.logo || ''} ${item.logo_color || ''}`,
+      `${item.product_code || ''} ${item.product_name || ''} ${item.supplier_name || ''} ${item.logo || ''} ${item.logo_color || ''}`,
     ).join(' ')
     return normalizeText(
-      `${row.order_code} ${row.am_code || ''} ${row.supplier_name || ''} ${row.note || ''} ${row.created_by || ''} ${itemText}`,
+      `${row.order_code} ${row.am_code || ''} ${row.note || ''} ${row.created_by || ''} ${itemText}`,
     ).includes(queryText)
   })
 })
@@ -251,10 +253,12 @@ const summary = computed(() => {
 
 const selectedItems = computed(() => selected.value ? itemsForOrder(selected.value) : [])
 
-function blankLine(item?: Partial<PrintOrderItemDoc>): PrintLineForm {
+function blankLine(item?: Partial<PrintOrderItemDoc>, fallbackSupplierId = '', fallbackSupplierName = ''): PrintLineForm {
   return {
     id: item?.id,
     source_order_item_id: String(item?.source_order_item_id || ''),
+    supplier_id: String(item?.supplier_id || fallbackSupplierId || ''),
+    supplier_name: String(item?.supplier_name || fallbackSupplierName || ''),
     logo: String(item?.logo || ''),
     logo_color: String(item?.logo_color || ''),
     print_quantity: toNumber(item?.print_quantity),
@@ -267,29 +271,29 @@ function blankLine(item?: Partial<PrintOrderItemDoc>): PrintLineForm {
   }
 }
 
-function blankProductGroup(item?: Partial<PrintOrderItemDoc>): PrintProductForm {
+function blankProductGroup(item?: Partial<PrintOrderItemDoc>, fallbackSupplierId = '', fallbackSupplierName = ''): PrintProductForm {
   return {
     key: makeId('print_group'),
     product_id: String(item?.product_id || ''),
     use_logo: false,
     logo_lines: [],
-    ...blankLine(item),
+    ...blankLine(item, fallbackSupplierId, fallbackSupplierName),
   }
 }
 
-function groupsFromItems(orderItems: PrintOrderItemDoc[]) {
+function groupsFromItems(orderItems: PrintOrderItemDoc[], fallbackSupplierId = '', fallbackSupplierName = '') {
   const result: PrintProductForm[] = []
   const logoGroups = new Map<string, PrintProductForm>()
 
   orderItems.forEach(item => {
     if (!item.logo) {
-      result.push(blankProductGroup(item))
+      result.push(blankProductGroup(item, fallbackSupplierId, fallbackSupplierName))
       return
     }
     const productKey = item.source_order_item_id || item.product_id || item.product_code || item.id
     let group = logoGroups.get(productKey)
     if (!group) {
-      group = blankProductGroup(item)
+      group = blankProductGroup(item, fallbackSupplierId, fallbackSupplierName)
       group.id = undefined
       group.logo = ''
       group.print_quantity = 0
@@ -303,7 +307,7 @@ function groupsFromItems(orderItems: PrintOrderItemDoc[]) {
       logoGroups.set(productKey, group)
       result.push(group)
     }
-    group.logo_lines.push(blankLine(item))
+    group.logo_lines.push(blankLine(item, fallbackSupplierId, fallbackSupplierName))
   })
   return result.length ? result : [blankProductGroup()]
 }
@@ -354,9 +358,10 @@ function resetForm(order?: PrintOrderDoc) {
     || ''
   form.order_code = order?.order_code || ''
   form.am_code = order?.am_code || String(appUser.value?.user_code || '').trim().toUpperCase()
-  form.supplier_id = order?.supplier_id || ''
   form.note = order?.note || ''
-  form.products = order ? groupsFromItems(itemsForOrder(order)) : []
+  form.products = order
+    ? groupsFromItems(itemsForOrder(order), order.supplier_id || '', order.supplier_name || '')
+    : []
 }
 
 function openCreateModal() {
@@ -396,6 +401,10 @@ function collectItems(): PrintItemInput[] {
     if (!product) throw new Error(`Sản phẩm ${productIndex + 1}: vui lòng chọn sản phẩm.`)
 
     const appendLine = (line: PrintLineForm, lineLabel: string, logo = '') => {
+      const supplier = suppliers.value.find(row => row.id === line.supplier_id)
+        || (line.supplier_id
+          ? ({ id: line.supplier_id, name: line.supplier_name || '' } as SupplierDoc)
+          : null)
       if (toNumber(line.print_quantity) <= 0) {
         throw new Error(`${lineLabel}: số lượng in phải lớn hơn 0.`)
       }
@@ -406,6 +415,7 @@ function collectItems(): PrintItemInput[] {
         id: line.id,
         source_order_item_id: line.source_order_item_id || group.source_order_item_id,
         product,
+        supplier,
         logo,
         logo_color: line.logo_color,
         print_quantity: toNumber(line.print_quantity),
@@ -454,16 +464,11 @@ async function submitForm() {
   saving.value = true
   try {
     const isEditing = !!editing.value
-    const supplier = suppliers.value.find(row => row.id === form.supplier_id)
-      || (editing.value && form.supplier_id === editing.value.supplier_id
-        ? ({ id: editing.value.supplier_id, name: editing.value.supplier_name || '' } as SupplierDoc)
-        : null)
     const result = await savePrintOrder({
       order: editing.value,
       order_id: form.order_id,
       order_code: form.order_code,
       am_code: form.am_code,
-      supplier,
       note: form.note,
       items: printItems,
       existingItems: editing.value ? itemsForOrder(editing.value) : [],
@@ -603,7 +608,7 @@ onBeforeUnmount(() => {
             <tr>
               <th>Mã đơn hàng</th>
               <th>Mã AM</th>
-              <th>Nhà cung cấp</th>
+              <th>NCC theo dòng</th>
               <th>Tiến độ dòng</th>
               <th>SL dự kiến</th>
               <th>SL thực tế</th>
@@ -616,7 +621,7 @@ onBeforeUnmount(() => {
             <tr v-for="row in filtered" :key="row.id">
               <td><b>{{ row.order_code }}</b><div class="small subtle">{{ row.created_by || '-' }}</div></td>
               <td>{{ row.am_code || '-' }}</td>
-              <td>{{ row.supplier_name || '-' }}</td>
+              <td>{{ row.supplier_summary || '-' }}</td>
               <td><b>{{ row.completed_count }}/{{ row.detailItems.length }}</b> dòng</td>
               <td>{{ quantityText(row.total_print_quantity) }}</td>
               <td>{{ quantityText(row.total_actual_quantity) }}</td>
@@ -661,10 +666,6 @@ onBeforeUnmount(() => {
           <label>Mã AM</label>
           <input v-model="form.am_code" class="input" placeholder="Nhập mã AM" />
         </div>
-        <div class="form-group">
-          <label>Nhà cung cấp</label>
-          <SearchableSelect v-model="form.supplier_id" :options="supplierOptions" placeholder="Tìm và chọn nhà cung cấp" />
-        </div>
       </div>
 
       <div class="form-group" style="margin-top: 12px">
@@ -686,6 +687,10 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-if="!group.use_logo" class="print-fields-grid">
+          <div class="form-group">
+            <label>Nhà cung cấp</label>
+            <SearchableSelect v-model="group.supplier_id" :options="supplierOptions" placeholder="Chọn nhà cung cấp" @change="group.supplier_name = suppliers.find(row => row.id === group.supplier_id)?.name || ''" />
+          </div>
           <div class="form-group"><label>SL cần in</label><input :value="group.print_quantity" class="input readonly-field" readonly /></div>
           <div class="form-group"><label>SL in thực tế</label><input v-model.number="group.actual_print_quantity" class="input" type="number" min="0" step="1" /></div>
           <div class="form-group"><label>Bắt đầu in</label><input v-model="group.print_started_at" class="input" type="datetime-local" /></div>
@@ -698,9 +703,10 @@ onBeforeUnmount(() => {
           <div class="logo-mode-note">Sản phẩm, logo, màu và số lượng được lấy tự động từ đơn hàng.</div>
           <div class="table-wrap">
             <table class="print-logo-table">
-              <thead><tr><th>Logo</th><th>Màu logo</th><th>SL cần in</th><th>SL in thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Ghi chú dòng</th><th>Hoàn thành</th></tr></thead>
+              <thead><tr><th>Nhà cung cấp</th><th>Logo</th><th>Màu logo</th><th>SL cần in</th><th>SL in thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Ghi chú dòng</th><th>Hoàn thành</th></tr></thead>
               <tbody>
                 <tr v-for="(line, logoIndex) in group.logo_lines" :key="line.id || logoIndex">
+                  <td><SearchableSelect v-model="line.supplier_id" :options="supplierOptions" placeholder="Chọn nhà cung cấp" @change="line.supplier_name = suppliers.find(row => row.id === line.supplier_id)?.name || ''" /></td>
                   <td><input :value="line.logo" class="input readonly-field" readonly /></td>
                   <td><input v-model="line.logo_color" class="input" placeholder="VD: Đỏ, xanh navy..." /></td>
                   <td><input :value="line.print_quantity" class="input readonly-field" readonly /></td>
@@ -710,7 +716,7 @@ onBeforeUnmount(() => {
                   <td><input v-model="line.note" class="input" placeholder="Ghi chú" /></td>
                   <td class="check-cell"><input v-model="line.is_completed" type="checkbox" /></td>
                 </tr>
-                <tr v-if="!group.logo_lines.length"><td colspan="8" class="empty">Đơn hàng chưa có dòng logo hợp lệ.</td></tr>
+                <tr v-if="!group.logo_lines.length"><td colspan="9" class="empty">Đơn hàng chưa có dòng logo hợp lệ.</td></tr>
               </tbody>
             </table>
           </div>
@@ -729,7 +735,6 @@ onBeforeUnmount(() => {
       <div class="detail-grid">
         <div class="detail-item"><label>Mã đơn hàng</label><strong>{{ selected.order_code }}</strong></div>
         <div class="detail-item"><label>Mã AM</label><strong>{{ selected.am_code || '-' }}</strong></div>
-        <div class="detail-item"><label>Nhà cung cấp</label><strong>{{ selected.supplier_name || '-' }}</strong></div>
         <div class="detail-item"><label>Người lập tiến độ</label><strong>{{ selected.created_by || '-' }}</strong></div>
         <div class="detail-item"><label>Ngày tạo</label><strong>{{ formatDateTime(selected.created_at) || '-' }}</strong></div>
         <div class="detail-item"><label>Ghi chú</label><strong>{{ selected.note || '-' }}</strong></div>
@@ -737,11 +742,12 @@ onBeforeUnmount(() => {
 
       <div class="table-wrap">
         <table class="printing-detail-table">
-          <thead><tr><th>Sản phẩm</th><th>Mã SP</th><th>Logo</th><th>Màu logo</th><th>SL in</th><th>SL thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Hoàn thành lúc</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead>
+          <thead><tr><th>Sản phẩm</th><th>Mã SP</th><th>Nhà cung cấp</th><th>Logo</th><th>Màu logo</th><th>SL in</th><th>SL thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Hoàn thành lúc</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead>
           <tbody>
             <tr v-for="item in selectedItems" :key="item.id">
               <td>{{ item.product_name || '-' }}</td>
               <td><b>{{ item.product_code || '-' }}</b></td>
+              <td>{{ item.supplier_name || '-' }}</td>
               <td><span v-if="item.logo" class="badge blue">{{ item.logo }}</span><span v-else>-</span></td>
               <td>{{ item.logo_color || '-' }}</td>
               <td>{{ quantityText(item.print_quantity) }}</td>
@@ -752,7 +758,7 @@ onBeforeUnmount(() => {
               <td><span class="badge" :class="statusClass(itemStatus(item))">{{ itemStatus(item) }}</span></td>
               <td>{{ item.note || '-' }}</td>
             </tr>
-            <tr v-if="!selectedItems.length"><td colspan="11" class="empty">Đơn in này chưa có sản phẩm.</td></tr>
+            <tr v-if="!selectedItems.length"><td colspan="12" class="empty">Đơn in này chưa có sản phẩm.</td></tr>
           </tbody>
         </table>
       </div>
@@ -775,12 +781,12 @@ onBeforeUnmount(() => {
 .printing-toolbar .input { max-width: 720px; }
 .printing-toolbar .select { width: 220px; }
 .printing-table { min-width: 1320px; }
-.printing-header-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.print-fields-grid { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)) auto; gap: 10px; align-items: end; margin-top: 14px; }
+.printing-header-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.print-fields-grid { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)) auto; gap: 10px; align-items: end; margin-top: 14px; }
 .complete-checkbox { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 10px; font-weight: 800; white-space: nowrap; }
-.print-logo-table { min-width: 1400px; }
+.print-logo-table { min-width: 1650px; }
 .print-source-empty { margin-top: 12px; border: 1px dashed var(--line); border-radius: 12px; }
-.printing-detail-table { min-width: 1650px; }
+.printing-detail-table { min-width: 1850px; }
 .check-cell { text-align: center; vertical-align: middle; }
 .check-cell input, .complete-checkbox input { width: 18px; height: 18px; }
 @media (max-width: 1180px) {

@@ -19,6 +19,7 @@ export type PrintItemInput = {
   id?: string
   source_order_item_id?: string
   product: ProductDoc
+  supplier?: SupplierDoc | null
   logo?: string
   logo_color?: string
   print_quantity: number
@@ -35,7 +36,6 @@ type SavePrintOrderInput = {
   order_id: string
   order_code: string
   am_code?: string
-  supplier?: SupplierDoc | null
   note?: string
   items: PrintItemInput[]
   existingItems?: PrintOrderItemDoc[]
@@ -119,6 +119,7 @@ export function usePrintingProgress() {
   ) {
     const isCompleted = completed(input.is_completed)
     const now = serverTimestamp()
+    const supplier = input.supplier || null
     return {
       id: input.id || makeId('pri'),
       print_order_id: orderId,
@@ -126,6 +127,8 @@ export function usePrintingProgress() {
       product_id: text(input.product.id),
       product_code: productCode(input.product),
       product_name: productName(input.product),
+      supplier_id: text(supplier?.id),
+      supplier_name: text(supplier?.name || (supplier as any)?.supplier_name),
       logo: text(input.logo),
       logo_color: text(input.logo_color),
       print_quantity: toNumber(input.print_quantity),
@@ -167,7 +170,6 @@ export function usePrintingProgress() {
 
     const orderId = input.order?.id || makeId('prt')
     const now = serverTimestamp()
-    const supplier = input.supplier || null
     const existingItems = input.existingItems || []
     const existingById = new Map(existingItems.map(item => [item.id, item]))
     const nextItems = input.items.map(item => itemPayload(
@@ -187,8 +189,8 @@ export function usePrintingProgress() {
       order_id: sourceOrderId,
       order_code: orderCode,
       am_code: text(input.am_code),
-      supplier_id: text(supplier?.id),
-      supplier_name: text(supplier?.name || (supplier as any)?.supplier_name),
+      supplier_id: '',
+      supplier_name: '',
       note: text(input.note),
       ...(input.order ? {} : {
         status: 'active',

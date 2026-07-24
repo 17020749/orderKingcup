@@ -365,6 +365,8 @@ export interface PrintOrderItemDoc {
   product_id?: string
   product_code?: string
   product_name?: string
+  supplier_id?: string
+  supplier_name?: string
   logo?: string
   logo_color?: string
   print_quantity: number
