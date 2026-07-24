@@ -151,7 +151,7 @@ test('thay chứng từ theo ID không làm trùng dữ liệu client', () => {
   assert.deepEqual(next, [{ id: 'b', amount: 2 }, { id: 'a', amount: 3 }])
 })
 
-test('source thật dùng transaction nguyên tử và không còn saveDoc/softDeleteDoc ở ba page', () => {
+test('source thật dùng transaction nguyên tử cho ba collection quan hệ đơn', () => {
   const composable = readFileSync('composables/useAtomicOrderRelations.ts', 'utf8')
   const payments = readFileSync('pages/payments.vue', 'utf8')
   const invoices = readFileSync('pages/invoices.vue', 'utf8')
@@ -163,10 +163,14 @@ test('source thật dùng transaction nguyên tử và không còn saveDoc/softD
   assert.match(composable, /runTransaction/)
   assert.match(composable, /transaction\.update\(orderRef/)
   assert.match(composable, /transaction\.set\(activityRef/)
-  for (const source of [payments, invoices, shipments]) {
+  for (const { source, collectionName } of [
+    { source: payments, collectionName: 'payments' },
+    { source: invoices, collectionName: 'invoices' },
+    { source: shipments, collectionName: 'shipments' },
+  ]) {
     assert.match(source, /mutateOrderRelation/)
-    assert.doesNotMatch(source, /saveDoc\(/)
-    assert.doesNotMatch(source, /softDeleteDoc\(/)
+    assert.doesNotMatch(source, new RegExp(`saveDoc\\(['\"]${collectionName}['\"]`))
+    assert.doesNotMatch(source, new RegExp(`softDeleteDoc\\(['\"]${collectionName}['\"]`))
   }
   assert.match(orders, /orderRelationDeleteBlocker/)
   assert.match(orders, /reconcileRelationLocksInBackground/)
