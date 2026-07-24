@@ -59,6 +59,99 @@ jobs:
             git push origin HEAD:agent/warehouse-request-snapshot-isolation || true
             exit "$status"
           fi
+
+          cat > tests/warehouse-print-menu.static.test.mjs <<'TEST'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          import { test } from 'node:test'
+
+          test('warehouse request page prints entirely from request snapshots', () => {
+            const page = readFileSync('pages/warehouse-export-requests.vue', 'utf8')
+            assert.ok(page.includes('<WarehousePrintMenu'))
+            assert.ok(page.includes(':request="row"'))
+            assert.ok(!page.includes(':order="orders.find'))
+            assert.ok(!page.includes('loadScopedOrders'))
+            assert.ok(!page.includes('loadScopedOrderItems'))
+            assert.ok(!page.includes('itemsByOrder'))
+          })
+
+          test('warehouse print menu has three choices without order or customer reads', () => {
+            const component = readFileSync('components/WarehousePrintMenu.vue', 'utf8')
+            for (const label of ['Phiếu xuất kho', 'Tem gửi bưu điện', 'Tem gửi nhà xe']) {
+              assert.ok(component.includes(label))
+            }
+            assert.ok(component.includes('tu_choi'))
+            assert.ok(component.includes('requestLineProgress'))
+            assert.ok(component.includes('export.print'))
+            assert.ok(component.includes('bus_transport.view'))
+            assert.ok(!component.includes("collection(db, 'orders')"))
+            assert.ok(!component.includes("doc(db, 'customers'"))
+            assert.ok(!component.includes('props.order'))
+          })
+
+          test('request and parcel print modals use snapshot recipient data only', () => {
+            const requestModal = readFileSync('components/ExportRequestPrintModal.vue', 'utf8')
+            const parcelModal = readFileSync('components/ParcelLabelPrintModal.vue', 'utf8')
+            const documentBuilder = readFileSync('utils/parcelLabelPrintDocuments.ts', 'utf8')
+            assert.ok(requestModal.includes('receiver_name'))
+            assert.ok(requestModal.includes('receiver_phone'))
+            assert.ok(requestModal.includes('receiver_address'))
+            assert.ok(!requestModal.includes("getOne('customers'"))
+            assert.ok(!requestModal.includes('OrderDoc'))
+            assert.ok(parcelModal.includes('request?.receiver_name'))
+            assert.ok(parcelModal.includes('request?.receiver_phone'))
+            assert.ok(parcelModal.includes('request?.receiver_address'))
+            assert.ok(!parcelModal.includes('CustomerDoc'))
+            assert.ok(!parcelModal.includes('OrderDoc'))
+            assert.ok(documentBuilder.includes('class="center package-cell">&nbsp;</td>'))
+          })
+          TEST
+
+          cat > tests/bus-transport-followup.static.test.mjs <<'TEST'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          import { test } from 'node:test'
+
+          function matchBlock(source, start, end) {
+            const from = source.indexOf(start)
+            assert.notEqual(from, -1, `Missing block start: ${start}`)
+            const to = source.indexOf(end, from)
+            assert.notEqual(to, -1, `Missing block end: ${end}`)
+            return source.slice(from, to)
+          }
+
+          test('bus transport uses request snapshots and never queries orders or customers', () => {
+            const page = readFileSync('pages/bus-transport.vue', 'utf8')
+            assert.ok(page.includes("collection(db, 'order_export_requests')"))
+            assert.ok(page.includes('isRejectedRequest'))
+            assert.ok(page.includes('source_request_id'))
+            assert.ok(page.includes('receiver_phone'))
+            assert.ok(page.includes('receiver_address'))
+            assert.ok(!page.includes("collection(db, 'orders')"))
+            assert.ok(!page.includes("doc(db, 'customers'"))
+            assert.ok(!page.includes('customerCache'))
+          })
+
+          test('warehouse UI does not receive order read permission through rules', () => {
+            const rules = readFileSync('firestore.rules', 'utf8')
+            const customerBlock = matchBlock(rules, 'match /customers/{docId}', 'match /customer_codes/{customerCode}')
+            const orderBlock = matchBlock(rules, 'match /orders/{docId}', 'match /order_items/{docId}')
+            assert.ok(!customerBlock.includes("'export.print'"))
+            assert.ok(!customerBlock.includes("'bus_transport.view'"))
+            assert.ok(!orderBlock.includes("hasPerm('bus_transport.view')"))
+            assert.ok(rules.includes('requestSnapshotAllowsExportItem'))
+            assert.ok(rules.includes("sourceItem.get('order_id', '') == request.resource.data.get('source_order_id', '')"))
+            assert.ok(rules.includes("request.resource.data.get('quantity', 0) <= sourceItem.get('quantity', 0)"))
+          })
+
+          test('permission catalog remains unchanged and has no warehouse order dependency', () => {
+            const access = readFileSync('constants/accessMatrix.mjs', 'utf8')
+            assert.ok(access.includes("'page.bus_transport': ['bus_transport.view']"))
+            assert.ok(access.includes("'bus_transport.view': ['page.bus_transport']"))
+            assert.ok(!access.includes("'bus_transport.view': ['page.bus_transport', 'orders.view"))
+            assert.ok(!access.includes("'export_requests.release': ['page.warehouse_export_requests', 'inventory.view', 'export.view', 'orders.view"))
+          })
+          TEST
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Prepare and build
