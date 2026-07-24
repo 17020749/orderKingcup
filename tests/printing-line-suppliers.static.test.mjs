@@ -12,13 +12,14 @@ test('printing suppliers are selected and stored per print item', () => {
   assert.match(page, /v-model="line\.supplier_id"/)
   assert.match(page, /supplier_summary/)
   assert.match(page, /item\.supplier_name/)
+  assert.match(page, /groupsFromItems\(itemsForOrder\(order\), order\.supplier_id \|\| '', order\.supplier_name \|\| ''\)/)
   assert.match(progress, /supplier_id: text\(supplier\?\.id\)/)
   assert.match(progress, /supplier_name: text\(supplier\?\.name/)
   assert.match(progress, /supplier_id: '',[\s\S]*supplier_name: ''/)
   assert.match(models, /interface PrintOrderItemDoc[\s\S]*supplier_id\?: string[\s\S]*supplier_name\?: string/)
 })
 
-test('printing permission and rules files are not changed for line suppliers', () => {
+test('printing permission and rules dependencies remain unchanged', () => {
   const page = readFileSync('pages/printing.vue', 'utf8')
   assert.match(page, /printing\.create/)
   assert.match(page, /printing\.edit/)
