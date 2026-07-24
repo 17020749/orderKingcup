@@ -42,3 +42,19 @@ test('request and parcel print modals use snapshot recipient data only', () => {
   assert.ok(!parcelModal.includes('OrderDoc'))
   assert.ok(documentBuilder.includes('class="center package-cell">&nbsp;</td>'))
 })
+
+test('warehouse request actions have a defined pure status patch helper', () => {
+  const page = readFileSync('pages/warehouse-export-requests.vue', 'utf8')
+  const helper = readFileSync('utils/fallbackOrderPatch.ts', 'utf8')
+
+  assert.ok(page.includes('const orderPatch = fallbackOrderPatch(nextStatus)'))
+  assert.ok(page.includes("orderSummaryPatch: fallbackOrderPatch('da_xuat')"))
+  assert.ok(page.includes("orderSummaryPatch: fallbackOrderPatch('da_tiep_nhan')"))
+  assert.ok(helper.includes('export function fallbackOrderPatch'))
+  assert.ok(helper.includes("nextStatus === 'da_xuat'"))
+  assert.ok(helper.includes("nextStatus === 'da_tiep_nhan'"))
+  assert.ok(helper.includes("nextStatus === 'tu_choi'"))
+  assert.ok(!helper.includes("collection(db, 'orders')"))
+  assert.ok(!helper.includes("doc(db, 'orders'"))
+  assert.ok(!helper.includes('customers'))
+})
