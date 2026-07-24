@@ -63,30 +63,37 @@ function normalize(value: any) {
 
 function updatePanelPosition() {
   if (!process.client || !rootRef.value) return;
+
   const rect = rootRef.value.getBoundingClientRect();
   const gap = 8;
-  const width = Math.max(rect.width, 220);
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const width = Math.min(
+    Math.max(rect.width, 220),
+    Math.max(220, viewportWidth - gap * 2),
+  );
   const left = Math.min(
     Math.max(gap, rect.left),
-    Math.max(gap, window.innerWidth - width - gap),
+    Math.max(gap, viewportWidth - width - gap),
   );
-  const bottomSpace = window.innerHeight - rect.bottom - gap;
-  const topSpace = rect.top - gap;
-  const openAbove = bottomSpace < 220 && topSpace > bottomSpace;
-  const maxHeight = Math.max(
-    170,
-    Math.min(360, (openAbove ? topSpace : bottomSpace) - 8),
+  const bottomSpace = Math.max(0, viewportHeight - rect.bottom - gap);
+  const topSpace = Math.max(0, rect.top - gap);
+  const openAbove = bottomSpace < 280 && topSpace > bottomSpace;
+  const availableSpace = Math.max(
+    80,
+    (openAbove ? topSpace : bottomSpace) - 6,
   );
+  const maxHeight = Math.min(360, availableSpace);
 
   panelStyle.value = {
     position: "fixed",
     left: `${left}px`,
+    right: "auto",
     width: `${width}px`,
     zIndex: "140",
     maxHeight: `${maxHeight}px`,
-    ...(openAbove
-      ? { bottom: `${window.innerHeight - rect.top + 6}px` }
-      : { top: `${rect.bottom + 6}px` }),
+    top: openAbove ? "auto" : `${rect.bottom + 6}px`,
+    bottom: openAbove ? `${viewportHeight - rect.top + 6}px` : "auto",
   };
 }
 
@@ -147,6 +154,7 @@ onBeforeUnmount(() => {
       type="button"
       class="searchable-select-trigger"
       :disabled="disabled"
+      :aria-expanded="open"
       @click.stop="toggleOpen"
     >
       <span v-if="selected">
@@ -171,6 +179,7 @@ onBeforeUnmount(() => {
           v-model="keyword"
           class="input searchable-select-input"
           placeholder="Gõ để tìm..."
+          @keydown.esc="open = false"
         />
         <button
           v-if="actionLabel"
@@ -203,3 +212,40 @@ onBeforeUnmount(() => {
     </Teleport>
   </div>
 </template>
+
+<style scoped>
+.searchable-select-panel-teleport {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.searchable-select-panel-teleport .searchable-select-input,
+.searchable-select-panel-teleport .searchable-select-action {
+  flex: 0 0 auto;
+}
+
+.searchable-select-panel-teleport .searchable-select-options {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.searchable-select-panel-teleport .searchable-select-options::-webkit-scrollbar {
+  width: 8px;
+}
+
+.searchable-select-panel-teleport .searchable-select-options::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+.searchable-select-panel-teleport .searchable-select-options::-webkit-scrollbar-track {
+  background: transparent;
+}
+</style>
