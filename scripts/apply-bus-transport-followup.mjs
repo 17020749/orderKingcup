@@ -9,6 +9,13 @@ function replaceOnce(source, anchor, replacement, label) {
   return source.replace(anchor, replacement)
 }
 
+function appendQuotedTest(command, testPath) {
+  if (command.includes(testPath)) return command
+  const index = command.lastIndexOf('"')
+  if (index < 0) throw new Error(`package.json: cannot append ${testPath}`)
+  return `${command.slice(0, index)} ${testPath}${command.slice(index)}`
+}
+
 {
   const path = 'types/models.ts'
   let source = read(path)
@@ -142,6 +149,16 @@ export interface PrintOrderDoc {`
   )
 
   write(path, source)
+}
+
+{
+  const path = 'package.json'
+  const pkg = JSON.parse(read(path))
+  pkg.scripts['test:rules'] = appendQuotedTest(
+    pkg.scripts['test:rules'],
+    'tests/bus-transport-followup.static.test.mjs',
+  )
+  write(path, `${JSON.stringify(pkg, null, 2)}\n`)
 }
 
 for (const path of [
