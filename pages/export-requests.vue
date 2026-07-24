@@ -2,6 +2,7 @@
 import {
   collection,
   doc,
+  getDoc,
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
@@ -281,6 +282,41 @@ function applyAllLocalOrderSummaries() {
   orders.value.forEach((order) => applyLocalOrderSummary(order.id));
 }
 
+function requestSnapshot(row: any) {
+  const payload = safeJsonParse(row?.payload_json, {})
+  return {
+    customer_id: row?.customer_id || payload?.customer_id || '',
+    receiver_name: row?.receiver_name || payload?.receiver_name || row?.customer_name || payload?.customer_name || '',
+    receiver_phone: row?.receiver_phone || payload?.receiver_phone || '',
+    receiver_address: row?.receiver_address || payload?.receiver_address || '',
+  }
+}
+
+async function hydrateReceiverSnapshot(order: any) {
+  const existing = editing.value ? requestSnapshot(editing.value) : {} as any
+  let customer: any = null
+  const customerId = String(order?.customer_id || existing.customer_id || '').trim()
+  if (customerId) {
+    try {
+      const snapshot = await getDoc(doc(db, 'customers', customerId))
+      if (snapshot.exists()) customer = snapshot.data() || {}
+    } catch {
+      // Không tạo phụ thuộc permission mới: dùng snapshot trên đơn/yêu cầu nếu Sale không đọc được customer.
+    }
+  }
+  Object.assign(form, {
+    customer_id: customerId,
+    receiver_name: existing.receiver_name || customer?.customer_name || order?.customer_name || '',
+    receiver_phone: existing.receiver_phone || customer?.phone || order?.phone || '',
+    receiver_address: existing.receiver_address || customer?.shipping_address || customer?.billing_address || '',
+  })
+}
+
+async function onOrderChanged() {
+  prepareLines()
+  if (selectedOrder.value) await hydrateReceiverSnapshot(selectedOrder.value)
+}
+
 function prepareLines() {
   const order = selectedOrder.value;
   if (!order) {
@@ -310,7 +346,7 @@ function prepareLines() {
   form.customer_name = order.customer_name;
 }
 
-function openModal(request?: any) {
+async function openModal(request?: any) {
   const decision = request
     ? requestActionDecision("edit", request)
     : requestActionDecision("create", null, null, "start");
@@ -335,9 +371,11 @@ function openModal(request?: any) {
           export_date: todayKey(),
           note: "",
           status: "cho_xu_ly",
+          customer_id: "", receiver_name: "", receiver_phone: "", receiver_address: "",
         },
   );
   prepareLines();
+  if (selectedOrder.value) await hydrateReceiverSnapshot(selectedOrder.value);
   showModal.value = true;
 }
 
@@ -373,6 +411,7 @@ async function saveRequest() {
     const now = new Date().toISOString();
     const items = chosen.map((line) => ({
       order_item_id: line.order_item_id,
+      source_order_item_id: line.order_item_id,
       product_id: line.product_id,
       product_code: line.product_code,
       product_name: line.product_name,
@@ -387,7 +426,25 @@ async function saveRequest() {
       accepted_quantity: line.exported_qty,
       pending_quantity: line.pending_qty,
       export_quantity: toNumber(line.export_quantity),
+      packing_standard: line.packing_standard || '',
+      box_quantity: toNumber(line.box_quantity),
+      odd_quantity: toNumber(line.odd_quantity),
     }));
+
+    const sourceItems = Object.fromEntries(items.filter(item => item.source_order_item_id).map(item => [String(item.source_order_item_id), {
+      order_id: order.id,
+      product_id: item.product_id || '',
+      product_code: item.product_code || '',
+      logo: item.logo || '',
+      order_quantity: toNumber(item.order_quantity),
+      requested_quantity: toNumber(item.export_quantity),
+    }]))
+    const receiver = {
+      customer_id: String(form.customer_id || order.customer_id || '').trim(),
+      receiver_name: String(form.receiver_name || order.customer_name || '').trim(),
+      receiver_phone: String(form.receiver_phone || order.phone || '').trim(),
+      receiver_address: String(form.receiver_address || '').trim(),
+    };
 
     const previousTimeline = safeJsonParse(
       editing.value?.request_timeline_json,
@@ -414,7 +471,10 @@ async function saveRequest() {
       order_code: order.order_code,
       order_date: order.order_date || "",
       export_date: form.export_date,
-      customer_name: order.customer_name || "",
+      customer_name: receiver.receiver_name,
+      ...receiver,
+      request_snapshot_version: 1,
+      source_items: sourceItems,
       note: form.note || "",
       requested_by: editing.value?.requested_by || appUser.value?.email || "",
       requested_by_name:
@@ -428,7 +488,10 @@ async function saveRequest() {
       request_id: form.request_id,
       order_id: order.id,
       order_code: order.order_code,
-      customer_name: order.customer_name || "",
+      customer_name: receiver.receiver_name,
+      ...receiver,
+      request_snapshot_version: 1,
+      source_items: sourceItems,
       export_date: form.export_date,
       requested_by: editing.value?.requested_by || appUser.value?.email || "",
       requested_at: editing.value?.requested_at || now,
@@ -470,6 +533,12 @@ async function saveRequest() {
       batch.update(requestRef, {
         order_code: record.order_code,
         customer_name: record.customer_name,
+        customer_id: record.customer_id,
+        receiver_name: record.receiver_name,
+        receiver_phone: record.receiver_phone,
+        receiver_address: record.receiver_address,
+        request_snapshot_version: record.request_snapshot_version,
+        source_items: record.source_items,
         export_date: record.export_date,
         updated_by: record.updated_by,
         payload_json: record.payload_json,
@@ -899,13 +968,18 @@ onBeforeUnmount(() => {
             :options="orderOptions"
             :disabled="!!editing"
             placeholder="Tìm đơn hàng theo mã, khách hàng, SĐT..."
-            @change="prepareLines"
+            @change="onOrderChanged"
           />
         </div>
         <div class="form-group">
           <label>Ngày xuất dự kiến</label
           ><input v-model="form.export_date" class="input" type="date" />
         </div>
+      </div>
+      <div v-if="selectedOrder" class="form-grid" style="margin-top:12px">
+        <div class="form-group"><label>Họ tên người nhận</label><input v-model="form.receiver_name" class="input" /></div>
+        <div class="form-group"><label>Số điện thoại người nhận</label><input v-model="form.receiver_phone" class="input" /></div>
+        <div class="form-group full"><label>Địa chỉ nhận</label><input v-model="form.receiver_address" class="input" /></div>
       </div>
       <div v-if="selectedOrder" class="detail-grid">
         <div class="detail-item">

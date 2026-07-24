@@ -189,6 +189,12 @@ export interface ExportRequestDoc {
   order_id: string
   order_code?: string
   customer_name?: string
+  customer_id?: string
+  receiver_name?: string
+  receiver_phone?: string
+  receiver_address?: string
+  request_snapshot_version?: number
+  source_items?: Record<string, any>
   export_date?: string
   requested_by?: string
   requested_at?: any

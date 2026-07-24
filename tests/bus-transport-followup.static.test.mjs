@@ -2,21 +2,42 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
-test('bus transport model keeps request identity and legacy export fields optional', () => {
-  const source = readFileSync('types/models.ts', 'utf8')
-  const block = source.match(/export interface BusTransportDoc \{[\s\S]*?\n\}/)?.[0] || ''
-  assert.match(block, /source_request_id\?: string/)
-  assert.match(block, /request_code\?: string/)
-  assert.match(block, /request_status\?: string/)
-  assert.match(block, /export_order_id\?: string/)
-  assert.match(block, /customer_id\?: string/)
+function matchBlock(source, start, end) {
+  const from = source.indexOf(start)
+  assert.notEqual(from, -1, `Missing block start: ${start}`)
+  const to = source.indexOf(end, from)
+  assert.notEqual(to, -1, `Missing block end: ${end}`)
+  return source.slice(from, to)
+}
+
+test('bus transport uses request snapshots and never queries orders or customers', () => {
+  const page = readFileSync('pages/bus-transport.vue', 'utf8')
+  assert.ok(page.includes("collection(db, 'order_export_requests')"))
+  assert.ok(page.includes('isRejectedRequest'))
+  assert.ok(page.includes('source_request_id'))
+  assert.ok(page.includes('receiver_phone'))
+  assert.ok(page.includes('receiver_address'))
+  assert.ok(!page.includes("collection(db, 'orders')"))
+  assert.ok(!page.includes("doc(db, 'customers'"))
+  assert.ok(!page.includes('customerCache'))
 })
 
-test('rules giữ quyền ghi collection cũ tách khỏi module nhà xe', () => {
+test('warehouse UI does not receive order read permission through rules', () => {
   const rules = readFileSync('firestore.rules', 'utf8')
-  assert.match(rules, /allow get: if isAdmin\(\)[\s\S]*hasAnyPerm\(\['export\.print', 'bus_transport\.view'\]\)/)
-  assert.match(rules, /match \/orders\/\{docId\}[\s\S]*allow read:[\s\S]*hasPerm\('bus_transport\.view'\)/)
-  assert.match(rules, /match \/order_export_requests\/\{docId\}[\s\S]*'bus_transport\.view'/)
-  assert.match(rules, /validBoundedString\(request\.resource\.data\.get\('source_request_id'/)
-  assert.doesNotMatch(rules, /match \/orders\/\{docId\}[\s\S]{0,150}allow (create|update): if hasPerm\('bus_transport\.view'\)/)
+  const customerBlock = matchBlock(rules, 'match /customers/{docId}', 'match /customer_codes/{customerCode}')
+  const orderBlock = matchBlock(rules, 'match /orders/{docId}', 'match /order_items/{docId}')
+  assert.ok(!customerBlock.includes("'export.print'"))
+  assert.ok(!customerBlock.includes("'bus_transport.view'"))
+  assert.ok(!orderBlock.includes("hasPerm('bus_transport.view')"))
+  assert.ok(rules.includes('requestSnapshotAllowsExportItem'))
+  assert.ok(rules.includes("sourceItem.get('order_id', '') == request.resource.data.get('source_order_id', '')"))
+  assert.ok(rules.includes("request.resource.data.get('quantity', 0) <= sourceItem.get('quantity', 0)"))
+})
+
+test('permission catalog remains unchanged and has no warehouse order dependency', () => {
+  const access = readFileSync('constants/accessMatrix.mjs', 'utf8')
+  assert.ok(access.includes("'page.bus_transport': ['bus_transport.view']"))
+  assert.ok(access.includes("'bus_transport.view': ['page.bus_transport']"))
+  assert.ok(!access.includes("'bus_transport.view': ['page.bus_transport', 'orders.view"))
+  assert.ok(!access.includes("'export_requests.release': ['page.warehouse_export_requests', 'inventory.view', 'export.view', 'orders.view"))
 })

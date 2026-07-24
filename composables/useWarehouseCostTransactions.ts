@@ -24,8 +24,6 @@ import {
   type LotAllocation,
   type WarehouseIssueStrategy,
 } from '~/utils/warehouseLotAllocation'
-// @ts-ignore Shared ESM helper is executed directly by Node client tests.
-import { validateWarehouseReleaseSources } from '~/utils/orderItemDependencies.mjs'
 // @ts-ignore Shared ESM lifecycle helpers are executed directly by Node tests.
 import {
   activeExportOrderId,
@@ -1686,26 +1684,8 @@ export function useWarehouseCostTransactions() {
           !String(line.source_order_item_id || '').trim()
           || String(line.source_order_id || '').trim() !== sourceOrderId
         ))) throw new Error('Phiếu xuất thiếu tham chiếu chính xác tới dòng đơn hàng nguồn.')
-        const sourceOrderSnap = await tx.get(doc(db, 'orders', sourceOrderId))
-        const sourceItemSnaps = new Map<string, any>()
-        for (const sourceItemId of new Set(lines.map((line: any) => String(line.source_order_item_id || '').trim()))) {
-          sourceItemSnaps.set(sourceItemId, await tx.get(doc(db, 'order_items', sourceItemId)))
-        }
-        const sourceValidationError = validateWarehouseReleaseSources({
-          request: currentRequest,
-          order: sourceOrderSnap.exists() ? { ...sourceOrderSnap.data(), id: sourceOrderSnap.id } : {},
-          orderItems: Array.from(sourceItemSnaps.values())
-            .filter(snapshot => snapshot.exists())
-            .map(snapshot => ({ ...snapshot.data(), id: snapshot.id })),
-          releaseLines: lines.map((line: any) => ({
-            source_order_id: line.source_order_id,
-            source_order_item_id: line.source_order_item_id,
-            product: line.product,
-            logo: line.targetLogo,
-            quantity: line.quantity,
-          })),
-        })
-        if (sourceValidationError) throw new Error(sourceValidationError)
+        // Không đọc orders/order_items ở client Kho. Firestore Rules đối soát từng
+        // export_order_item với dòng đơn hàng nguồn và snapshot của yêu cầu.
         const states = await readBalanceStates(tx, refs, exportDate)
 
         const orderPayload = {
