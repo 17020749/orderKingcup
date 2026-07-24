@@ -29,7 +29,7 @@ jobs:
       - name: Extract and apply guarded patch
         shell: bash
         run: |
-          rm -f PATCH_ERROR.txt
+          rm -f PATCH_ERROR.txt TEST_ERROR.txt
           awk '/cat > \/tmp\/patch.b64/{copy=1; next} /^PATCH$/{copy=0} copy' .github/workflows/apply-warehouse-request-snapshot-isolation.yml > /tmp/patch.b64
           base64 -d /tmp/patch.b64 | gunzip > /tmp/apply-patch.mjs
           python <<'PY'
@@ -66,11 +66,26 @@ jobs:
           npx --no-install nuxi prepare
           npm run build
       - name: Run focused isolation tests
-        run: node --test tests/warehouse-print-menu.static.test.mjs tests/bus-transport-followup.static.test.mjs
+        shell: bash
+        run: |
+          set +e
+          node --test tests/warehouse-print-menu.static.test.mjs tests/bus-transport-followup.static.test.mjs > /tmp/test.log 2>&1
+          status=$?
+          cat /tmp/test.log
+          if [ "$status" -ne 0 ]; then
+            cp /tmp/test.log TEST_ERROR.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add TEST_ERROR.txt
+            git commit -m "Record snapshot isolation test failure" || true
+            git push origin HEAD:agent/warehouse-request-snapshot-isolation || true
+            exit "$status"
+          fi
+          rm -f TEST_ERROR.txt
       - name: Commit changes and remove temporary workflows
         shell: bash
         run: |
-          rm -f PATCH_ERROR.txt
+          rm -f PATCH_ERROR.txt TEST_ERROR.txt
           rm -f .github/workflows/apply-warehouse-request-snapshot-isolation.yml
           rm -f .github/workflows/run-warehouse-request-snapshot-isolation.yml
           git config user.name "github-actions[bot]"
