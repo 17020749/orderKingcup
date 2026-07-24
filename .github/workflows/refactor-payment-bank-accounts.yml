@@ -1,0 +1,151 @@
+name: Refactor payment bank account setup
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    if: github.event.pull_request.head.ref == 'agent/payment-bank-accounts'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/payment-bank-accounts
+          fetch-depth: 0
+      - name: Move setup CRUD out of the atomic payment page
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              file = Path(path)
+              source = file.read_text()
+              count = source.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{path}: expected one anchor, found {count}: {old[:120]!r}')
+              file.write_text(source.replace(old, new, 1))
+
+          path = 'pages/payments.vue'
+          replace_once(
+              path,
+              "const { listDocs, saveDoc, softDeleteDoc, q } = useRepo()\n",
+              "const { loadPaymentBankAccounts, persistPaymentBankAccount, deletePaymentBankAccount } = usePaymentBankAccounts()\n",
+          )
+
+          old_load = """async function loadBankAccounts() {
+  bankAccountsLoading.value = true
+  try {
+    const values = await listDocs('payment_bank_accounts', [
+      q.where('active', '==', true),
+      q.where('deleted', '==', false),
+    ])
+    bankAccounts.value = values
+      .filter(isActive)
+      .map(value => ({
+        id: String(value.id || value.firestore_id || ''),
+        recipient_name: String(value.recipient_name || ''),
+        account_number: String(value.account_number || ''),
+        bank_name: String(value.bank_name || ''),
+        status: value.status,
+        active: value.active,
+        deleted: value.deleted,
+        created_by: value.created_by,
+        created_at: value.created_at,
+        updated_at: value.updated_at,
+      }))
+      .sort((a, b) => `${a.bank_name} ${a.account_number}`.localeCompare(`${b.bank_name} ${b.account_number}`, 'vi'))
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không tải được danh sách tài khoản nhận tiền.'), 'error')
+  } finally {
+    bankAccountsLoading.value = false
+  }
+}
+"""
+          new_load = """async function loadBankAccounts() {
+  bankAccountsLoading.value = true
+  try {
+    bankAccounts.value = await loadPaymentBankAccounts()
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không tải được danh sách tài khoản nhận tiền.'), 'error')
+  } finally {
+    bankAccountsLoading.value = false
+  }
+}
+"""
+          replace_once(path, old_load, new_load)
+
+          old_save = """    const saved = await saveDoc('payment_bank_accounts', {
+      id,
+      recipient_name: recipientName,
+      account_number: accountNumber,
+      bank_name: bankName,
+      status: 'active',
+      active: true,
+      deleted: false,
+      created_by: bankAccountEditing.value?.created_by || appUser.value?.email || '',
+    }, id, { isCreate: !bankAccountEditing.value })
+"""
+          new_save = """    const saved = await persistPaymentBankAccount({
+      id,
+      recipient_name: recipientName,
+      account_number: accountNumber,
+      bank_name: bankName,
+      created_by: bankAccountEditing.value?.created_by || appUser.value?.email || '',
+    }, !bankAccountEditing.value)
+"""
+          replace_once(path, old_save, new_save)
+
+          replace_once(
+              path,
+              "    await softDeleteDoc('payment_bank_accounts', account.id, `${account.bank_name} - ${account.account_number}`)\n",
+              "    await deletePaymentBankAccount(account)\n",
+          )
+
+          # isActive is no longer used by the page after repository extraction.
+          replace_once(
+              path,
+              "import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'\n",
+              "import { makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'\n",
+          )
+
+          static_path = Path('tests/payment-bank-accounts.static.test.mjs')
+          static_source = static_path.read_text()
+          static_source = static_source.replace(
+              "  const permissions = readFileSync('constants/permissions.ts', 'utf8')\n",
+              "  const repository = readFileSync('composables/usePaymentBankAccounts.ts', 'utf8')\n  const permissions = readFileSync('constants/permissions.ts', 'utf8')\n",
+              1,
+          )
+          static_source = static_source.replace(
+              "  assert.match(page, /target=\"_blank\"/)\n",
+              "  assert.match(page, /target=\"_blank\"/)\n  assert.doesNotMatch(page, /saveDoc\\(/)\n  assert.doesNotMatch(page, /softDeleteDoc\\(/)\n  assert.match(repository, /saveDoc\\('payment_bank_accounts'/)\n  assert.match(repository, /softDeleteDoc\\(/)\n",
+              1,
+          )
+          static_path.write_text(static_source)
+
+          package_path = Path('package.json')
+          package_source = package_path.read_text()
+          anchor = 'tests/bus-transport-followup.static.test.mjs\\"'
+          replacement = 'tests/bus-transport-followup.static.test.mjs tests/payment-bank-accounts.static.test.mjs tests/payment-bank-accounts.rules.test.mjs\\"'
+          if package_source.count(anchor) != 1:
+              raise RuntimeError(f'package.json test:rules anchor count: {package_source.count(anchor)}')
+          package_path.write_text(package_source.replace(anchor, replacement, 1))
+          PY
+      - name: Commit refactor and remove workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/refactor-payment-bank-accounts.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pages/payments.vue composables/usePaymentBankAccounts.ts tests/payment-bank-accounts.static.test.mjs package.json .github/workflows/refactor-payment-bank-accounts.yml
+          git commit -m "Isolate payment setup CRUD from atomic payment flow"
+          git push origin HEAD:agent/payment-bank-accounts
