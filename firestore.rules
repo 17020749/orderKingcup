@@ -2250,6 +2250,68 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // Payment recipient bank accounts
+    // ---------------------------------------------------------------------
+
+    function paymentBankAccountDataValid(data) {
+      return data.keys().hasAll([
+'id', 'recipient_name', 'account_number', 'bank_name',
+'status', 'active', 'deleted', 'created_by', 'created_at', 'updated_at'
+        ])
+        && data.keys().hasOnly([
+'id', 'recipient_name', 'account_number', 'bank_name',
+'status', 'active', 'deleted', 'deleted_at',
+'created_by', 'created_at', 'updated_at', 'search_text'
+        ])
+        && validBoundedString(data.get('id', ''), 1, 200)
+        && validBoundedString(data.get('recipient_name', ''), 1, 200)
+        && validBoundedString(data.get('account_number', ''), 1, 80)
+        && validBoundedString(data.get('bank_name', ''), 1, 160)
+        && data.get('status', '') is string
+        && data.get('status', '').size() <= 30
+        && data.get('active', false) is bool
+        && data.get('deleted', false) is bool
+        && validBoundedString(data.get('created_by', ''), 3, 254)
+        && data.get('created_at', null) is timestamp
+        && data.get('updated_at', null) is timestamp
+        && data.get('updated_at', null) == request.time
+        && data.get('search_text', '') is string
+        && data.get('search_text', '').size() <= 1000
+        && (
+data.get('deleted_at', null) == null
+|| data.get('deleted_at', null) is timestamp
+        );
+    }
+
+    match /payment_bank_accounts/{docId} {
+      allow read: if isAdmin()
+        || (
+hasAnyPerm([
+  'payments.view', 'payments.view_all',
+  'payments.create', 'payments.edit'
+])
+&& resource.data.get('active', false) == true
+&& resource.data.get('deleted', true) == false
+        );
+
+      allow create: if isAdmin()
+        && request.resource.data.get('id', '') == docId
+        && request.resource.data.get('created_by', '').lower() == email()
+        && request.resource.data.get('created_at', null) == request.time
+        && request.resource.data.get('active', false) == true
+        && request.resource.data.get('deleted', true) == false
+        && paymentBankAccountDataValid(request.resource.data);
+
+      allow update: if isAdmin()
+        && request.resource.data.get('id', '') == docId
+        && unchanged(['id', 'created_by', 'created_at'])
+        && paymentBankAccountDataValid(request.resource.data);
+
+      // Setup uses soft delete so old payment snapshots remain traceable.
+      allow delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
     // Warehouse export requests
     // ---------------------------------------------------------------------
 
