@@ -1,0 +1,222 @@
+name: Apply printing line suppliers
+
+on:
+  push:
+    branches:
+      - agent/printing-line-suppliers
+    paths:
+      - .github/workflows/apply-printing-line-suppliers.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/printing-line-suppliers
+          fetch-depth: 0
+
+      - name: Apply guarded source patches
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              file = Path(path)
+              source = file.read_text()
+              count = source.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{path}: expected one anchor, found {count}: {old[:140]!r}')
+              file.write_text(source.replace(old, new, 1))
+
+          page = 'pages/printing.vue'
+
+          replace_once(page,
+          "  source_order_item_id: string\n  logo: string\n",
+          "  source_order_item_id: string\n  supplier_id: string\n  supplier_name: string\n  logo: string\n")
+
+          replace_once(page,
+          "  am_code: string\n  supplier_id: string\n  note: string\n",
+          "  am_code: string\n  note: string\n")
+          replace_once(page,
+          "  am_code: '',\n  supplier_id: '',\n  note: '',\n",
+          "  am_code: '',\n  note: '',\n")
+
+          replace_once(page,
+          "    const itemText = row.detailItems.map(item =>\n      `${item.product_code || ''} ${item.product_name || ''} ${item.logo || ''} ${item.logo_color || ''}`,\n    ).join(' ')\n    return normalizeText(\n      `${row.order_code} ${row.am_code || ''} ${row.supplier_name || ''} ${row.note || ''} ${row.created_by || ''} ${itemText}`,\n",
+          "    const itemText = row.detailItems.map(item =>\n      `${item.product_code || ''} ${item.product_name || ''} ${item.supplier_name || ''} ${item.logo || ''} ${item.logo_color || ''}`,\n    ).join(' ')\n    return normalizeText(\n      `${row.order_code} ${row.am_code || ''} ${row.note || ''} ${row.created_by || ''} ${itemText}`,\n")
+
+          replace_once(page,
+          "  return {\n    ...order,\n    detailItems,\n    print_status: orderStatus(detailItems),\n",
+          "  const supplierNames = [...new Set(detailItems.map(item => String(item.supplier_name || '').trim()).filter(Boolean))]\n  return {\n    ...order,\n    detailItems,\n    supplier_summary: supplierNames.join(', '),\n    print_status: orderStatus(detailItems),\n")
+
+          replace_once(page,
+          "function blankLine(item?: Partial<PrintOrderItemDoc>): PrintLineForm {\n  return {\n    id: item?.id,\n    source_order_item_id: String(item?.source_order_item_id || ''),\n    logo: String(item?.logo || ''),\n",
+          "function blankLine(item?: Partial<PrintOrderItemDoc>, fallbackSupplierId = '', fallbackSupplierName = ''): PrintLineForm {\n  return {\n    id: item?.id,\n    source_order_item_id: String(item?.source_order_item_id || ''),\n    supplier_id: String(item?.supplier_id || fallbackSupplierId || ''),\n    supplier_name: String(item?.supplier_name || fallbackSupplierName || ''),\n    logo: String(item?.logo || ''),\n")
+
+          replace_once(page,
+          "function blankProductGroup(item?: Partial<PrintOrderItemDoc>): PrintProductForm {\n  return {\n",
+          "function blankProductGroup(item?: Partial<PrintOrderItemDoc>, fallbackSupplierId = '', fallbackSupplierName = ''): PrintProductForm {\n  return {\n")
+          replace_once(page,
+          "    logo_lines: [],\n    ...blankLine(item),\n",
+          "    logo_lines: [],\n    ...blankLine(item, fallbackSupplierId, fallbackSupplierName),\n")
+
+          replace_once(page,
+          "function groupsFromItems(orderItems: PrintOrderItemDoc[]) {\n",
+          "function groupsFromItems(orderItems: PrintOrderItemDoc[], fallbackSupplierId = '', fallbackSupplierName = '') {\n")
+          replace_once(page,
+          "    if (!item.logo) {\n      result.push(blankProductGroup(item))\n",
+          "    if (!item.logo) {\n      result.push(blankProductGroup(item, fallbackSupplierId, fallbackSupplierName))\n")
+          replace_once(page,
+          "      group = blankProductGroup(item)\n",
+          "      group = blankProductGroup(item, fallbackSupplierId, fallbackSupplierName)\n")
+          replace_once(page,
+          "    group.logo_lines.push(blankLine(item))\n",
+          "    group.logo_lines.push(blankLine(item, fallbackSupplierId, fallbackSupplierName))\n")
+
+          replace_once(page,
+          "  form.am_code = order?.am_code || String(appUser.value?.user_code || '').trim().toUpperCase()\n  form.supplier_id = order?.supplier_id || ''\n  form.note = order?.note || ''\n  form.products = order ? groupsFromItems(itemsForOrder(order)) : []\n",
+          "  form.am_code = order?.am_code || String(appUser.value?.user_code || '').trim().toUpperCase()\n  form.note = order?.note || ''\n  form.products = order\n    ? groupsFromItems(itemsForOrder(order), order.supplier_id || '', order.supplier_name || '')\n    : []\n")
+
+          replace_once(page,
+          "    const appendLine = (line: PrintLineForm, lineLabel: string, logo = '') => {\n",
+          "    const appendLine = (line: PrintLineForm, lineLabel: string, logo = '') => {\n      const supplier = suppliers.value.find(row => row.id === line.supplier_id)\n        || (line.supplier_id\n          ? ({ id: line.supplier_id, name: line.supplier_name || '' } as SupplierDoc)\n          : null)\n")
+          replace_once(page,
+          "        product,\n        logo,\n",
+          "        product,\n        supplier,\n        logo,\n")
+
+          replace_once(page,
+          "    const isEditing = !!editing.value\n    const supplier = suppliers.value.find(row => row.id === form.supplier_id)\n      || (editing.value && form.supplier_id === editing.value.supplier_id\n        ? ({ id: editing.value.supplier_id, name: editing.value.supplier_name || '' } as SupplierDoc)\n        : null)\n    const result = await savePrintOrder({\n",
+          "    const isEditing = !!editing.value\n    const result = await savePrintOrder({\n")
+          replace_once(page,
+          "      am_code: form.am_code,\n      supplier,\n      note: form.note,\n",
+          "      am_code: form.am_code,\n      note: form.note,\n")
+
+          replace_once(page,
+          "              <th>Nhà cung cấp</th>\n",
+          "              <th>NCC theo dòng</th>\n")
+          replace_once(page,
+          "              <td>{{ row.supplier_name || '-' }}</td>\n",
+          "              <td>{{ row.supplier_summary || '-' }}</td>\n")
+
+          replace_once(page,
+          "        <div class=\"form-group\">\n          <label>Nhà cung cấp</label>\n          <SearchableSelect v-model=\"form.supplier_id\" :options=\"supplierOptions\" placeholder=\"Tìm và chọn nhà cung cấp\" />\n        </div>\n",
+          "")
+
+          replace_once(page,
+          "        <div v-if=\"!group.use_logo\" class=\"print-fields-grid\">\n          <div class=\"form-group\"><label>SL cần in</label><input :value=\"group.print_quantity\" class=\"input readonly-field\" readonly /></div>\n",
+          "        <div v-if=\"!group.use_logo\" class=\"print-fields-grid\">\n          <div class=\"form-group\">\n            <label>Nhà cung cấp</label>\n            <SearchableSelect v-model=\"group.supplier_id\" :options=\"supplierOptions\" placeholder=\"Chọn nhà cung cấp\" @change=\"group.supplier_name = suppliers.find(row => row.id === group.supplier_id)?.name || ''\" />\n          </div>\n          <div class=\"form-group\"><label>SL cần in</label><input :value=\"group.print_quantity\" class=\"input readonly-field\" readonly /></div>\n")
+
+          replace_once(page,
+          "              <thead><tr><th>Logo</th><th>Màu logo</th><th>SL cần in</th><th>SL in thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Ghi chú dòng</th><th>Hoàn thành</th></tr></thead>\n",
+          "              <thead><tr><th>Nhà cung cấp</th><th>Logo</th><th>Màu logo</th><th>SL cần in</th><th>SL in thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Ghi chú dòng</th><th>Hoàn thành</th></tr></thead>\n")
+          replace_once(page,
+          "                <tr v-for=\"(line, logoIndex) in group.logo_lines\" :key=\"line.id || logoIndex\">\n                  <td><input :value=\"line.logo\" class=\"input readonly-field\" readonly /></td>\n",
+          "                <tr v-for=\"(line, logoIndex) in group.logo_lines\" :key=\"line.id || logoIndex\">\n                  <td><SearchableSelect v-model=\"line.supplier_id\" :options=\"supplierOptions\" placeholder=\"Chọn nhà cung cấp\" @change=\"line.supplier_name = suppliers.find(row => row.id === line.supplier_id)?.name || ''\" /></td>\n                  <td><input :value=\"line.logo\" class=\"input readonly-field\" readonly /></td>\n")
+          replace_once(page,
+          "                <tr v-if=\"!group.logo_lines.length\"><td colspan=\"8\" class=\"empty\">Đơn hàng chưa có dòng logo hợp lệ.</td></tr>\n",
+          "                <tr v-if=\"!group.logo_lines.length\"><td colspan=\"9\" class=\"empty\">Đơn hàng chưa có dòng logo hợp lệ.</td></tr>\n")
+
+          replace_once(page,
+          "        <div class=\"detail-item\"><label>Nhà cung cấp</label><strong>{{ selected.supplier_name || '-' }}</strong></div>\n",
+          "")
+          replace_once(page,
+          "          <thead><tr><th>Sản phẩm</th><th>Mã SP</th><th>Logo</th><th>Màu logo</th><th>SL in</th><th>SL thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Hoàn thành lúc</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead>\n",
+          "          <thead><tr><th>Sản phẩm</th><th>Mã SP</th><th>Nhà cung cấp</th><th>Logo</th><th>Màu logo</th><th>SL in</th><th>SL thực tế</th><th>Bắt đầu in</th><th>Dự kiến xong</th><th>Hoàn thành lúc</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead>\n")
+          replace_once(page,
+          "              <td><b>{{ item.product_code || '-' }}</b></td>\n              <td><span v-if=\"item.logo\" class=\"badge blue\">{{ item.logo }}</span><span v-else>-</span></td>\n",
+          "              <td><b>{{ item.product_code || '-' }}</b></td>\n              <td>{{ item.supplier_name || '-' }}</td>\n              <td><span v-if=\"item.logo\" class=\"badge blue\">{{ item.logo }}</span><span v-else>-</span></td>\n")
+          replace_once(page,
+          "            <tr v-if=\"!selectedItems.length\"><td colspan=\"11\" class=\"empty\">Đơn in này chưa có sản phẩm.</td></tr>\n",
+          "            <tr v-if=\"!selectedItems.length\"><td colspan=\"12\" class=\"empty\">Đơn in này chưa có sản phẩm.</td></tr>\n")
+
+          replace_once(page,
+          ".printing-header-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }\n",
+          ".printing-header-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }\n")
+          replace_once(page,
+          ".print-fields-grid { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)) auto; gap: 10px; align-items: end; margin-top: 14px; }\n",
+          ".print-fields-grid { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)) auto; gap: 10px; align-items: end; margin-top: 14px; }\n")
+          replace_once(page,
+          ".print-logo-table { min-width: 1400px; }\n",
+          ".print-logo-table { min-width: 1650px; }\n")
+          replace_once(page,
+          ".printing-detail-table { min-width: 1650px; }\n",
+          ".printing-detail-table { min-width: 1850px; }\n")
+
+          composable = 'composables/usePrintingProgress.ts'
+          replace_once(composable,
+          "  product: ProductDoc\n  logo?: string\n",
+          "  product: ProductDoc\n  supplier?: SupplierDoc | null\n  logo?: string\n")
+          replace_once(composable,
+          "  am_code?: string\n  supplier?: SupplierDoc | null\n  note?: string\n",
+          "  am_code?: string\n  note?: string\n")
+          replace_once(composable,
+          "    const isCompleted = completed(input.is_completed)\n    const now = serverTimestamp()\n    return {\n",
+          "    const isCompleted = completed(input.is_completed)\n    const now = serverTimestamp()\n    const supplier = input.supplier || null\n    return {\n")
+          replace_once(composable,
+          "      product_name: productName(input.product),\n      logo: text(input.logo),\n",
+          "      product_name: productName(input.product),\n      supplier_id: text(supplier?.id),\n      supplier_name: text(supplier?.name || (supplier as any)?.supplier_name),\n      logo: text(input.logo),\n")
+          replace_once(composable,
+          "    const now = serverTimestamp()\n    const supplier = input.supplier || null\n    const existingItems = input.existingItems || []\n",
+          "    const now = serverTimestamp()\n    const existingItems = input.existingItems || []\n")
+          replace_once(composable,
+          "      am_code: text(input.am_code),\n      supplier_id: text(supplier?.id),\n      supplier_name: text(supplier?.name || (supplier as any)?.supplier_name),\n      note: text(input.note),\n",
+          "      am_code: text(input.am_code),\n      supplier_id: '',\n      supplier_name: '',\n      note: text(input.note),\n")
+
+          models = 'types/models.ts'
+          replace_once(models,
+          "  product_name?: string\n  logo?: string\n",
+          "  product_name?: string\n  supplier_id?: string\n  supplier_name?: string\n  logo?: string\n")
+
+          Path('tests/printing-line-suppliers.static.test.mjs').write_text("""import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { test } from 'node:test'
+
+test('printing suppliers are selected and stored per print item', () => {
+  const page = readFileSync('pages/printing.vue', 'utf8')
+  const progress = readFileSync('composables/usePrintingProgress.ts', 'utf8')
+  const models = readFileSync('types/models.ts', 'utf8')
+
+  assert.doesNotMatch(page, /v-model=\"form\.supplier_id\"/)
+  assert.match(page, /v-model=\"group\.supplier_id\"/)
+  assert.match(page, /v-model=\"line\.supplier_id\"/)
+  assert.match(page, /supplier_summary/)
+  assert.match(page, /item\.supplier_name/)
+  assert.match(progress, /supplier_id: text\(supplier\?\.id\)/)
+  assert.match(progress, /supplier_name: text\(supplier\?\.name/)
+  assert.match(progress, /supplier_id: '',[\s\S]*supplier_name: ''/)
+  assert.match(models, /interface PrintOrderItemDoc[\s\S]*supplier_id\?: string[\s\S]*supplier_name\?: string/)
+})
+
+test('printing permission and rules files are not changed for line suppliers', () => {
+  const page = readFileSync('pages/printing.vue', 'utf8')
+  assert.match(page, /printing\.create/)
+  assert.match(page, /printing\.edit/)
+  assert.match(page, /printing\.delete/)
+  assert.match(page, /loadSuppliers/)
+})
+""")
+
+          package = Path('package.json')
+          source = package.read_text()
+          anchor = 'tests/payment-bank-accounts.rules.test.mjs\\"'
+          replacement = 'tests/payment-bank-accounts.rules.test.mjs tests/printing-line-suppliers.static.test.mjs\\"'
+          if source.count(anchor) != 1:
+              raise RuntimeError(f'package.json test anchor count: {source.count(anchor)}')
+          package.write_text(source.replace(anchor, replacement, 1))
+          PY
+
+      - name: Commit intended files and remove temporary workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-printing-line-suppliers.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pages/printing.vue composables/usePrintingProgress.ts types/models.ts tests/printing-line-suppliers.static.test.mjs package.json .github/workflows/apply-printing-line-suppliers.yml
+          git commit -m "Move printing suppliers to item lines"
+          git push origin HEAD:agent/printing-line-suppliers
