@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore'
-import type { OrderDoc, OrderItemDoc, ProductDoc, WarehouseDoc } from '~/types/models'
+import type { ProductDoc, WarehouseDoc } from '~/types/models'
 import { formatDateTime, isActive, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
-// @ts-ignore Shared ESM helper is executed directly by Node client tests.
-import { resolveOrderItemReference } from '~/utils/orderItemDependencies.mjs'
 // @ts-ignore Shared lifecycle helper is also executed by Node client tests.
 import { canCancelExportRequestRelease, canReleaseExportRequest } from '~/utils/exportLifecycle.mjs'
 import {
@@ -15,13 +13,11 @@ import {
 const { db } = useFirebaseServices()
 const { appUser, hasPermission, hasAnyPermission } = useAuth()
 const {
-  loadScopedOrders,
-  loadScopedOrderItems,
   loadProducts,
   loadWarehouses,
   listenWarehouseExportRequests,
 } = useScopedQueries()
-const { buildFulfillmentRows, orderSummary, requestLineProgress } = useWarehouseLogic()
+const { requestLineProgress } = useWarehouseLogic()
 const { processExportRequestToExportOrder, cancelExportRequestRelease } = useWarehouseTransactions()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
@@ -34,10 +30,8 @@ const saving = ref(false)
 const search = ref('')
 const statusFilter = ref('')
 const rows = ref<any[]>([])
-const orders = ref<OrderDoc[]>([])
 const products = ref<ProductDoc[]>([])
 const warehouses = ref<WarehouseDoc[]>([])
-const itemsByOrder = ref<Record<string, OrderItemDoc[]>>({})
 const selectedRequest = ref<any>(null)
 const actionRequest = ref<any>(null)
 const actionType = ref<'accept' | 'reject' | 'release' | 'cancel_release' | ''>('')
@@ -144,31 +138,6 @@ function appendTimeline(row: any, action: string, title: string, status: string,
   }])
 }
 
-function requestsForOrder(orderId: string) {
-  return rows.value.filter(row => row.order_id === orderId && isActive(row))
-}
-
-function fallbackOrderPatch(nextStatus: string) {
-  if (nextStatus === 'da_xuat') {
-    return { warehouse_fulfillment_status: 'da_xuat_1_phan', warehouse_request_status: 'da_xuat' }
-  }
-  if (nextStatus === 'da_tiep_nhan' || nextStatus === 'cho_xuat_kho') {
-    return { warehouse_request_status: 'da_tiep_nhan' }
-  }
-  if (nextStatus === 'tu_choi') {
-    return { warehouse_request_status: 'co_tu_choi' }
-  }
-  return {}
-}
-
-function orderPatchAfter(row: any, nextStatus: string, extra: Record<string, any> = {}) {
-  const order = orders.value.find(item => item.id === row.order_id)
-  if (!order) return fallbackOrderPatch(nextStatus)
-  const nextRows = rows.value.map(item => item.id === row.id ? { ...item, status: nextStatus, ...extra } : item)
-    .filter(item => item.order_id === row.order_id && isActive(item))
-  return orderSummary(buildFulfillmentRows(itemsByOrder.value[row.order_id] || [], nextRows), nextRows)
-}
-
 function requestHasExported(row: any) {
   const status = normalizeText(row?.status).replace(/\s+/g, '_')
   if (['da_xuat', 'da_xuat_kho', 'da_xuat_du', 'exported', 'completed', 'hoan_thanh'].includes(status)) return true
@@ -269,10 +238,8 @@ function onReleaseWarehouseChanged(index: number, value: string) {
 }
 
 function saleNotificationRecipients(row: any) {
-  const order = orders.value.find(item => item.id === row?.order_id)
   return resolveSaleNotificationRecipients({
     request: row,
-    order,
     actorEmail: appUser.value?.email || '',
   })
 }
@@ -304,7 +271,7 @@ function addSaleNotifications(batch: any, row: any, input: { type: string; title
 }
 
 async function updateRequestStatus(row: any, nextStatus: string, action: string, title: string, note = '', extra: Record<string, any> = {}, notification?: { type: string; title: string; message: string }) {
-  const orderPatch = orderPatchAfter(row, nextStatus, extra)
+  const orderPatch = fallbackOrderPatch(nextStatus)
   const batch = writeBatch(db)
   const patch = {
     status: nextStatus,
@@ -398,13 +365,8 @@ async function submitRelease(row: any) {
     .filter((line: any) => toNumber(line.requested_qty) > 0)
   if (!lines.length) return showToast('Yêu cầu xuất kho chưa có dòng hàng hợp lệ.', 'error')
 
-  const sourceItems = itemsByOrder.value[row.order_id] || []
-  const resolvedLines = lines.map((line: any) => ({
-    releaseLine: line,
-    source: resolveOrderItemReference(sourceItems, line),
-  }))
-  const invalidSource = resolvedLines.find(entry => !entry.source.line)
-  if (invalidSource) return showToast(invalidSource.source.error, 'error')
+  const missingSource = lines.filter((line: any) => !String(line.order_item_id || line.source_order_item_id || '').trim())
+  if (missingSource.length) return showToast('Yêu cầu thiếu tham chiếu dòng đơn hàng nguồn. Sale cần mở và lưu lại yêu cầu trước khi xuất.', 'error')
 
   const missing = lines.filter((line: any) => !findProductByCode(line.product_code))
   if (missing.length) {
@@ -432,14 +394,14 @@ async function submitRelease(row: any) {
     export_date: actionForm.export_date,
     note: actionForm.note,
     timeline: timeline(row),
-    orderSummaryPatch: orderPatchAfter(row, 'da_xuat', { warehouse_export_code: 'pending_firestore' }),
+    orderSummaryPatch: fallbackOrderPatch('da_xuat'),
     expected_revision: toNumber(row.revision),
-    lines: resolvedLines.map(({ releaseLine: line, source }: any) => {
+    lines: lines.map((line: any) => {
       const warehouseId = releaseWarehouseId(line, line.__release_index)
       const fromWarehouse = findWarehouse(warehouseId)
       return {
         source_order_id: row.order_id,
-        source_order_item_id: source.line.order_item_id,
+        source_order_item_id: String(line.order_item_id || line.source_order_item_id || '').trim(),
         product: findProductByCode(line.product_code),
         fromWarehouse,
         warehouse: fromWarehouse,
@@ -475,11 +437,7 @@ async function submitCancelRelease(row: any) {
     reason,
     timeline: timeline(row),
     notification_recipients: saleNotificationRecipients(row),
-    orderSummaryPatch: orderPatchAfter(row, 'da_tiep_nhan', {
-      active_export_order_id: '',
-      export_order_id: '',
-      warehouse_export_order_id: '',
-    }),
+    orderSummaryPatch: fallbackOrderPatch('da_tiep_nhan'),
     operation_id: `export_request_cancel:${row.id}:${toNumber(row.revision)}`,
     expected_request_revision: toNumber(row.revision),
   })
@@ -566,20 +524,12 @@ function startRequestsListener() {
 async function loadRows(force = false) {
   supportingLoading.value = true
   try {
-    const [loadedOrders, productRows, warehouseRows] = await Promise.all([
-      loadScopedOrders(force),
+    const [productRows, warehouseRows] = await Promise.all([
       loadProducts(force),
       loadWarehouses(force)
     ])
-    orders.value = loadedOrders.filter(isActive)
     products.value = productRows
     warehouses.value = warehouseRows
-    const items = await loadScopedOrderItems(orders.value, force)
-    itemsByOrder.value = items.reduce((map, item) => {
-      if (!map[item.order_id]) map[item.order_id] = []
-      map[item.order_id].push(item)
-      return map
-    }, {} as Record<string, OrderItemDoc[]>)
     startRequestsListener()
   } catch (error) {
     realtimeLoading.value = false
@@ -643,7 +593,7 @@ onBeforeUnmount(() => {
               <td>
                 <div class="action-buttons">
                   <button class="btn-sm" @click="openDetail(row)">Xem</button>
-                  <WarehousePrintMenu :request="row" :order="orders.find(item => item.id === row.order_id) || null" />
+                  <WarehousePrintMenu :request="row" />
                   <button v-if="canAcceptRequest(row)" class="btn-sm btn-view" @click="openAction(row, 'accept')">Tiếp nhận</button>
                   <button v-if="canReleaseRequest(row)" class="btn-sm btn-view" @click="openAction(row, 'release')">Cho xuất kho</button>
                   <button v-if="canCancelReleasedRequest(row)" class="btn-sm btn-delete" @click="openAction(row, 'cancel_release')">Hủy xuất/Hoàn tồn</button>

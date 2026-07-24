@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { collection, doc, getDoc, getDocs, serverTimestamp, writeBatch } from 'firebase/firestore'
-import type { BusTransportDoc, CustomerDoc, ExportRequestDoc, OrderDoc } from '~/types/models'
+import { collection, doc, getDocs, serverTimestamp, writeBatch } from 'firebase/firestore'
+import type { BusTransportDoc, ExportRequestDoc } from '~/types/models'
 import { formatDateTime, isActive, makeCode, makeId, normalizeText, safeJsonParse, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared lifecycle helper is executed directly by Node tests.
@@ -15,8 +15,6 @@ const { requestLineProgress } = useWarehouseLogic()
 
 const rows = ref<BusTransportDoc[]>([])
 const requests = ref<ExportRequestDoc[]>([])
-const orders = ref<OrderDoc[]>([])
-const customerCache = ref<Record<string, CustomerDoc>>({})
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
@@ -27,8 +25,6 @@ const editing = ref<BusTransportDoc | null>(null)
 const selectedDetail = ref<BusTransportDoc | null>(null)
 const selectedPrint = ref<BusTransportDoc | null>(null)
 const selectedPrintRequest = ref<ExportRequestDoc | null>(null)
-const selectedPrintOrder = ref<OrderDoc | null>(null)
-const selectedPrintCustomer = ref<CustomerDoc | null>(null)
 const selectedPrintItems = ref<Array<Record<string, any>>>([])
 const form = reactive<any>({})
 
@@ -82,11 +78,6 @@ const requestOptions = computed(() => activeRequests.value
   })))
 
 const selectedRequest = computed(() => requests.value.find(row => row.id === form.source_request_id) || null)
-const selectedOrder = computed(() => orders.value.find(row => row.id === selectedRequest.value?.order_id) || null)
-const selectedCustomer = computed(() => {
-  const customerId = String(selectedOrder.value?.customer_id || form.customer_id || '').trim()
-  return customerId ? customerCache.value[customerId] || null : null
-})
 const selectedRequestItems = computed(() => selectedRequest.value
   ? requestLineProgress(selectedRequest.value).map((line: any) => ({
       id: line.order_item_id || `${line.product_code || ''}|${line.logo || ''}`,
@@ -137,35 +128,33 @@ function resetForm() {
   Object.keys(form).forEach(key => delete form[key])
 }
 
-async function loadCustomer(customerId: any) {
-  const id = String(customerId || '').trim()
-  if (!id) return null
-  if (customerCache.value[id]) return customerCache.value[id]
-  const snapshot = await getDoc(doc(db, 'customers', id))
-  if (!snapshot.exists()) return null
-  const customer = { id: snapshot.id, ...(snapshot.data() || {}) } as CustomerDoc
-  customerCache.value = { ...customerCache.value, [id]: customer }
-  return customer
+function requestRecipient(row: any) {
+  const payload = safeJsonParse(row?.payload_json, {})
+  return {
+    customer_id: row?.customer_id || payload?.customer_id || '',
+    receiver_name: row?.receiver_name || payload?.receiver_name || row?.customer_name || payload?.customer_name || '',
+    receiver_phone: row?.receiver_phone || payload?.receiver_phone || '',
+    receiver_address: row?.receiver_address || payload?.receiver_address || '',
+  }
 }
 
 async function chooseRequest() {
   const request = selectedRequest.value
-  const order = selectedOrder.value
-  if (!request || !order) return
-  const customer = await loadCustomer(order.customer_id)
+  if (!request) return
+  const receiver = requestRecipient(request)
   Object.assign(form, {
     source_request_id: request.id,
     request_code: requestCode(request),
     request_status: request.status || '',
     export_order_id: String(activeExportOrderId(request) || ''),
     export_order_code: request.warehouse_export_code || '',
-    order_id: order.id,
-    order_code: order.order_code || request.order_code || '',
-    customer_id: order.customer_id || '',
-    customer_name: customer?.customer_name || order.customer_name || request.customer_name || '',
-    receiver_name: customer?.customer_name || order.customer_name || request.customer_name || '',
-    receiver_phone: customer?.phone || order.phone || '',
-    receiver_address: customer?.shipping_address || customer?.billing_address || '',
+    order_id: request.order_id || '',
+    order_code: request.order_code || '',
+    customer_id: receiver.customer_id,
+    customer_name: receiver.receiver_name,
+    receiver_name: receiver.receiver_name,
+    receiver_phone: receiver.receiver_phone,
+    receiver_address: receiver.receiver_address,
   })
 }
 
@@ -324,12 +313,8 @@ function itemSnapshot(row: BusTransportDoc) {
 
 async function openPrint(row: BusTransportDoc) {
   const request = requests.value.find(item => item.id === row.source_request_id) || null
-  const order = orders.value.find(item => item.id === (request?.order_id || row.order_id)) || null
-  const customer = await loadCustomer(order?.customer_id || row.customer_id)
   selectedPrint.value = row
   selectedPrintRequest.value = request
-  selectedPrintOrder.value = order
-  selectedPrintCustomer.value = customer
   selectedPrintItems.value = request
     ? requestLineProgress(request).map((line: any) => ({
         product_code: line.product_code || '', product_name: line.product_name || '', logo: line.logo || '',
@@ -343,17 +328,15 @@ async function loadRows(force = false) {
   if (!canView.value) return
   loading.value = true
   try {
-    const [transportSnapshot, requestSnapshot, orderSnapshot] = await Promise.all([
+    const [transportSnapshot, requestSnapshot] = await Promise.all([
       getDocs(collection(db, 'bus_transport_orders')),
       getDocs(collection(db, 'order_export_requests')),
-      getDocs(collection(db, 'orders')),
     ])
     rows.value = transportSnapshot.docs
       .map(item => ({ id: item.id, ...(item.data() || {}) } as BusTransportDoc))
       .filter(isActive)
       .sort((left, right) => timestampValue(right.updated_at || right.created_at) - timestampValue(left.updated_at || left.created_at))
     requests.value = requestSnapshot.docs.map(item => ({ id: item.id, ...(item.data() || {}) } as ExportRequestDoc)).filter(isActive)
-    orders.value = orderSnapshot.docs.map(item => ({ id: item.id, ...(item.data() || {}) } as OrderDoc)).filter(isActive)
     if (force) showToast('Đã làm mới dữ liệu vận chuyển nhà xe.', 'success')
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được dữ liệu vận chuyển nhà xe.'), 'error')
@@ -431,7 +414,7 @@ onMounted(() => loadRows())
         <h3 style="margin-top:18px">Sản phẩm trong yêu cầu xuất kho</h3>
         <div class="table-wrap"><table style="min-width:760px"><thead><tr><th>Sản phẩm</th><th>Mã SP</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th></tr></thead><tbody><tr v-for="item in selectedRequestItems" :key="item.id"><td><b>{{ item.product_name || '-' }}</b></td><td>{{ item.product_code || '-' }}</td><td>{{ item.logo || '-' }}</td><td>{{ item.unit || '-' }}</td><td>{{ item.quantity }}</td></tr><tr v-if="!selectedRequestItems.length"><td colspan="5" class="empty">Yêu cầu chưa có sản phẩm.</td></tr></tbody></table></div>
       </template>
-      <p class="small subtle" style="margin-top:12px">Họ tên, số điện thoại và địa chỉ được lấy trực tiếp từ bảng khách hàng. Thông tin nhà xe không bắt buộc; cột số kiện trên tem luôn để trống.</p>
+      <p class="small subtle" style="margin-top:12px">Họ tên, số điện thoại và địa chỉ lấy từ snapshot của yêu cầu xuất kho. Module nhà xe không đọc bảng khách hàng hoặc đơn hàng; cột số kiện trên tem luôn để trống.</p>
     </BaseModal>
 
     <BaseModal v-if="showDetailModal && selectedDetail" title="Chi tiết vận chuyển nhà xe" size="lg" :show-footer="false" @close="showDetailModal=false">
@@ -451,7 +434,7 @@ onMounted(() => loadRows())
       </div>
     </BaseModal>
 
-    <ParcelLabelPrintModal v-if="selectedPrint" type="bus_carrier" :source-code="selectedPrint.request_code || selectedPrint.export_order_code || selectedPrint.id" :items="selectedPrintItems" :bus-transport="selectedPrint" :request="selectedPrintRequest" :order="selectedPrintOrder" :customer="selectedPrintCustomer" @close="selectedPrint=null; selectedPrintRequest=null; selectedPrintOrder=null; selectedPrintCustomer=null; selectedPrintItems=[]" />
+    <ParcelLabelPrintModal v-if="selectedPrint" type="bus_carrier" :source-code="selectedPrint.request_code || selectedPrint.export_order_code || selectedPrint.id" :items="selectedPrintItems" :bus-transport="selectedPrint" :request="selectedPrintRequest" @close="selectedPrint=null; selectedPrintRequest=null; selectedPrintItems=[]" />
     <ConfirmModal v-bind="confirmState" @cancel="resolveConfirm(false)" @confirm="resolveConfirm(true)" />
   </AppShell>
 </template>

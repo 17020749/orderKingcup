@@ -80,7 +80,7 @@ test('client thực tế query order_items theo order_id thay vì email sao ché
   assert.match(nuxtConfig, /'~\/modules\/scoped-order-items'/)
 })
 
-test('màn hình đơn và yêu cầu xuất cùng dùng auto-import useScopedQueries đã override', () => {
+test('màn hình đơn và yêu cầu xuất của Sale cùng dùng auto-import useScopedQueries đã override', () => {
   const ordersPage = readFileSync('pages/orders.vue', 'utf8')
   const requestsPage = readFileSync('pages/export-requests.vue', 'utf8')
 
@@ -88,13 +88,19 @@ test('màn hình đơn và yêu cầu xuất cùng dùng auto-import useScopedQu
   assert.match(requestsPage, /loadScopedOrderItems\(orders\.value, force\)/)
 })
 
-test('related pages use the shared order_items loader', () => {
+test('các page quan hệ cần xem đơn dùng shared order_items loader', () => {
   for (const page of [
     'pages/dashboard.vue',
     'pages/shipments.vue',
     'pages/export-requests.vue',
-    'pages/warehouse-export-requests.vue',
   ]) {
     assert.match(readFileSync(page, 'utf8'), /loadScopedOrderItems/)
   }
+})
+
+test('page Kho dùng snapshot yêu cầu và không đọc order_items', () => {
+  const warehousePage = readFileSync('pages/warehouse-export-requests.vue', 'utf8')
+  assert.doesNotMatch(warehousePage, /loadScopedOrderItems/)
+  assert.doesNotMatch(warehousePage, /loadScopedOrders/)
+  assert.match(warehousePage, /requestLineProgress/)
 })

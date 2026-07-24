@@ -1570,6 +1570,22 @@ service cloud.firestore {
         && getAfter(path).data.get('operation_id', '') == request.resource.data.get('operation_id', '');
     }
 
+    function requestSnapshotAllowsExportItem(requestData, sourceItemId, exportItem) {
+      let version = requestData.get('request_snapshot_version', 0);
+      let sourceItems = requestData.get('source_items', {});
+      let snapshot = sourceItems is map ? sourceItems.get(sourceItemId, {}) : {};
+      return version < 1
+        || (
+          sourceItems is map
+          && snapshot is map
+          && snapshot.get('order_id', '') == exportItem.get('source_order_id', '')
+          && snapshot.get('product_id', '') == exportItem.get('product_id', '')
+          && snapshot.get('product_code', '') == exportItem.get('product_code', '')
+          && snapshot.get('requested_quantity', 0) is number
+          && exportItem.get('quantity', 0) <= snapshot.get('requested_quantity', 0)
+        );
+    }
+
     function generatedExportItemCreateAllowed() {
       let exportOrderId = request.resource.data.get('export_order_id', '');
       let path = exportOrderPath(exportOrderId);
@@ -1596,7 +1612,8 @@ service cloud.firestore {
         && sourceItem.get('product_id', '') == request.resource.data.get('product_id', '')
         && sourceItem.get('product_code', '') == request.resource.data.get('product_code', '')
         && sourceItem.get('quantity', 0) is number
-        && request.resource.data.get('quantity', 0) <= sourceItem.get('quantity', 0);
+        && request.resource.data.get('quantity', 0) <= sourceItem.get('quantity', 0)
+        && requestSnapshotAllowsExportItem(requestData, sourceItemId, request.resource.data);
     }
 
     function printItemSourceMatches(data) {
@@ -1724,6 +1741,12 @@ service cloud.firestore {
         && onlyChanged([
           'order_code',
           'customer_name',
+          'customer_id',
+          'receiver_name',
+          'receiver_phone',
+          'receiver_address',
+          'request_snapshot_version',
+          'source_items',
           'export_date',
           'updated_by',
           'payload_json',
@@ -1891,7 +1914,6 @@ service cloud.firestore {
 
     match /customers/{docId} {
       allow get: if isAdmin()
-        || hasAnyPerm(['export.print', 'bus_transport.view'])
         || (
           hasPerm('customers.view')
           && (
@@ -2004,7 +2026,6 @@ service cloud.firestore {
 
     match /orders/{docId} {
       allow read: if hasPerm('orders.view_all')
-        || hasPerm('bus_transport.view')
         || hasPerm('printing.view_all')
         || (
           hasPerm('printing.orders_view')
