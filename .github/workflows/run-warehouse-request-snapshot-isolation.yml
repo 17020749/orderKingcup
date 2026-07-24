@@ -29,8 +29,23 @@ jobs:
       - name: Extract and apply guarded patch
         shell: bash
         run: |
+          rm -f PATCH_ERROR.txt
           awk '/cat > \/tmp\/patch.b64/{copy=1; next} /^PATCH$/{copy=0} copy' .github/workflows/apply-warehouse-request-snapshot-isolation.yml > /tmp/patch.b64
           base64 -d /tmp/patch.b64 | gunzip > /tmp/apply-patch.mjs
+          python <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/apply-patch.mjs')
+          source = path.read_text()
+          source = source.replace(
+              "replaceOnce('firestore.rules', `           'order_code',\\n           'customer_name',\\n           'export_date',`, `           'order_code',\\n           'customer_name',\\n           'customer_id',",
+              "replaceOnce('firestore.rules', `          'order_code',\\n          'customer_name',\\n          'export_date',`, `          'order_code',\\n          'customer_name',\\n          'customer_id',",
+          )
+          source = source.replace(
+              "           'receiver_name',\\n           'receiver_phone',\\n           'receiver_address',\\n           'request_snapshot_version',\\n           'source_items',\\n           'export_date',`)",
+              "          'receiver_name',\\n          'receiver_phone',\\n          'receiver_address',\\n          'request_snapshot_version',\\n          'source_items',\\n          'export_date',`)",
+          )
+          path.write_text(source)
+          PY
           set +e
           node /tmp/apply-patch.mjs > /tmp/patch.log 2>&1
           status=$?
@@ -44,7 +59,6 @@ jobs:
             git push origin HEAD:agent/warehouse-request-snapshot-isolation || true
             exit "$status"
           fi
-          rm -f PATCH_ERROR.txt
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Prepare and build
