@@ -53,9 +53,10 @@ const labelItems = computed(() => requestLineProgress(props.request)
 async function loadCustomer() {
   selectedCustomer.value = null
   const customerId = String(props.order?.customer_id || '').trim()
-  if (!customerId) return
+  if (!customerId) throw new Error('Đơn hàng chưa liên kết với hồ sơ khách hàng.')
   const snapshot = await getDoc(doc(db, 'customers', customerId))
-  if (snapshot.exists()) selectedCustomer.value = { id: snapshot.id, ...(snapshot.data() || {}) } as CustomerDoc
+  if (!snapshot.exists()) throw new Error('Không tìm thấy hồ sơ khách hàng liên kết với đơn hàng.')
+  selectedCustomer.value = { id: snapshot.id, ...(snapshot.data() || {}) } as CustomerDoc
 }
 
 async function findTransportByRequest() {
