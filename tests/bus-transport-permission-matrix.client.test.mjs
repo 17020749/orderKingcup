@@ -55,12 +55,14 @@ test('permission catalog giữ nguyên namespace, không tạo view_all', () => 
   assert.doesNotMatch(source, /bus_transport\.view_all/)
 })
 
-test('rules chỉ mở đọc nguồn cần thiết và không mở ghi collection cũ', () => {
+test('rules chỉ mở request snapshot và không cấp quyền đọc hoặc ghi collection cũ', () => {
   const rules = readFileSync('firestore.rules', 'utf8')
   assert.match(rules, /match \/bus_transport_orders\/\{docId\}/)
   assert.match(rules, /allow read: if hasPerm\('bus_transport\.view'\)/)
   assert.match(rules, /order_export_requests[\s\S]*bus_transport\.view/)
-  assert.match(rules, /match \/orders\/\{docId\}[\s\S]*hasPerm\('bus_transport\.view'\)/)
-  assert.match(rules, /match \/customers\/\{docId\}[\s\S]*hasAnyPerm\(\['export\.print', 'bus_transport\.view'\]\)/)
+  assert.doesNotMatch(rules, /match \/orders\/\{docId\}[\s\S]{0,500}hasPerm\('bus_transport\.view'\)/)
+  assert.doesNotMatch(rules, /match \/customers\/\{docId\}[\s\S]{0,500}'bus_transport\.view'/)
+  assert.doesNotMatch(rules, /match \/customers\/\{docId\}[\s\S]{0,500}'export\.print'/)
   assert.doesNotMatch(rules, /allow (create|update): if hasPerm\('bus_transport\.view'\)/)
+  assert.match(rules, /requestSnapshotAllowsExportItem/)
 })

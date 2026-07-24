@@ -1,15 +1,11 @@
 <script setup lang="ts">
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
-import type { BusTransportDoc, CustomerDoc, OrderDoc, OrderItemDoc } from '~/types/models'
+import { collection, getDocs, query, where } from 'firebase/firestore'
+import type { BusTransportDoc } from '~/types/models'
 import { normalizeText, toNumber } from '~/utils/format'
 // @ts-ignore Shared lifecycle helper is executed directly by Node tests.
 import { activeExportOrderId } from '~/utils/exportLifecycle.mjs'
 
-const props = defineProps<{
-  request: Record<string, any>
-  order?: OrderDoc | null
-  orderItems?: OrderItemDoc[]
-}>()
+const props = defineProps<{ request: Record<string, any> }>()
 
 const { db } = useFirebaseServices()
 const { hasPermission } = useAuth()
@@ -20,7 +16,6 @@ const menuOpen = ref(false)
 const loadingType = ref<'request' | 'post_office' | 'bus_carrier' | ''>('')
 const showRequestPrint = ref(false)
 const selectedBusTransport = ref<BusTransportDoc | null>(null)
-const selectedCustomer = ref<CustomerDoc | null>(null)
 const selectedLabelType = ref<'post_office' | 'bus_carrier' | null>(null)
 
 const statusKey = computed(() => normalizeText(props.request?.status).replace(/\s+/g, '_'))
@@ -38,7 +33,7 @@ const canOpenMenu = computed(() => (
 
 const labelItems = computed(() => requestLineProgress(props.request)
   .map((line: any) => ({
-    id: line.order_item_id || `${line.product_code || ''}|${line.logo || ''}`,
+    id: line.order_item_id || line.source_order_item_id || `${line.product_code || ''}|${line.logo || ''}`,
     product_id: line.product_id || '',
     product_code: line.product_code || '',
     product_name: line.product_name || '',
@@ -49,15 +44,6 @@ const labelItems = computed(() => requestLineProgress(props.request)
     deleted: false,
   }))
   .filter(item => item.quantity > 0))
-
-async function loadCustomer() {
-  selectedCustomer.value = null
-  const customerId = String(props.order?.customer_id || '').trim()
-  if (!customerId) throw new Error('Đơn hàng chưa liên kết với hồ sơ khách hàng.')
-  const snapshot = await getDoc(doc(db, 'customers', customerId))
-  if (!snapshot.exists()) throw new Error('Không tìm thấy hồ sơ khách hàng liên kết với đơn hàng.')
-  selectedCustomer.value = { id: snapshot.id, ...(snapshot.data() || {}) } as CustomerDoc
-}
 
 async function findTransportByRequest() {
   if (!canReadBusTransport.value) throw new Error('Bạn chưa có quyền xem vận chuyển nhà xe.')
@@ -97,13 +83,7 @@ async function openPrint(type: 'request' | 'post_office' | 'bus_carrier') {
   if (!canOpenMenu.value || loadingType.value) return
   menuOpen.value = false
   selectedBusTransport.value = null
-  selectedCustomer.value = null
   selectedLabelType.value = null
-
-  if (!props.order) {
-    showToast('Không tìm thấy đơn hàng liên kết với yêu cầu xuất kho.', 'error')
-    return
-  }
 
   if (type === 'request') {
     showRequestPrint.value = true
@@ -113,12 +93,10 @@ async function openPrint(type: 'request' | 'post_office' | 'bus_carrier') {
   loadingType.value = type
   try {
     if (!labelItems.value.length) throw new Error('Yêu cầu chưa có sản phẩm để in.')
-    await loadCustomer()
     if (type === 'bus_carrier') await findTransportByRequest()
     selectedLabelType.value = type
   } catch (error: any) {
     selectedBusTransport.value = null
-    selectedCustomer.value = null
     showToast(String(error?.message || error || 'Không tải được dữ liệu để in.'), 'error')
   } finally {
     loadingType.value = ''
@@ -128,51 +106,30 @@ async function openPrint(type: 'request' | 'post_office' | 'bus_carrier') {
 function closeLabelPrint() {
   selectedLabelType.value = null
   selectedBusTransport.value = null
-  selectedCustomer.value = null
 }
 </script>
 
 <template>
   <div v-if="canOpenMenu" class="warehouse-print-menu">
-    <button
-      type="button"
-      class="btn-sm btn-view print-trigger"
-      :disabled="Boolean(loadingType)"
-      @click="menuOpen = !menuOpen"
-    >
+    <button type="button" class="btn-sm btn-view print-trigger" :disabled="Boolean(loadingType)" @click="menuOpen = !menuOpen">
       {{ loadingType ? 'Đang tải...' : 'In ▾' }}
     </button>
     <div v-if="menuOpen" class="print-options">
       <button type="button" @click="openPrint('request')">Phiếu xuất kho</button>
       <button type="button" @click="openPrint('post_office')">Tem gửi bưu điện</button>
-      <button
-        type="button"
-        :disabled="!canReadBusTransport"
-        :title="canReadBusTransport ? 'In tem từ đơn vận chuyển nhà xe' : 'Thiếu quyền bus_transport.view'"
-        @click="openPrint('bus_carrier')"
-      >
-        Tem gửi nhà xe
-      </button>
+      <button type="button" :disabled="!canReadBusTransport" :title="canReadBusTransport ? 'In tem từ đơn vận chuyển nhà xe' : 'Thiếu quyền bus_transport.view'" @click="openPrint('bus_carrier')">Tem gửi nhà xe</button>
     </div>
   </div>
 
-  <ExportRequestPrintModal
-    v-if="showRequestPrint && order"
-    :request="request"
-    :order="order"
-    :items="orderItems || []"
-    @close="showRequestPrint = false"
-  />
+  <ExportRequestPrintModal v-if="showRequestPrint" :request="request" @close="showRequestPrint = false" />
 
   <ParcelLabelPrintModal
-    v-if="selectedLabelType && order"
+    v-if="selectedLabelType"
     :type="selectedLabelType"
     :source-code="request.request_id || request.id"
     :items="labelItems"
     :bus-transport="selectedBusTransport"
     :request="request"
-    :order="order"
-    :customer="selectedCustomer"
     @close="closeLabelPrint"
   />
 </template>
@@ -180,28 +137,8 @@ function closeLabelPrint() {
 <style scoped>
 .warehouse-print-menu { position: relative; display: inline-flex; }
 .print-trigger { white-space: nowrap; }
-.print-options {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 6px);
-  right: 0;
-  min-width: 190px;
-  padding: 6px;
-  border: 1px solid #dbe4ff;
-  border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
-}
-.print-options button {
-  display: block;
-  width: 100%;
-  padding: 9px 10px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
+.print-options { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; min-width: 190px; padding: 6px; border: 1px solid #dbe4ff; border-radius: 10px; background: #fff; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16); }
+.print-options button { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 7px; background: transparent; text-align: left; cursor: pointer; }
 .print-options button:hover:not(:disabled) { background: #eef2ff; }
 .print-options button:disabled { color: #94a3b8; cursor: not-allowed; }
 </style>
