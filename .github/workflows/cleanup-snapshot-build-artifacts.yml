@@ -1,0 +1,35 @@
+name: Cleanup snapshot build artifacts
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.head.ref == 'agent/warehouse-request-snapshot-isolation'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/warehouse-request-snapshot-isolation
+          fetch-depth: 0
+      - name: Restore generated directories from dev
+        shell: bash
+        run: |
+          git fetch origin dev
+          git rm -r --ignore-unmatch .nuxt .output
+          git checkout origin/dev -- .nuxt .output || true
+          rm -f .github/workflows/cleanup-snapshot-build-artifacts.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Remove generated build artifacts from snapshot PR"
+          git push origin HEAD:agent/warehouse-request-snapshot-isolation
