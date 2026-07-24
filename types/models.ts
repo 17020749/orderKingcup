@@ -300,11 +300,14 @@ export interface ShipmentDoc {
 export interface BusTransportDoc {
   id: string
   transport_code?: string
-  export_order_id: string
-  export_order_code?: string
   source_request_id?: string
+  request_code?: string
+  request_status?: string
+  export_order_id?: string
+  export_order_code?: string
   order_id?: string
   order_code?: string
+  customer_id?: string
   customer_name?: string
   receiver_name?: string
   receiver_phone?: string

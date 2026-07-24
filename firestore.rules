@@ -1890,7 +1890,16 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
 
     match /customers/{docId} {
-      allow read: if isAdmin()
+      allow get: if isAdmin()
+        || hasAnyPerm(['export.print', 'bus_transport.view'])
+        || (
+          hasPerm('customers.view')
+          && (
+            hasPerm('customers.view_all')
+            || ownEmailField(resource.data, 'created_by')
+          )
+        );
+      allow list: if isAdmin()
         || (
           hasPerm('customers.view')
           && (
@@ -1995,6 +2004,7 @@ service cloud.firestore {
 
     match /orders/{docId} {
       allow read: if hasPerm('orders.view_all')
+        || hasPerm('bus_transport.view')
         || hasPerm('printing.view_all')
         || (
           hasPerm('printing.orders_view')
@@ -2228,7 +2238,8 @@ service cloud.firestore {
           'export_requests.accept',
           'export_requests.reject',
           'export_requests.release',
-          'export_requests.process'
+          'export_requests.process',
+          'bus_transport.view'
         ])
         || hasPerm('export_requests.view_all')
         || (
@@ -2399,7 +2410,9 @@ service cloud.firestore {
       allow create: if hasPerm('bus_transport.create')
         && request.resource.data.get('id', '') == docId
         && validBoundedString(request.resource.data.get('transport_code', ''), 1, 200)
-        && validBoundedString(request.resource.data.get('export_order_id', ''), 1, 200)
+        && validBoundedString(request.resource.data.get('source_request_id', ''), 1, 200)
+        && exists(/databases/$(database)/documents/order_export_requests/$(request.resource.data.get('source_request_id', '')))
+        && !(get(/databases/$(database)/documents/order_export_requests/$(request.resource.data.get('source_request_id', ''))).data.get('status', '') in ['tu_choi', 'rejected'])
         && request.resource.data.get('active', false) == true
         && request.resource.data.get('deleted', true) == false
         && request.resource.data.get('created_at', null) is timestamp
@@ -2410,8 +2423,9 @@ service cloud.firestore {
         || (
           hasPerm('bus_transport.edit')
           && unchanged([
-            'id', 'transport_code', 'export_order_id', 'export_order_code',
-            'source_request_id', 'order_id', 'order_code', 'created_at', 'created_by',
+            'id', 'transport_code', 'source_request_id', 'request_code', 'request_status',
+            'export_order_id', 'export_order_code', 'order_id', 'order_code',
+            'customer_id', 'customer_name', 'created_at', 'created_by',
             'deleted', 'active', 'status', 'deleted_at', 'deleted_by'
           ])
           && request.resource.data.get('active', false) == true
