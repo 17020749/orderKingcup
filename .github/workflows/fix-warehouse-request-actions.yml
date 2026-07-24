@@ -1,0 +1,104 @@
+name: Fix warehouse request actions
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.pull_request.head.ref == 'agent/warehouse-request-snapshot-isolation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/warehouse-request-snapshot-isolation
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+          cache: npm
+      - name: Patch warehouse request action helper
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          page_path = Path('pages/warehouse-export-requests.vue')
+          page = page_path.read_text()
+          marker = """function requestHasExported(row: any) {"""
+          helper = """function warehouseOrderSummaryPatch(nextStatus: string) {
+            if (nextStatus === 'da_xuat') {
+              return { warehouse_fulfillment_status: 'da_xuat_1_phan', warehouse_request_status: 'da_xuat' }
+            }
+            if (nextStatus === 'da_tiep_nhan' || nextStatus === 'cho_xuat_kho') {
+              return { warehouse_request_status: 'da_tiep_nhan' }
+            }
+            if (nextStatus === 'tu_choi') {
+              return { warehouse_request_status: 'co_tu_choi' }
+            }
+            return {}
+          }
+
+          function requestHasExported(row: any) {"""
+
+          if 'function warehouseOrderSummaryPatch(nextStatus: string)' not in page:
+            if marker not in page:
+              raise SystemExit('Không tìm thấy vị trí chèn warehouseOrderSummaryPatch')
+            page = page.replace(marker, helper, 1)
+
+          count = page.count('fallbackOrderPatch')
+          if count == 0 and 'warehouseOrderSummaryPatch' not in page:
+            raise SystemExit('Không tìm thấy helper cũ hoặc helper mới')
+          page = page.replace('fallbackOrderPatch', 'warehouseOrderSummaryPatch')
+
+          if 'fallbackOrderPatch' in page:
+            raise SystemExit('Vẫn còn tham chiếu fallbackOrderPatch')
+          if page.count('warehouseOrderSummaryPatch(') < 4:
+            raise SystemExit('Chưa nối helper mới vào đủ các action')
+
+          page_path.write_text(page)
+
+          test_path = Path('tests/warehouse-print-menu.static.test.mjs')
+          test_source = test_path.read_text()
+          block = """
+
+test('warehouse accept reject release and cancel use a defined order summary helper', () => {
+  const page = readFileSync('pages/warehouse-export-requests.vue', 'utf8')
+  assert.ok(page.includes('function warehouseOrderSummaryPatch(nextStatus: string)'))
+  assert.ok(!page.includes('fallbackOrderPatch'))
+  assert.ok(page.includes("warehouseOrderSummaryPatch('da_xuat')"))
+  assert.ok(page.includes("warehouseOrderSummaryPatch('da_tiep_nhan')"))
+  assert.ok(page.includes('const orderPatch = warehouseOrderSummaryPatch(nextStatus)'))
+  assert.ok(!page.includes('loadScopedOrders'))
+  assert.ok(!page.includes('loadScopedOrderItems'))
+})
+"""
+          if "warehouse accept reject release and cancel use a defined order summary helper" not in test_source:
+            test_source += block
+          test_path.write_text(test_source)
+          PY
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare, build and focused tests
+        run: |
+          npx --no-install nuxi prepare
+          npm run build
+          node --test tests/warehouse-print-menu.static.test.mjs tests/bus-transport-followup.static.test.mjs
+      - name: Commit fix and remove temporary workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/fix-warehouse-request-actions.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix warehouse request accept reject and release actions"
+          git push origin HEAD:agent/warehouse-request-snapshot-isolation
