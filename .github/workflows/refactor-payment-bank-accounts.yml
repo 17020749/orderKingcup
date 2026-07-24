@@ -1,6 +1,11 @@
 name: Refactor payment bank account setup
 
 on:
+  push:
+    branches:
+      - agent/payment-bank-accounts
+    paths:
+      - .github/workflows/refactor-payment-bank-accounts.yml
   pull_request:
     branches:
       - dev
@@ -14,7 +19,7 @@ permissions:
 
 jobs:
   refactor:
-    if: github.event.pull_request.head.ref == 'agent/payment-bank-accounts'
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/payment-bank-accounts'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -111,7 +116,6 @@ jobs:
               "    await deletePaymentBankAccount(account)\n",
           )
 
-          # isActive is no longer used by the page after repository extraction.
           replace_once(
               path,
               "import { isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'\n",
