@@ -1,0 +1,31 @@
+name: Apply bus transport follow-up
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-followup:
+    if: github.head_ref == 'agent/fix-bus-transport-request-sources'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply guarded source changes
+        run: node scripts/apply-bus-transport-followup.mjs
+      - name: Commit source changes and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "align bus transport with export requests"
+          git push origin "HEAD:${{ github.head_ref }}"
