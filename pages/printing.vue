@@ -214,9 +214,17 @@ const enrichedRows = computed(() => rows.value.map(order => {
     .map(item => toEpoch(item.expected_done_at))
     .filter(epoch => !Number.isNaN(epoch))
   const supplierNames = [...new Set(detailItems.map(item => String(item.supplier_name || '').trim()).filter(Boolean))]
+  const productMap = new Map<string, { key: string; product_code: string; product_name: string; line_count: number }>()
+  detailItems.forEach(item => {
+    const key = String(item.product_id || item.product_code || item.product_name || item.id)
+    const current = productMap.get(key)
+    if (current) current.line_count += 1
+    else productMap.set(key, { key, product_code: String(item.product_code || ''), product_name: String(item.product_name || ''), line_count: 1 })
+  })
   return {
     ...order,
     detailItems,
+    product_summary: Array.from(productMap.values()),
     supplier_summary: supplierNames.join(', '),
     print_status: orderStatus(detailItems),
     total_print_quantity: detailItems.reduce((sum, item) => sum + toNumber(item.print_quantity), 0),
@@ -608,6 +616,7 @@ onBeforeUnmount(() => {
             <tr>
               <th>Mã đơn hàng</th>
               <th>Mã AM</th>
+              <th>Sản phẩm</th>
               <th>NCC theo dòng</th>
               <th>Tiến độ dòng</th>
               <th>SL dự kiến</th>
@@ -621,6 +630,12 @@ onBeforeUnmount(() => {
             <tr v-for="row in filtered" :key="row.id">
               <td><b>{{ row.order_code }}</b><div class="small subtle">{{ row.created_by || '-' }}</div></td>
               <td>{{ row.am_code || '-' }}</td>
+              <td class="printing-products-cell">
+                <div v-for="product in row.product_summary" :key="product.key" class="printing-product-line">
+                  <b>{{ product.product_code || '-' }}</b><span>{{ product.product_name || 'Sản phẩm' }}</span><small v-if="product.line_count > 1">{{ product.line_count }} dòng</small>
+                </div>
+                <span v-if="!row.product_summary.length">-</span>
+              </td>
               <td>{{ row.supplier_summary || '-' }}</td>
               <td><b>{{ row.completed_count }}/{{ row.detailItems.length }}</b> dòng</td>
               <td>{{ quantityText(row.total_print_quantity) }}</td>
@@ -635,7 +650,7 @@ onBeforeUnmount(() => {
                 </div>
               </td>
             </tr>
-            <tr v-if="!filtered.length"><td colspan="9" class="empty">Chưa có tiến độ in ấn phù hợp.</td></tr>
+            <tr v-if="!filtered.length"><td colspan="10" class="empty">Chưa có tiến độ in ấn phù hợp.</td></tr>
           </tbody>
         </table>
       </div>
@@ -780,7 +795,11 @@ onBeforeUnmount(() => {
 .complete-card strong { color: #15803d; }
 .printing-toolbar .input { max-width: 720px; }
 .printing-toolbar .select { width: 220px; }
-.printing-table { min-width: 1320px; }
+.printing-table { min-width: 1580px; }
+.printing-products-cell { min-width: 280px; }
+.printing-product-line { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; }
+.printing-product-line span { color: var(--text); }
+.printing-product-line small { color: var(--muted); white-space: nowrap; }
 .printing-header-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .print-fields-grid { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)) auto; gap: 10px; align-items: end; margin-top: 14px; }
 .complete-checkbox { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 10px; font-weight: 800; white-space: nowrap; }
