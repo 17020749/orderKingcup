@@ -203,8 +203,11 @@ function lotDetailsForRow(row: any): InventoryLotDetailRow[] {
       const importOrder = importOrderId ? importOrderById.value.get(importOrderId) : undefined
       const hasCost = canViewCost.value
         && Boolean(costItem)
-        && Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost')
-      const unitCost = hasCost ? toNumber((costItem as any).unit_cost) : null
+        && (Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost_with_vat')
+          || Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost'))
+      const unitCost = hasCost
+        ? toNumber((costItem as any).unit_cost_with_vat ?? (costItem as any).unit_cost)
+        : null
       const availableQuantity = roundQuantity(lot.available_quantity)
 
       return {
@@ -399,7 +402,7 @@ const toolbarFilters = computed(() => [
   { key: 'logo', label: 'Logo', allLabel: 'Tất cả logo', options: [{ label: 'Không logo', value: 'no-logo' }, { label: 'Có logo', value: 'logo' }] },
   { key: 'reconcile', label: 'Đối soát', allLabel: 'Tất cả đối soát', options: [{ label: 'Đã khớp', value: 'matched' }, { label: 'Đang lệch', value: 'mismatch' }] },
   { key: 'stock', label: 'Tình trạng tồn', allLabel: 'Tất cả tình trạng', options: [{ label: 'Còn hàng', value: 'in_stock' }, { label: 'Hết hàng', value: 'out_of_stock' }, { label: 'Tồn âm', value: 'negative' }] },
-  { key: 'sort', label: 'Sắp xếp', options: [{ label: 'Kho / sản phẩm', value: 'warehouse_product' }, { label: 'Tồn nhiều nhất', value: 'quantity_desc' }, { label: 'Tồn ít nhất', value: 'quantity_asc' }, { label: 'Cập nhật mới nhất', value: 'updated_desc' }, ...(canViewCost.value ? [{ label: 'Giá trị tồn cao nhất', value: 'value_desc' }] : [])] },
+  { key: 'sort', label: 'Sắp xếp', options: [{ label: 'Kho / sản phẩm', value: 'warehouse_product' }, { label: 'Tồn nhiều nhất', value: 'quantity_desc' }, { label: 'Tồn ít nhất', value: 'quantity_asc' }, { label: 'Cập nhật mới nhất', value: 'updated_desc' }, ...(canViewCost.value ? [{ label: 'Giá trị tồn có VAT cao nhất', value: 'value_desc' }] : [])] },
 ])
 function updateFilter(key: string, value: string) {
   if (key === 'warehouse') warehouseFilter.value = value
@@ -587,7 +590,7 @@ onMounted(() => loadRows())
       <div class="summary-card"><label>Tồn từ movements</label><strong>{{ quantityText(summary.movementQuantity) }}</strong></div>
       <div class="summary-card"><label>Dòng bị lệch</label><strong>{{ summary.mismatches.toLocaleString('vi-VN') }}</strong></div>
       <div v-if="canViewCost" class="summary-card"><label>Số lô còn hàng</label><strong>{{ summary.lots.toLocaleString('vi-VN') }}</strong></div>
-      <div v-if="canViewCost" class="summary-card"><label>Giá trị tồn đã xác định</label><strong>{{ currencyText(summary.inventoryValue) }}</strong></div>
+      <div v-if="canViewCost" class="summary-card"><label>Giá trị tồn có VAT</label><strong>{{ currencyText(summary.inventoryValue) }}</strong></div>
     </div>
 
     <div class="card" style="margin: 24px;">
@@ -645,7 +648,7 @@ onMounted(() => loadRows())
               <th>Tồn theo lịch sử</th>
               <th>Tồn hiện tại</th>
               <th v-if="canViewCost">Số lô</th>
-              <th v-if="canViewCost">Giá trị tồn</th>
+              <th v-if="canViewCost">Giá trị tồn có VAT</th>
               <th>Chênh lệch</th>
               <th>Cập nhật cuối</th>
               <th>Thao tác</th>
@@ -722,8 +725,8 @@ onMounted(() => loadRows())
         <div class="summary-grid" style="margin: 0 0 16px;">
           <div class="summary-card"><label>Số lô còn hàng</label><strong>{{ selectedLotSummary.lots }}</strong></div>
           <div class="summary-card"><label>Tổng số lượng theo lô</label><strong>{{ quantityText(selectedLotSummary.quantity) }}</strong></div>
-          <div class="summary-card"><label>Giá trị đã xác định</label><strong>{{ currencyText(selectedLotSummary.knownValue) }}</strong></div>
-          <div class="summary-card"><label>Giá nhập bình quân</label><strong>{{ currencyText(selectedLotSummary.averageCost) }}</strong></div>
+          <div class="summary-card"><label>Giá trị có VAT</label><strong>{{ currencyText(selectedLotSummary.knownValue) }}</strong></div>
+          <div class="summary-card"><label>Giá nhập có VAT bình quân</label><strong>{{ currencyText(selectedLotSummary.averageCost) }}</strong></div>
         </div>
 
         <div v-if="selectedLotSummary.unknownLots" class="small" style="margin-bottom: 10px; color:#b45309;">
@@ -742,8 +745,8 @@ onMounted(() => loadRows())
                 <th>Hạn dùng</th>
                 <th>SL ban đầu</th>
                 <th>SL còn lại</th>
-                <th>Giá nhập</th>
-                <th>Giá trị còn lại</th>
+                <th>Giá nhập có VAT</th>
+                <th>Giá trị còn lại có VAT</th>
               </tr>
             </thead>
             <tbody>

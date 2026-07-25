@@ -43,6 +43,10 @@ type WarehouseLineInput = {
   target_logo?: string
   quantity: number
   unit?: string
+  unit_cost?: number
+  vat_percent?: number
+  unit_cost_with_vat?: number
+  line_cost?: number
   note?: string
 }
 
@@ -170,6 +174,17 @@ function signedNumber(value: any) {
   const quantity = toNumber(value)
   if (quantity === 0) throw new Error('Số lượng điều chỉnh phải khác 0.')
   return quantity
+}
+
+function roundMoney(value: any) {
+  return Math.round(toNumber(value) * 100) / 100
+}
+
+function importCostFields(line: any, quantity: number) {
+  const unitCost = Math.max(0, toNumber(line?.unit_cost))
+  const vatPercent = Math.max(0, toNumber(line?.vat_percent))
+  const unitCostWithVat = roundMoney(unitCost * (1 + vatPercent / 100))
+  return { unit_cost: unitCost, vat_percent: vatPercent, unit_cost_with_vat: unitCostWithVat, line_cost: roundMoney(quantity * unitCostWithVat) }
 }
 
 function revisionOf(data: any) {
@@ -510,6 +525,7 @@ export function useWarehouseTransactions() {
       const quantity = ensurePositiveQuantity(line.quantity)
       preparedLines.push({
         ...line,
+        ...importCostFields(line, quantity),
         product,
         warehouse,
         quantity,
@@ -529,6 +545,7 @@ export function useWarehouseTransactions() {
     })))
 
     const supplier = input.supplier || {}
+    const totalCost = roundMoney(preparedLines.reduce((sum, line) => sum + toNumber(line.line_cost), 0))
     const orderPayload = {
       id: orderId,
       code,
@@ -536,6 +553,7 @@ export function useWarehouseTransactions() {
       import_date: importDate,
       supplier_id: supplier.id || '',
       supplier_name: supplier.name || supplier.supplier_name || '',
+      total_cost: totalCost,
       note: input.note || '',
       status: 'completed',
       active: true,
@@ -591,6 +609,10 @@ export function useWarehouseTransactions() {
           logo: normalizeLogo(line.logo),
           quantity: line.quantity,
           unit: line.unit || line.product.unit || '',
+          unit_cost: line.unit_cost,
+          vat_percent: line.vat_percent,
+          unit_cost_with_vat: line.unit_cost_with_vat,
+          line_cost: line.line_cost,
           note: line.note || '',
           legacy_line_key: '',
           status: 'completed',
@@ -755,6 +777,7 @@ export function useWarehouseTransactions() {
       const existing = oldItems[index]
       return {
         ...line,
+        ...importCostFields(line, quantity),
         product,
         warehouse,
         quantity,
@@ -762,6 +785,8 @@ export function useWarehouseTransactions() {
         movementId: safeDocId(`import_update_apply:${orderId}:${index + 1}:${makeId('mv')}`, 'movement')
       }
     })
+
+    const totalCost = roundMoney(preparedNew.reduce((sum, line) => sum + toNumber(line.line_cost), 0))
 
     const balanceDeltas = new Map<string, BalanceDelta>()
     for (const item of oldItems) {
@@ -841,6 +866,7 @@ export function useWarehouseTransactions() {
         import_date: importDate,
         supplier_id: supplier.id || '',
         supplier_name: supplier.name || supplier.supplier_name || '',
+        total_cost: totalCost,
         note: input.note || '',
         updated_by: updatedBy,
         operation_id: operationId,
@@ -885,6 +911,10 @@ export function useWarehouseTransactions() {
           logo: normalizeLogo(line.logo),
           quantity: line.quantity,
           unit: line.unit || line.product.unit || '',
+          unit_cost: line.unit_cost,
+          vat_percent: line.vat_percent,
+          unit_cost_with_vat: line.unit_cost_with_vat,
+          line_cost: line.line_cost,
           note: line.note || '',
           legacy_line_key: oldItems[index]?.legacy_line_key || '',
           status: 'completed',
