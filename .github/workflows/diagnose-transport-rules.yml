@@ -32,6 +32,7 @@ jobs:
       - name: Capture concise failure
         shell: bash
         run: |
+          # Run the same complete Rules suite used by Warehouse CI.
           rm -f TRANSPORT_RULES_ERROR.txt
           set +e
           npm run test:rules > /tmp/rules.log 2>&1
