@@ -60,6 +60,7 @@ function newBlankLine() {
     quantity: 0,
     unit: '',
     unit_cost: 0,
+    vat_percent: 0,
     expiry_date: '',
     note: '',
   }
@@ -125,8 +126,29 @@ const itemsByOrder = computed(() => {
   return map
 })
 
+function roundMoney(value: any) {
+  return Math.round(toNumber(value) * 100) / 100
+}
+
+function vatPercent(item: any) {
+  return Math.max(0, toNumber(item?.vat_percent))
+}
+
+function unitCostWithVat(item: any) {
+  return roundMoney(toNumber(item?.unit_cost) * (1 + vatPercent(item) / 100))
+}
+
+function resolvedUnitCostWithVat(item: any) {
+  return item != null && Object.prototype.hasOwnProperty.call(item, 'unit_cost_with_vat')
+    ? toNumber(item.unit_cost_with_vat)
+    : unitCostWithVat(item)
+}
+
 function lineCost(item: any) {
-  return Math.round((toNumber(item.line_cost) || toNumber(item.quantity) * toNumber(item.unit_cost)) * 100) / 100
+  const calculated = roundMoney(toNumber(item?.quantity) * resolvedUnitCostWithVat(item))
+  return item != null && Object.prototype.hasOwnProperty.call(item, 'line_cost')
+    ? roundMoney(item.line_cost)
+    : calculated
 }
 
 const enrichedRows = computed(() => rows.value.map(row => {
@@ -183,7 +205,7 @@ const summary = computed(() => ({
 
 const selectedItems = computed(() => selected.value ? itemsByOrder.value.get(selected.value.id) || [] : [])
 const formTotalQuantity = computed(() => form.lines.reduce((sum, line) => sum + toNumber(line.quantity), 0))
-const formTotalCost = computed(() => form.lines.reduce((sum, line) => sum + toNumber(line.quantity) * toNumber(line.unit_cost), 0))
+const formTotalCost = computed(() => form.lines.reduce((sum, line) => sum + lineCost(line), 0))
 
 function itemsForOrder(row: ImportOrderDoc | null) {
   return row ? itemsByOrder.value.get(row.id) || [] : []
@@ -256,6 +278,7 @@ function openEditModal(row: ImportOrderDoc) {
           quantity: toNumber(item.quantity),
           unit: item.unit || '',
           unit_cost: toNumber((item as any).unit_cost),
+          vat_percent: toNumber((item as any).vat_percent),
           expiry_date: String((item as any).expiry_date || '').slice(0, 10),
           note: item.note || '',
         }))
@@ -335,6 +358,9 @@ async function saveImportOrder() {
         quantity: toNumber(line.quantity),
         unit: line.unit || findProduct(line.product_id)?.unit || '',
         unit_cost: toNumber(line.unit_cost),
+        vat_percent: vatPercent(line),
+        unit_cost_with_vat: unitCostWithVat(line),
+        line_cost: lineCost(line),
         expiry_date: line.expiry_date || '',
         note: line.note,
       })),
@@ -403,7 +429,7 @@ onMounted(() => loadRows())
       <div class="summary-card"><label>Số phiếu</label><strong>{{ summary.orders.toLocaleString('vi-VN') }}</strong></div>
       <div class="summary-card"><label>Số dòng hàng</label><strong>{{ summary.lines.toLocaleString('vi-VN') }}</strong></div>
       <div class="summary-card"><label>Tổng SL nhập</label><strong>{{ quantityText(summary.quantity) }}</strong></div>
-      <div class="summary-card"><label>Tổng giá trị nhập</label><strong>{{ currencyText(summary.cost) }}</strong></div>
+      <div class="summary-card"><label>Tổng giá trị nhập có VAT</label><strong>{{ currencyText(summary.cost) }}</strong></div>
     </div>
 
     <div class="card" style="margin: 24px;">
@@ -471,8 +497,8 @@ onMounted(() => loadRows())
       </div>
 
       <div class="table-wrap" style="margin-top: 14px">
-        <table style="min-width: 1420px">
-          <thead><tr><th>Sản phẩm</th><th>Kho nhập</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Giá nhập</th><th>Thành tiền</th><th>Hạn dùng</th><th>Ghi chú</th><th></th></tr></thead>
+        <table style="min-width: 1780px">
+          <thead><tr><th>Sản phẩm</th><th>Kho nhập</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Giá nhập</th><th>VAT (%)</th><th>Giá có VAT</th><th>Thành tiền có VAT</th><th>Hạn dùng</th><th>Ghi chú</th><th></th></tr></thead>
           <tbody>
             <tr v-for="(line, index) in form.lines" :key="index">
               <td><SearchableSelect v-model="line.product_id" :options="productOptions" placeholder="Tìm theo mã hoặc tên sản phẩm" @change="onProductChanged(line)" /></td>
@@ -480,8 +506,10 @@ onMounted(() => loadRows())
               <td><input v-model="line.logo" class="input" placeholder="Để trống nếu không logo" /></td>
               <td><input v-model="line.unit" class="input" placeholder="Đơn vị" /></td>
               <td><input v-model.number="line.quantity" class="input" type="number" min="0" step="1" /></td>
-              <td><input v-model.number="line.unit_cost" class="input" type="number" min="0" step="100" placeholder="Giá của lần nhập này" /></td>
-              <td><b>{{ currencyText(toNumber(line.quantity) * toNumber(line.unit_cost)) }}</b></td>
+              <td><input v-model.number="line.unit_cost" class="input" type="number" min="0" step="100" placeholder="Giá chưa VAT" /></td>
+              <td><input v-model.number="line.vat_percent" class="input" type="number" min="0" step="0.1" placeholder="0" /></td>
+              <td><b>{{ currencyText(unitCostWithVat(line)) }}</b></td>
+              <td><b>{{ currencyText(lineCost(line)) }}</b></td>
               <td><input v-model="line.expiry_date" class="input" type="date" /></td>
               <td><input v-model="line.note" class="input" placeholder="Ghi chú dòng" /></td>
               <td><button class="btn-sm btn-delete" type="button" @click="removeLine(index)">Xóa</button></td>
@@ -492,7 +520,7 @@ onMounted(() => loadRows())
       <button class="btn" type="button" style="margin-top: 10px" @click="addLine">+ Thêm dòng</button>
       <div class="detail-grid" style="margin-top: 12px">
         <div class="detail-item"><label>Tổng số lượng</label><strong>{{ quantityText(formTotalQuantity) }}</strong></div>
-        <div class="detail-item"><label>Tổng giá trị nhập</label><strong>{{ currencyText(formTotalCost) }}</strong></div>
+        <div class="detail-item"><label>Tổng giá trị nhập có VAT</label><strong>{{ currencyText(formTotalCost) }}</strong></div>
       </div>
       <div class="form-group" style="margin-top: 12px"><label>Ghi chú phiếu</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
       <p class="small subtle">Giá nhập chỉ được lưu ở dữ liệu phiếu nhập. Phiếu xuất và màn hình xử lý yêu cầu kho không nhận trường giá này.</p>
@@ -503,14 +531,14 @@ onMounted(() => loadRows())
         <div class="detail-item"><label>Mã phiếu</label><strong>{{ codeOf(selected) }}</strong></div>
         <div class="detail-item"><label>Ngày nhập</label><strong>{{ formatDateTime(selected.import_date || selected.created_at) }}</strong></div>
         <div class="detail-item"><label>Nhà cung cấp</label><strong>{{ selected.supplier_name || '-' }}</strong></div>
-        <div class="detail-item"><label>Tổng giá trị</label><strong>{{ currencyText((selected as any).total_cost || selectedItems.reduce((sum, item) => sum + lineCost(item), 0)) }}</strong></div>
+        <div class="detail-item"><label>Tổng giá trị có VAT</label><strong>{{ currencyText((selected as any).total_cost || selectedItems.reduce((sum, item) => sum + lineCost(item), 0)) }}</strong></div>
         <div class="detail-item"><label>Người tạo</label><strong>{{ selected.created_by || '-' }}</strong></div>
         <div class="detail-item"><label>Ghi chú</label><strong>{{ selected.note || '-' }}</strong></div>
       </div>
 
       <div class="table-wrap">
-        <table style="min-width: 1220px">
-          <thead><tr><th>Sản phẩm</th><th>Kho</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Giá nhập</th><th>Thành tiền</th><th>Mã lô</th><th>Hạn dùng</th><th>Ghi chú</th></tr></thead>
+        <table style="min-width: 1580px">
+          <thead><tr><th>Sản phẩm</th><th>Kho</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Giá nhập</th><th>VAT (%)</th><th>Giá có VAT</th><th>Thành tiền có VAT</th><th>Mã lô</th><th>Hạn dùng</th><th>Ghi chú</th></tr></thead>
           <tbody>
             <tr v-for="item in selectedItems" :key="item.id">
               <td><b>{{ item.product_code }}</b><div class="small subtle">{{ item.product_name }}</div></td>
@@ -519,12 +547,14 @@ onMounted(() => loadRows())
               <td>{{ item.unit || '-' }}</td>
               <td><b>{{ quantityText(item.quantity) }}</b></td>
               <td>{{ currencyText((item as any).unit_cost) }}</td>
+              <td>{{ quantityText((item as any).vat_percent) }}%</td>
+              <td>{{ currencyText(resolvedUnitCostWithVat(item)) }}</td>
               <td><b>{{ currencyText(lineCost(item)) }}</b></td>
               <td><span class="small">{{ (item as any).lot_id || '-' }}</span></td>
               <td>{{ (item as any).expiry_date || '-' }}</td>
               <td>{{ item.note || '-' }}</td>
             </tr>
-            <tr v-if="!selectedItems.length"><td colspan="10" class="empty">Phiếu này chưa có dòng chi tiết.</td></tr>
+            <tr v-if="!selectedItems.length"><td colspan="12" class="empty">Phiếu này chưa có dòng chi tiết.</td></tr>
           </tbody>
         </table>
       </div>
