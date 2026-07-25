@@ -29,14 +29,34 @@ jobs:
           from pathlib import Path
           path = Path('/tmp/apply.py')
           source = path.read_text()
-          source = source.replace(
+          replacements = [
+            (
               '"       carrier_name: \'\', carrier_phone: \'\', vehicle_plate: \'\', driver_name: \'\', departure_at: \'\',\\n",',
               '"      carrier_name: \'\', carrier_phone: \'\', vehicle_plate: \'\', driver_name: \'\', departure_at: \'\',\\n",',
-          )
-          source = source.replace(
+            ),
+            (
               '"       transport_carrier_id: \'\', carrier_name: \'\', carrier_phone: \'\', vehicle_plate: \'\', driver_name: \'\', departure_at: \'\',\\n",',
               '"      transport_carrier_id: \'\', carrier_name: \'\', carrier_phone: \'\', vehicle_plate: \'\', driver_name: \'\', departure_at: \'\',\\n",',
-          )
+            ),
+            (
+              '"         receiver_address: String(form.receiver_address || \'\').trim(),\\n         carrier_name: String(form.carrier_name || \'\').trim(),\\n",',
+              '"        receiver_address: String(form.receiver_address || \'\').trim(),\\n        carrier_name: String(form.carrier_name || \'\').trim(),\\n",',
+            ),
+            (
+              '"         receiver_address: String(form.receiver_address || \'\').trim(),\\n         transport_carrier_id: String(form.transport_carrier_id || \'\').trim(),\\n         carrier_name: String(form.carrier_name || \'\').trim(),\\n",',
+              '"        receiver_address: String(form.receiver_address || \'\').trim(),\\n        transport_carrier_id: String(form.transport_carrier_id || \'\').trim(),\\n        carrier_name: String(form.carrier_name || \'\').trim(),\\n",',
+            ),
+            (
+              '"         receiver_address: form.receiver_address || \'\',\\n         carrier_name: String(form.carrier_name || \'\').trim(),\\n",',
+              '"        receiver_address: form.receiver_address || \'\',\\n        carrier_name: String(form.carrier_name || \'\').trim(),\\n",',
+            ),
+            (
+              '"         receiver_address: form.receiver_address || \'\',\\n         transport_carrier_id: String(form.transport_carrier_id || \'\').trim(),\\n         carrier_name: String(form.carrier_name || \'\').trim(),\\n",',
+              '"        receiver_address: form.receiver_address || \'\',\\n        transport_carrier_id: String(form.transport_carrier_id || \'\').trim(),\\n        carrier_name: String(form.carrier_name || \'\').trim(),\\n",',
+            ),
+          ]
+          for old, new in replacements:
+            source = source.replace(old, new)
           path.write_text(source)
           PY
           set +e
