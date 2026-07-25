@@ -103,7 +103,13 @@ function resetFilters() {
   dateTo.value = ''
 }
 
-const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id || order.order_code === form.order_code))
+const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id || (!form.order_id && order.order_code === form.order_code)))
+const orderOptions = computed(() => orders.value.map(order => ({
+  value: order.id,
+  label: `${order.order_code} - ${order.customer_name || 'Khách chưa tên'}`,
+  subLabel: [order.order_status, order.payment_status].filter(Boolean).join(' · '),
+  search: `${order.order_code} ${order.customer_name || ''} ${order.customer_code || ''} ${order.phone || ''}`,
+})))
 const selectedRecipientAccount = computed(() => bankAccounts.value.find(account => account.id === form.recipient_account_id) || null)
 const isBankTransfer = computed(() => isBankTransferMethod(form.method))
 
@@ -508,16 +514,15 @@ onMounted(() => {
       @save="savePayment"
     >
       <div class="form-grid">
-        <div class="form-group">
+        <div class="form-group full">
           <label>Mã đơn hàng</label>
-          <select v-model="form.order_id" class="select" :disabled="!!editing" @change="chooseOrder">
-            <option value="">Chọn đơn</option>
-            <option v-for="order in orders" :key="order.id" :value="order.id">{{ order.order_code }} - {{ order.customer_name }}</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Nhập mã đơn</label>
-          <input v-model="form.order_code" class="input" :readonly="!!editing" placeholder="VD: DH-..." @input="form.order_id = ''; chooseOrder()" />
+          <SearchableSelect
+            v-model="form.order_id"
+            :options="orderOptions"
+            :disabled="!!editing"
+            placeholder="Tìm mã đơn, khách hàng hoặc số điện thoại..."
+            @change="chooseOrder"
+          />
         </div>
       </div>
 
