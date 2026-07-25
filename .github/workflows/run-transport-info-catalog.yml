@@ -23,7 +23,7 @@ jobs:
       - name: Extract and apply patch
         shell: bash
         run: |
-          # The source patch lives in the companion workflow and both files are removed after use.
+          # Execute the guarded source patch and remove both temporary workflows after success.
           awk '/python <<'"'"'PY'"'"'/{copy=1; next} /^          PY$/{copy=0} copy { sub(/^          /, ""); print }' .github/workflows/apply-transport-info-catalog.yml > /tmp/apply.py
           python /tmp/apply.py
 
