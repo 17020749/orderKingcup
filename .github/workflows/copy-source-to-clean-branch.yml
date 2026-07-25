@@ -1,0 +1,34 @@
+name: Copy final source files to clean branch
+
+on:
+  push:
+    branches:
+      - agent/payment-import-vat-printing-table
+
+permissions:
+  contents: write
+
+jobs:
+  copy:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/payment-import-vat-printing-table
+          fetch-depth: 0
+      - name: Copy source files to clean branch
+        run: |
+          git fetch origin dev agent/payment-import-vat-printing-final
+          git checkout agent/payment-import-vat-printing-final
+          git checkout origin/agent/payment-import-vat-printing-table -- \
+            pages/payments.vue \
+            pages/imports.vue \
+            pages/inventory.vue \
+            pages/printing.vue \
+            composables/useWarehouseTransactions.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pages/payments.vue pages/imports.vue pages/inventory.vue pages/printing.vue composables/useWarehouseTransactions.ts
+          git commit -m "Add searchable payment orders and VAT inventory values"
+          git push origin HEAD:agent/payment-import-vat-printing-final
