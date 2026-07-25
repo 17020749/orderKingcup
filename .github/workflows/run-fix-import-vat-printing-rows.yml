@@ -1,0 +1,38 @@
+name: Run VAT and printing row fix
+
+on:
+  pull_request:
+    branches:
+      - dev
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'agent/fix-import-vat-and-printing-rows'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-import-vat-and-printing-rows
+          fetch-depth: 0
+
+      - name: Apply fixes
+        run: python .github/scripts/apply_fix_import_vat_printing_rows.py
+
+      - name: Validate focused changes
+        run: |
+          npm ci
+          npm run build
+          npm run generate
+          node --test tests/warehouse-client-payload.static.test.mjs tests/printing-permission.static.test.mjs
+
+      - name: Commit source fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix import VAT persistence and expand printing rows"
+          git push origin HEAD:agent/fix-import-vat-and-printing-rows
