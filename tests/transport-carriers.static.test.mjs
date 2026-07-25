@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
+// Scope guard: the carrier catalog is used only by bus transport. The legacy
+// shipments page is moved in navigation only and keeps its original form/data flow.
 const carrierPage = readFileSync('pages/transport-carriers.vue', 'utf8')
 const shipmentsPage = readFileSync('pages/shipments.vue', 'utf8')
 const busTransportPage = readFileSync('pages/bus-transport.vue', 'utf8')
