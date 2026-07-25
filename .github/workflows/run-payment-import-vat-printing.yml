@@ -21,13 +21,27 @@ jobs:
       - name: Extract and run scoped patch
         shell: bash
         run: |
+          if [ -f .github/payment-import-vat-printing.error ]; then exit 0; fi
           awk '/^          python <<'"'"'PY'"'"'$/{capture=1; next} /^          PY$/{capture=0} capture{sub(/^          /, ""); print}' .github/workflows/apply-payment-import-vat-printing.yml > /tmp/apply.py
-          python /tmp/apply.py
+          set +e
+          python /tmp/apply.py > /tmp/apply-output.txt 2>&1
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ]; then
+            cp /tmp/apply-output.txt .github/payment-import-vat-printing.error
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/payment-import-vat-printing.error
+            git commit -m "Record payment VAT patch failure"
+            git push origin HEAD:agent/payment-import-vat-printing-table
+            exit 1
+          fi
           rm -f .github/workflows/run-payment-import-vat-printing.yml .github/payment-import-vat-printing.trigger
 
       - name: Commit final source changes
         shell: bash
         run: |
+          if [ -f .github/payment-import-vat-printing.error ]; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
