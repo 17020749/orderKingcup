@@ -1,0 +1,83 @@
+name: Revert shipments carrier catalog scope
+
+on:
+  push:
+    branches:
+      - agent/transport-info-catalog
+    paths:
+      - .github/workflows/revert-shipments-carrier-catalog.yml
+
+permissions:
+  contents: write
+
+jobs:
+  correct-scope:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/transport-info-catalog
+          fetch-depth: 0
+      - name: Restore shipments and remove unintended dependencies
+        shell: bash
+        run: |
+          git fetch origin dev
+          git checkout origin/dev -- pages/shipments.vue
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{path}: expected 1 anchor, got {count}: {old!r}')
+              file.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'types/models.ts',
+              "  transport_carrier_id?: string\n  carrier?: string\n  carrier_phone?: string\n  vehicle_plate?: string\n  driver_name?: string\n",
+              "  carrier?: string\n",
+          )
+
+          replace_once(
+              'firestore.rules',
+              "        'transport_carriers.view',\n        'shipments.view', 'shipments.view_all', 'shipments.create', 'shipments.edit',\n        'bus_transport.view', 'bus_transport.create', 'bus_transport.edit'\n",
+              "        'transport_carriers.view',\n        'bus_transport.view', 'bus_transport.create', 'bus_transport.edit'\n",
+          )
+
+          rules_test = Path('tests/transport-carriers-permissions.rules.test.mjs')
+          text = rules_test.read_text()
+          text = text.replace("const SHIPMENT_VIEWER = 'shipment-viewer@example.com'\n", '')
+          text = text.replace("      setDoc(doc(db, 'users', SHIPMENT_VIEWER), activeUser(['shipments.view'])),\n", '')
+          text = text.replace(
+              "  for (const email of [VIEWER, SHIPMENT_VIEWER, BUS_VIEWER]) {",
+              "  for (const email of [VIEWER, BUS_VIEWER]) {",
+          )
+          text = text.replace(
+              "test('quyền xem danh mục và các nghiệp vụ vận chuyển chỉ được đọc nhà xe'",
+              "test('quyền xem danh mục và nghiệp vụ vận chuyển nhà xe chỉ được đọc nhà xe'",
+          )
+          rules_test.write_text(text)
+
+          static_test = Path('tests/transport-carriers.static.test.mjs')
+          text = static_test.read_text()
+          text = text.replace(
+              "test('shipments và bus transport chọn nhà xe từ catalog và lưu snapshot'",
+              "test('bus transport chọn nhà xe từ catalog và lưu snapshot; shipments giữ nguyên'",
+          )
+          text = text.replace(
+              "  const shipments = readFileSync('pages/shipments.vue', 'utf8')\n  const bus = readFileSync('pages/bus-transport.vue', 'utf8')\n\n  for (const source of [shipments, bus]) {\n    assert.match(source, /collection\(db, 'transport_carriers'\)/)\n    assert.match(source, /SearchableSelect/)\n    assert.match(source, /transport_carrier_id/)\n    assert.match(source, /vehicle_plate/)\n    assert.match(source, /driver_name/)\n  }\n",
+              "  const shipments = readFileSync('pages/shipments.vue', 'utf8')\n  const bus = readFileSync('pages/bus-transport.vue', 'utf8')\n\n  assert.match(bus, /collection\(db, 'transport_carriers'\)/)\n  assert.match(bus, /SearchableSelect/)\n  assert.match(bus, /transport_carrier_id/)\n  assert.match(bus, /vehicle_plate/)\n  assert.match(bus, /driver_name/)\n\n  assert.doesNotMatch(shipments, /collection\(db, 'transport_carriers'\)/)\n  assert.doesNotMatch(shipments, /transport_carrier_id/)\n  assert.match(shipments, /v-model=\"form\.carrier\"/)\n",
+          )
+          static_test.write_text(text)
+          PY
+      - name: Commit corrected scope and remove workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/revert-shipments-carrier-catalog.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pages/shipments.vue types/models.ts firestore.rules tests/transport-carriers-permissions.rules.test.mjs tests/transport-carriers.static.test.mjs .github/workflows/revert-shipments-carrier-catalog.yml
+          git commit -m "Keep shipments unchanged and scope carrier catalog to bus transport"
+          git push origin HEAD:agent/transport-info-catalog
