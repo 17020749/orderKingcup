@@ -278,7 +278,9 @@ export interface TransportCarrierDoc {
   carrier_code?: string
   carrier_name: string
   carrier_phone?: string
-  vehicle_plate?: string
+  carrier_address?: string
+  service_province_codes?: number[]
+  service_province_names?: string[]
   driver_name?: string
   note?: string
   status?: string
@@ -341,7 +343,11 @@ export interface BusTransportDoc {
   transport_carrier_id?: string
   carrier_name?: string
   carrier_phone?: string
-  vehicle_plate?: string
+  carrier_address?: string
+  carrier_province_codes?: number[]
+  carrier_province_names?: string[]
+  selected_province_code?: number | null
+  selected_province_name?: string
   driver_name?: string
   departure_at?: string
   transport_status?: string
