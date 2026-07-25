@@ -24,6 +24,7 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'page.printing', group: 'Tiến độ in ấn', name: 'Xem tab Tiến độ in ấn', emphasis: 'primary' },
   { key: 'page.shipments', group: 'Vận chuyển', name: 'Xem tab Vận chuyển' },
   { key: 'page.bus_transport', group: 'Vận chuyển nhà xe', name: 'Xem tab Vận chuyển nhà xe' },
+  { key: 'page.transport_carriers', group: 'Danh sách nhà xe', name: 'Xem tab Danh sách nhà xe' },
   { key: 'page.invoices', group: 'Hóa đơn', name: 'Xem tab Hóa đơn' },
   { key: 'page.settings', group: 'Cài đặt', name: 'Xem tab Cài đặt' },
   { key: 'page.activity_logs', group: 'Nhật ký', name: 'Xem tab Nhật ký hoạt động' },
@@ -112,6 +113,11 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'bus_transport.create', group: 'Vận chuyển nhà xe', name: 'Tạo đơn vận chuyển nhà xe' },
   { key: 'bus_transport.edit', group: 'Vận chuyển nhà xe', name: 'Sửa đơn vận chuyển nhà xe' },
   { key: 'bus_transport.delete', group: 'Vận chuyển nhà xe', name: 'Xóa đơn vận chuyển nhà xe' },
+
+  { key: 'transport_carriers.view', group: 'Danh sách nhà xe', name: 'Xem danh sách nhà xe' },
+  { key: 'transport_carriers.create', group: 'Danh sách nhà xe', name: 'Thêm nhà xe' },
+  { key: 'transport_carriers.edit', group: 'Danh sách nhà xe', name: 'Sửa nhà xe' },
+  { key: 'transport_carriers.delete', group: 'Danh sách nhà xe', name: 'Xóa nhà xe' },
 
   { key: 'invoices.view', group: 'Hóa đơn', name: 'Xem hóa đơn của mình' },
   { key: 'invoices.view_all', group: 'Hóa đơn', name: 'Xem tất cả hóa đơn', emphasis: 'scope' },
