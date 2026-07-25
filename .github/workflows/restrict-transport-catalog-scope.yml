@@ -1,0 +1,134 @@
+name: Restrict transport catalog scope
+
+on:
+  push:
+    branches:
+      - agent/transport-info-catalog
+    paths:
+      - .github/workflows/restrict-transport-catalog-scope.yml
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/transport-info-catalog
+          fetch-depth: 0
+      - name: Restore shipments and restrict carrier catalog to bus transport
+        shell: bash
+        run: |
+          git fetch origin dev
+          git checkout origin/dev -- pages/shipments.vue
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              file = Path(path)
+              source = file.read_text()
+              count = source.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{path}: expected one match, found {count}: {old!r}')
+              file.write_text(source.replace(old, new, 1))
+
+          replace_once(
+              'firestore.rules',
+              "        'transport_carriers.view',\n        'shipments.view', 'shipments.view_all', 'shipments.create', 'shipments.edit',\n        'bus_transport.view', 'bus_transport.create', 'bus_transport.edit'",
+              "        'transport_carriers.view',\n        'bus_transport.view', 'bus_transport.create', 'bus_transport.edit'",
+          )
+
+          replace_once(
+              'types/models.ts',
+              "export interface ShipmentDoc {\n  id: string\n  order_id: string\n  order_code?: string\n  transport_carrier_id?: string\n  carrier?: string\n  carrier_phone?: string\n  vehicle_plate?: string\n  driver_name?: string\n  tracking_code?: string",
+              "export interface ShipmentDoc {\n  id: string\n  order_id: string\n  order_code?: string\n  carrier?: string\n  tracking_code?: string",
+          )
+
+          rules_test = Path('tests/transport-carriers-permissions.rules.test.mjs')
+          source = rules_test.read_text()
+          source = source.replace("const SHIPMENT_VIEWER = 'shipment-viewer@example.com'\n", '')
+          source = source.replace("      setDoc(doc(db, 'users', SHIPMENT_VIEWER), activeUser(['shipments.view'])),\n", '')
+          source = source.replace(
+              "test('quyền xem danh mục và các nghiệp vụ vận chuyển chỉ được đọc nhà xe', async () => {\n  for (const email of [VIEWER, SHIPMENT_VIEWER, BUS_VIEWER]) {",
+              "test('quyền xem danh mục và nghiệp vụ nhà xe chỉ được đọc nhà xe', async () => {\n  for (const email of [VIEWER, BUS_VIEWER]) {",
+          )
+          rules_test.write_text(source)
+
+          Path('tests/transport-carriers.static.test.mjs').write_text("""import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { test } from 'node:test'
+
+const carrierPage = readFileSync('pages/transport-carriers.vue', 'utf8')
+const shipmentsPage = readFileSync('pages/shipments.vue', 'utf8')
+const busTransportPage = readFileSync('pages/bus-transport.vue', 'utf8')
+const accessMatrix = readFileSync('constants/accessMatrix.mjs', 'utf8')
+const permissions = readFileSync('constants/permissions.ts', 'utf8')
+const rules = readFileSync('firestore.rules', 'utf8')
+
+test('danh sách nhà xe có page riêng và bốn quyền CRUD độc lập', () => {
+  assert.match(accessMatrix, /path: '\/transport-carriers'/)
+  assert.match(accessMatrix, /label: 'Danh sách nhà xe'/)
+  for (const permission of [
+    'transport_carriers.view',
+    'transport_carriers.create',
+    'transport_carriers.edit',
+    'transport_carriers.delete',
+  ]) {
+    assert.match(permissions, new RegExp(`key: '${permission.replace('.', '\\.')}'`))
+    assert.match(carrierPage, new RegExp(`hasPermission\\('${permission.replace('.', '\\.')}'\\)`))
+  }
+})
+
+test('ba page chỉ được gom chung trong nhóm Thông tin vận chuyển', () => {
+  assert.match(accessMatrix, /key: 'transport', label: 'Thông tin vận chuyển'/)
+  for (const key of ['shipments', 'bus_transport', 'transport_carriers']) {
+    assert.match(accessMatrix, new RegExp(`key: '${key}'[\\s\\S]{0,180}navSection: 'transport'`))
+  }
+})
+
+test('chỉ vận chuyển nhà xe dùng danh mục và lưu ID cùng snapshot nhà xe', () => {
+  assert.match(busTransportPage, /collection\(db, 'transport_carriers'\)/)
+  assert.match(busTransportPage, /SearchableSelect v-model="form\.transport_carrier_id"/)
+  assert.match(busTransportPage, /transport_carrier_id:/)
+  assert.match(busTransportPage, /carrier_name: carrier\.carrier_name/)
+  assert.match(busTransportPage, /carrier_phone: carrier\.carrier_phone/)
+  assert.match(busTransportPage, /vehicle_plate: carrier\.vehicle_plate/)
+  assert.match(busTransportPage, /driver_name: carrier\.driver_name/)
+})
+
+test('page shipments giữ nguyên nghiệp vụ cũ và không phụ thuộc danh mục nhà xe', () => {
+  assert.doesNotMatch(shipmentsPage, /transport_carriers/)
+  assert.doesNotMatch(shipmentsPage, /transport_carrier_id/)
+  assert.doesNotMatch(shipmentsPage, /TransportCarrierDoc/)
+  assert.match(shipmentsPage, /<label>Nhà vận chuyển<\/label><input v-model="form\.carrier" class="input"/)
+
+  const carrierBlockStart = rules.indexOf('match /transport_carriers/{docId}')
+  const carrierBlockEnd = rules.indexOf('match /bus_transport_orders/{docId}', carrierBlockStart)
+  const carrierBlock = rules.slice(carrierBlockStart, carrierBlockEnd)
+  assert.doesNotMatch(carrierBlock, /shipments\./)
+})
+
+test('thông tin snapshot trên form vận chuyển nhà xe là chỉ đọc', () => {
+  for (const field of ['carrier_phone', 'vehicle_plate', 'driver_name', 'carrier_name']) {
+    assert.match(busTransportPage, new RegExp(`v-model="form\\.${field}"[^>]*readonly`))
+  }
+})
+
+test('page danh mục chỉ ghi collection transport_carriers', () => {
+  assert.match(carrierPage, /doc\(db, 'transport_carriers'/)
+  assert.match(carrierPage, /collection\(db, 'transport_carriers'\)/)
+  assert.doesNotMatch(carrierPage, /doc\(db, '(orders|customers|shipments|bus_transport_orders)'/)
+})
+""")
+          PY
+      - name: Commit corrected scope and remove temporary workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/restrict-transport-catalog-scope.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pages/shipments.vue firestore.rules types/models.ts tests/transport-carriers-permissions.rules.test.mjs tests/transport-carriers.static.test.mjs .github/workflows/restrict-transport-catalog-scope.yml
+          git commit -m "Keep shipments independent from carrier catalog"
+          git push origin HEAD:agent/transport-info-catalog
