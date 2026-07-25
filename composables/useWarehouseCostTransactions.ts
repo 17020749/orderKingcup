@@ -54,6 +54,10 @@ type PricedWarehouseLineInput = {
   quantity: number
   unit?: string
   unit_cost?: number
+  vat_rate?: number
+  vat_percent?: number
+  unit_cost_with_vat?: number
+  line_cost?: number
   expiry_date?: string
   note?: string
 }
@@ -187,6 +191,22 @@ function nonNegativeCost(value: any) {
   const cost = Math.round(toNumber(value) * 100) / 100
   if (cost < 0) throw new Error('Giá nhập không được âm.')
   return cost
+}
+
+function roundMoney(value: any) {
+  return Math.round(toNumber(value) * 100) / 100
+}
+
+function importCostFields(line: any, quantity: number) {
+  const unitCost = nonNegativeCost(line?.unit_cost)
+  const vatRate = Math.max(0, Math.min(100, toNumber(line?.vat_rate ?? line?.vat_percent)))
+  const unitCostWithVat = roundMoney(unitCost * (1 + vatRate / 100))
+  return {
+    unitCost,
+    vatRate,
+    unitCostWithVat,
+    lineCost: roundMoney(quantity * unitCostWithVat),
+  }
 }
 
 function revisionOf(data: any) {
@@ -602,7 +622,7 @@ export function useWarehouseCostTransactions() {
       const product = ensureProduct(line.product)
       const warehouse = ensureWarehouse(line.warehouse, 'kho nhập')
       const quantity = positiveQuantity(line.quantity)
-      const unitCost = nonNegativeCost(line.unit_cost)
+      const costFields = importCostFields(line, quantity)
       const itemId = safeDocId(`${orderId}__${index + 1}`, 'import_item')
       const lotId = safeDocId(`lot__${itemId}`, 'lot')
       return {
@@ -610,7 +630,7 @@ export function useWarehouseCostTransactions() {
         product,
         warehouse,
         quantity,
-        unitCost,
+        ...costFields,
         itemId,
         lotId,
         movementId: safeDocId(`import:${orderId}:${index + 1}`, 'movement'),
@@ -673,7 +693,7 @@ export function useWarehouseCostTransactions() {
           supplier_id: supplier.id || '',
           supplier_name: supplier.name || supplier.supplier_name || '',
           total_quantity: roundQuantity(prepared.reduce((sum, line) => sum + line.quantity, 0)),
-          total_cost: Math.round(prepared.reduce((sum, line) => sum + line.quantity * line.unitCost, 0) * 100) / 100,
+          total_cost: roundMoney(prepared.reduce((sum, line) => sum + line.lineCost, 0)),
           note: input.note || '',
           status: 'completed',
           active: true,
@@ -700,7 +720,10 @@ export function useWarehouseCostTransactions() {
             quantity: line.quantity,
             unit: line.unit || line.product.unit || '',
             unit_cost: line.unitCost,
-            line_cost: Math.round(line.quantity * line.unitCost * 100) / 100,
+            vat_rate: line.vatRate,
+            vat_percent: line.vatRate,
+            unit_cost_with_vat: line.unitCostWithVat,
+            line_cost: line.lineCost,
             expiry_date: line.expiry_date || '',
             lot_id: line.lotId,
             note: line.note || '',
@@ -792,7 +815,7 @@ export function useWarehouseCostTransactions() {
         product,
         warehouse,
         quantity: positiveQuantity(line.quantity),
-        unitCost: nonNegativeCost(line.unit_cost),
+        ...importCostFields(line, positiveQuantity(line.quantity)),
         itemId,
         lotId: String(existing?.lot_id || safeDocId(`lot__${itemId}`, 'lot')),
         existing,
@@ -860,7 +883,7 @@ export function useWarehouseCostTransactions() {
           supplier_id: supplier.id || '',
           supplier_name: supplier.name || supplier.supplier_name || '',
           total_quantity: roundQuantity(prepared.reduce((sum, line) => sum + line.quantity, 0)),
-          total_cost: Math.round(prepared.reduce((sum, line) => sum + line.quantity * line.unitCost, 0) * 100) / 100,
+          total_cost: roundMoney(prepared.reduce((sum, line) => sum + line.lineCost, 0)),
           note: input.note || '',
           updated_by: actor,
           operation_id: operationId,
@@ -903,7 +926,10 @@ export function useWarehouseCostTransactions() {
             quantity: line.quantity,
             unit: line.unit || line.product.unit || '',
             unit_cost: line.unitCost,
-            line_cost: Math.round(line.quantity * line.unitCost * 100) / 100,
+            vat_rate: line.vatRate,
+            vat_percent: line.vatRate,
+            unit_cost_with_vat: line.unitCostWithVat,
+            line_cost: line.lineCost,
             expiry_date: line.expiry_date || '',
             lot_id: line.lotId,
             note: line.note || '',
