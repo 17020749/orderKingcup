@@ -60,7 +60,7 @@ function newBlankLine() {
     quantity: 0,
     unit: '',
     unit_cost: 0,
-    vat_percent: 0,
+    vat_rate: 0,
     expiry_date: '',
     note: '',
   }
@@ -130,12 +130,13 @@ function roundMoney(value: any) {
   return Math.round(toNumber(value) * 100) / 100
 }
 
-function vatPercent(item: any) {
-  return Math.max(0, toNumber(item?.vat_percent))
+function vatRate(item: any) {
+  const raw = item?.vat_rate ?? item?.vat_percent ?? 0
+  return Math.max(0, Math.min(100, toNumber(raw)))
 }
 
 function unitCostWithVat(item: any) {
-  return roundMoney(toNumber(item?.unit_cost) * (1 + vatPercent(item) / 100))
+  return roundMoney(toNumber(item?.unit_cost) * (1 + vatRate(item) / 100))
 }
 
 function resolvedUnitCostWithVat(item: any) {
@@ -278,7 +279,7 @@ function openEditModal(row: ImportOrderDoc) {
           quantity: toNumber(item.quantity),
           unit: item.unit || '',
           unit_cost: toNumber((item as any).unit_cost),
-          vat_percent: toNumber((item as any).vat_percent),
+          vat_rate: vatRate(item),
           expiry_date: String((item as any).expiry_date || '').slice(0, 10),
           note: item.note || '',
         }))
@@ -358,7 +359,7 @@ async function saveImportOrder() {
         quantity: toNumber(line.quantity),
         unit: line.unit || findProduct(line.product_id)?.unit || '',
         unit_cost: toNumber(line.unit_cost),
-        vat_percent: vatPercent(line),
+        vat_rate: vatRate(line),
         unit_cost_with_vat: unitCostWithVat(line),
         line_cost: lineCost(line),
         expiry_date: line.expiry_date || '',
@@ -507,7 +508,7 @@ onMounted(() => loadRows())
               <td><input v-model="line.unit" class="input" placeholder="Đơn vị" /></td>
               <td><input v-model.number="line.quantity" class="input" type="number" min="0" step="1" /></td>
               <td><input v-model.number="line.unit_cost" class="input" type="number" min="0" step="100" placeholder="Giá chưa VAT" /></td>
-              <td><input v-model.number="line.vat_percent" class="input" type="number" min="0" step="0.1" placeholder="0" /></td>
+              <td><input v-model="line.vat_rate" class="input" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0" /></td>
               <td><b>{{ currencyText(unitCostWithVat(line)) }}</b></td>
               <td><b>{{ currencyText(lineCost(line)) }}</b></td>
               <td><input v-model="line.expiry_date" class="input" type="date" /></td>
@@ -547,7 +548,7 @@ onMounted(() => loadRows())
               <td>{{ item.unit || '-' }}</td>
               <td><b>{{ quantityText(item.quantity) }}</b></td>
               <td>{{ currencyText((item as any).unit_cost) }}</td>
-              <td>{{ quantityText((item as any).vat_percent) }}%</td>
+              <td>{{ quantityText(vatRate(item)) }}%</td>
               <td>{{ currencyText(resolvedUnitCostWithVat(item)) }}</td>
               <td><b>{{ currencyText(lineCost(item)) }}</b></td>
               <td><span class="small">{{ (item as any).lot_id || '-' }}</span></td>

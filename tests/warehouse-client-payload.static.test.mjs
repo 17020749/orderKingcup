@@ -4,6 +4,7 @@ import { test } from 'node:test'
 
 const releasePage = readFileSync('pages/warehouse-export-requests.vue', 'utf8')
 const exportsPage = readFileSync('pages/exports.vue', 'utf8')
+const importsPage = readFileSync('pages/imports.vue', 'utf8')
 const transactions = readFileSync('composables/useWarehouseTransactions.ts', 'utf8')
 const costTransactions = readFileSync('composables/useWarehouseCostTransactions.ts', 'utf8')
 const warehouseCostModule = readFileSync('modules/warehouse-cost.ts', 'utf8')
@@ -123,4 +124,14 @@ test('warehouse cost transaction shortage message includes product warehouse log
   assert.match(allocateSection, /warehouseName\(state\.warehouse\)/)
   assert.ok(allocateSection.includes("logoText ? ` / logo ${logoText}` : ' / hàng trơn'"))
   assert.match(allocateSection, /Tồn hiện tại \$\{beforeQuantity\}, cần \$\{roundQuantity\(quantity\)\}/)
+})
+
+
+test('import VAT keeps the entered rate and persists VAT-inclusive costs', () => {
+  assert.match(importsPage, /v-model="line\.vat_rate"/)
+  assert.match(importsPage, /item\?\.vat_rate \?\? item\?\.vat_percent/)
+  assert.match(transactions, /line\?\.vat_rate \?\? line\?\.vat_percent/)
+  assert.match(transactions, /vat_rate: vatRate/)
+  assert.match(transactions, /vat_percent: vatRate/)
+  assert.match(transactions, /line_cost: roundMoney\(quantity \* unitCostWithVat\)/)
 })

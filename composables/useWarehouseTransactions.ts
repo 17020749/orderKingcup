@@ -44,6 +44,7 @@ type WarehouseLineInput = {
   quantity: number
   unit?: string
   unit_cost?: number
+  vat_rate?: number
   vat_percent?: number
   unit_cost_with_vat?: number
   line_cost?: number
@@ -182,9 +183,15 @@ function roundMoney(value: any) {
 
 function importCostFields(line: any, quantity: number) {
   const unitCost = Math.max(0, toNumber(line?.unit_cost))
-  const vatPercent = Math.max(0, toNumber(line?.vat_percent))
-  const unitCostWithVat = roundMoney(unitCost * (1 + vatPercent / 100))
-  return { unit_cost: unitCost, vat_percent: vatPercent, unit_cost_with_vat: unitCostWithVat, line_cost: roundMoney(quantity * unitCostWithVat) }
+  const vatRate = Math.max(0, Math.min(100, toNumber(line?.vat_rate ?? line?.vat_percent)))
+  const unitCostWithVat = roundMoney(unitCost * (1 + vatRate / 100))
+  return {
+    unit_cost: unitCost,
+    vat_rate: vatRate,
+    vat_percent: vatRate,
+    unit_cost_with_vat: unitCostWithVat,
+    line_cost: roundMoney(quantity * unitCostWithVat),
+  }
 }
 
 function revisionOf(data: any) {
@@ -610,6 +617,7 @@ export function useWarehouseTransactions() {
           quantity: line.quantity,
           unit: line.unit || line.product.unit || '',
           unit_cost: line.unit_cost,
+          vat_rate: line.vat_rate,
           vat_percent: line.vat_percent,
           unit_cost_with_vat: line.unit_cost_with_vat,
           line_cost: line.line_cost,
@@ -912,6 +920,7 @@ export function useWarehouseTransactions() {
           quantity: line.quantity,
           unit: line.unit || line.product.unit || '',
           unit_cost: line.unit_cost,
+          vat_rate: line.vat_rate,
           vat_percent: line.vat_percent,
           unit_cost_with_vat: line.unit_cost_with_vat,
           line_cost: line.line_cost,
