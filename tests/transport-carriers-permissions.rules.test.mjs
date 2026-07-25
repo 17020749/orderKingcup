@@ -21,7 +21,6 @@ const VIEWER = 'carrier-viewer@example.com'
 const CREATOR = 'carrier-creator@example.com'
 const EDITOR = 'carrier-editor@example.com'
 const DELETER = 'carrier-deleter@example.com'
-const SHIPMENT_VIEWER = 'shipment-viewer@example.com'
 const BUS_VIEWER = 'bus-viewer@example.com'
 const NONE = 'carrier-none@example.com'
 let env
@@ -67,7 +66,6 @@ beforeEach(async () => {
       setDoc(doc(db, 'users', CREATOR), activeUser(['page.transport_carriers', 'transport_carriers.view', 'transport_carriers.create'])),
       setDoc(doc(db, 'users', EDITOR), activeUser(['page.transport_carriers', 'transport_carriers.view', 'transport_carriers.edit'])),
       setDoc(doc(db, 'users', DELETER), activeUser(['page.transport_carriers', 'transport_carriers.view', 'transport_carriers.delete'])),
-      setDoc(doc(db, 'users', SHIPMENT_VIEWER), activeUser(['shipments.view'])),
       setDoc(doc(db, 'users', BUS_VIEWER), activeUser(['bus_transport.view'])),
       setDoc(doc(db, 'users', NONE), activeUser([])),
       setDoc(doc(db, 'transport_carriers', 'carrier-1'), carrier()),
@@ -80,8 +78,8 @@ beforeEach(async () => {
 
 after(async () => env.cleanup())
 
-test('quyền xem danh mục và các nghiệp vụ vận chuyển chỉ được đọc nhà xe', async () => {
-  for (const email of [VIEWER, SHIPMENT_VIEWER, BUS_VIEWER]) {
+test('quyền xem danh mục và nghiệp vụ vận chuyển nhà xe chỉ được đọc nhà xe', async () => {
+  for (const email of [VIEWER, BUS_VIEWER]) {
     const db = env.authenticatedContext(email, { email }).firestore()
     await assertSucceeds(getDoc(doc(db, 'transport_carriers', 'carrier-1')))
     await assertSucceeds(getDocs(collection(db, 'transport_carriers')))

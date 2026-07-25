@@ -2490,7 +2490,6 @@ hasAnyPerm([
     match /transport_carriers/{docId} {
       allow read: if hasAnyPerm([
         'transport_carriers.view',
-        'shipments.view', 'shipments.view_all', 'shipments.create', 'shipments.edit',
         'bus_transport.view', 'bus_transport.create', 'bus_transport.edit'
       ]);
 

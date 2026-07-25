@@ -297,11 +297,7 @@ export interface ShipmentDoc {
   id: string
   order_id: string
   order_code?: string
-  transport_carrier_id?: string
   carrier?: string
-  carrier_phone?: string
-  vehicle_plate?: string
-  driver_name?: string
   tracking_code?: string
   shipping_fee?: number
   cod_amount?: number
