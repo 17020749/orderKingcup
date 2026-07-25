@@ -1,0 +1,38 @@
+name: Run transport information catalog patch
+
+on:
+  push:
+    branches:
+      - agent/transport-info-catalog
+    paths:
+      - .github/workflows/run-transport-info-catalog.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/transport-info-catalog
+          fetch-depth: 0
+
+      - name: Extract and apply patch
+        shell: bash
+        run: |
+          awk '/python <<'"'"'PY'"'"'/{copy=1; next} /^          PY$/{copy=0} copy { sub(/^          /, ""); print }' .github/workflows/apply-transport-info-catalog.yml > /tmp/apply.py
+          python /tmp/apply.py
+
+      - name: Commit intended files and remove temporary workflows
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-transport-info-catalog.yml
+          rm -f .github/workflows/run-transport-info-catalog.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add constants/permissions.ts constants/accessMatrix.mjs components/AppShell.vue types/models.ts pages/transport-carriers.vue pages/shipments.vue pages/bus-transport.vue firestore.rules .github/workflows/apply-transport-info-catalog.yml .github/workflows/run-transport-info-catalog.yml
+          git commit -m "Add shared transport carrier catalog"
+          git push origin HEAD:agent/transport-info-catalog
