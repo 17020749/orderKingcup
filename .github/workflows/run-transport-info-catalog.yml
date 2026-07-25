@@ -54,6 +54,22 @@ jobs:
               '"         receiver_address: form.receiver_address || \'\',\\n         transport_carrier_id: String(form.transport_carrier_id || \'\').trim(),\\n         carrier_name: String(form.carrier_name || \'\').trim(),\\n",',
               '"        receiver_address: form.receiver_address || \'\',\\n        transport_carrier_id: String(form.transport_carrier_id || \'\').trim(),\\n        carrier_name: String(form.carrier_name || \'\').trim(),\\n",',
             ),
+            (
+              '"       company_shipping_revenue_mode: row.company_shipping_revenue_mode || \'\',\\n     })\\n",',
+              '"      company_shipping_revenue_mode: row.company_shipping_revenue_mode || \'\',\\n    })\\n",',
+            ),
+            (
+              '"       company_shipping_revenue_mode: row.company_shipping_revenue_mode || \'\',\\n       transport_carrier_id: findTransportCarrierSnapshot(row)?.id || row.transport_carrier_id || \'\',\\n     })\\n",',
+              '"      company_shipping_revenue_mode: row.company_shipping_revenue_mode || \'\',\\n      transport_carrier_id: findTransportCarrierSnapshot(row)?.id || row.transport_carrier_id || \'\',\\n    })\\n",',
+            ),
+            (
+              '"       order_code: \'\',\\n       carrier: \'\',\\n       tracking_code: \'\',\\n",',
+              '"      order_code: \'\',\\n      carrier: \'\',\\n      tracking_code: \'\',\\n",',
+            ),
+            (
+              '"       order_code: \'\',\\n       transport_carrier_id: \'\',\\n       carrier: \'\',\\n       carrier_phone: \'\',\\n       vehicle_plate: \'\',\\n       driver_name: \'\',\\n       tracking_code: \'\',\\n",',
+              '"      order_code: \'\',\\n      transport_carrier_id: \'\',\\n      carrier: \'\',\\n      carrier_phone: \'\',\\n      vehicle_plate: \'\',\\n      driver_name: \'\',\\n      tracking_code: \'\',\\n",',
+            ),
           ]
           for old, new in replacements:
             source = source.replace(old, new)
