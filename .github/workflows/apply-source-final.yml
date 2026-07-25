@@ -1,0 +1,94 @@
+name: Apply final scoped source patch
+
+on:
+  push:
+    branches:
+      - agent/payment-import-vat-printing-table
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/payment-import-vat-printing-table
+          fetch-depth: 0
+      - name: Patch sources
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          def rep(path, old, new, count=1):
+              p=Path(path); s=p.read_text(); n=s.count(old)
+              if n < count: raise SystemExit(f'{path}: missing anchor {old[:100]!r} ({n})')
+              p.write_text(s.replace(old,new,count))
+
+          def rex(path, pattern, replacement):
+              p=Path(path); s=p.read_text(); out,n=re.subn(pattern,replacement,s,count=1,flags=re.S)
+              if n!=1: raise SystemExit(f'{path}: regex anchor failed {pattern[:100]!r} ({n})')
+              p.write_text(out)
+
+          # payments
+          rep('pages/payments.vue',
+              "const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id || order.order_code === form.order_code))\nconst selectedRecipientAccount",
+              "const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id || (!form.order_id && order.order_code === form.order_code)))\nconst orderOptions = computed(() => orders.value.map(order => ({\n  value: order.id,\n  label: `${order.order_code} - ${order.customer_name || 'Khách chưa tên'}`,\n  subLabel: [order.order_status, order.payment_status].filter(Boolean).join(' · '),\n  search: `${order.order_code} ${order.customer_name || ''} ${order.customer_code || ''} ${order.phone || ''}`,\n})))\nconst selectedRecipientAccount")
+          rex('pages/payments.vue',
+              r'''        <div class="form-group">\s*<label>Mã đơn hàng</label>\s*<select v-model="form\.order_id"[\s\S]*?</select>\s*</div>\s*<div class="form-group">\s*<label>Nhập mã đơn</label>\s*<input v-model="form\.order_code"[\s\S]*?/?>\s*</div>''',
+              '''        <div class="form-group full">\n          <label>Mã đơn hàng</label>\n          <SearchableSelect\n            v-model="form.order_id"\n            :options="orderOptions"\n            :disabled="!!editing"\n            placeholder="Tìm mã đơn, khách hàng hoặc số điện thoại..."\n            @change="chooseOrder"\n          />\n        </div>''')
+
+          # imports helpers/data
+          rep('pages/imports.vue', "    unit_cost: 0,\n    expiry_date: '',", "    unit_cost: 0,\n    vat_percent: 0,\n    expiry_date: '',")
+          rep('pages/imports.vue', '''function lineCost(item: any) {\n  return Math.round((toNumber(item.line_cost) || toNumber(item.quantity) * toNumber(item.unit_cost)) * 100) / 100\n}''', '''function roundMoney(value: any) {\n  return Math.round(toNumber(value) * 100) / 100\n}\n\nfunction vatPercent(item: any) {\n  return Math.max(0, toNumber(item?.vat_percent))\n}\n\nfunction unitCostWithVat(item: any) {\n  return roundMoney(toNumber(item?.unit_cost) * (1 + vatPercent(item) / 100))\n}\n\nfunction resolvedUnitCostWithVat(item: any) {\n  return item != null && Object.prototype.hasOwnProperty.call(item, 'unit_cost_with_vat')\n    ? toNumber(item.unit_cost_with_vat)\n    : unitCostWithVat(item)\n}\n\nfunction lineCost(item: any) {\n  const calculated = roundMoney(toNumber(item?.quantity) * resolvedUnitCostWithVat(item))\n  return item != null && Object.prototype.hasOwnProperty.call(item, 'line_cost')\n    ? roundMoney(item.line_cost)\n    : calculated\n}''')
+          rep('pages/imports.vue', "const formTotalCost = computed(() => form.lines.reduce((sum, line) => sum + toNumber(line.quantity) * toNumber(line.unit_cost), 0))", "const formTotalCost = computed(() => form.lines.reduce((sum, line) => sum + lineCost(line), 0))")
+          rep('pages/imports.vue', "          unit_cost: toNumber((item as any).unit_cost),\n          expiry_date:", "          unit_cost: toNumber((item as any).unit_cost),\n          vat_percent: toNumber((item as any).vat_percent),\n          expiry_date:")
+          rep('pages/imports.vue', "        unit_cost: toNumber(line.unit_cost),\n        expiry_date:", "        unit_cost: toNumber(line.unit_cost),\n        vat_percent: vatPercent(line),\n        unit_cost_with_vat: unitCostWithVat(line),\n        line_cost: lineCost(line),\n        expiry_date:")
+          rep('pages/imports.vue','<div class="summary-card"><label>Tổng giá trị nhập</label><strong>{{ currencyText(summary.cost) }}</strong></div>','<div class="summary-card"><label>Tổng giá trị nhập có VAT</label><strong>{{ currencyText(summary.cost) }}</strong></div>')
+          rep('pages/imports.vue','<table style="min-width: 1420px">','<table style="min-width: 1780px">')
+          rep('pages/imports.vue','<thead><tr><th>Sản phẩm</th><th>Kho nhập</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Giá nhập</th><th>Thành tiền</th><th>Hạn dùng</th><th>Ghi chú</th><th></th></tr></thead>','<thead><tr><th>Sản phẩm</th><th>Kho nhập</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Giá nhập</th><th>VAT (%)</th><th>Giá có VAT</th><th>Thành tiền có VAT</th><th>Hạn dùng</th><th>Ghi chú</th><th></th></tr></thead>')
+          rep('pages/imports.vue','''              <td><input v-model.number="line.unit_cost" class="input" type="number" min="0" step="100" placeholder="Giá của lần nhập này" /></td>\n              <td><b>{{ currencyText(toNumber(line.quantity) * toNumber(line.unit_cost)) }}</b></td>\n              <td><input v-model="line.expiry_date" class="input" type="date" /></td>''','''              <td><input v-model.number="line.unit_cost" class="input" type="number" min="0" step="100" placeholder="Giá chưa VAT" /></td>\n              <td><input v-model.number="line.vat_percent" class="input" type="number" min="0" step="0.1" placeholder="0" /></td>\n              <td><b>{{ currencyText(unitCostWithVat(line)) }}</b></td>\n              <td><b>{{ currencyText(lineCost(line)) }}</b></td>\n              <td><input v-model="line.expiry_date" class="input" type="date" /></td>''')
+          rep('pages/imports.vue','<div class="detail-item"><label>Tổng giá trị nhập</label><strong>{{ currencyText(formTotalCost) }}</strong></div>','<div class="detail-item"><label>Tổng giá trị nhập có VAT</label><strong>{{ currencyText(formTotalCost) }}</strong></div>')
+          rep('pages/imports.vue','<div class="detail-item"><label>Tổng giá trị</label><strong>{{ currencyText((selected as any).total_cost || selectedItems.reduce((sum, item) => sum + lineCost(item), 0)) }}</strong></div>','<div class="detail-item"><label>Tổng giá trị có VAT</label><strong>{{ currencyText((selected as any).total_cost || selectedItems.reduce((sum, item) => sum + lineCost(item), 0)) }}</strong></div>')
+          rep('pages/imports.vue','<table style="min-width: 1220px">\n          <thead><tr><th>Sản phẩm</th>','<table style="min-width: 1580px">\n          <thead><tr><th>Sản phẩm</th>')
+          rep('pages/imports.vue','<thead><tr><th>Sản phẩm</th><th>Kho</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Giá nhập</th><th>Thành tiền</th><th>Mã lô</th><th>Hạn dùng</th><th>Ghi chú</th></tr></thead>','<thead><tr><th>Sản phẩm</th><th>Kho</th><th>Logo</th><th>Đơn vị</th><th>Số lượng</th><th>Giá nhập</th><th>VAT (%)</th><th>Giá có VAT</th><th>Thành tiền có VAT</th><th>Mã lô</th><th>Hạn dùng</th><th>Ghi chú</th></tr></thead>')
+          rep('pages/imports.vue','''              <td>{{ currencyText((item as any).unit_cost) }}</td>\n              <td><b>{{ currencyText(lineCost(item)) }}</b></td>\n              <td><span class="small">{{ (item as any).lot_id || '-' }}</span></td>''','''              <td>{{ currencyText((item as any).unit_cost) }}</td>\n              <td>{{ quantityText((item as any).vat_percent) }}%</td>\n              <td>{{ currencyText(resolvedUnitCostWithVat(item)) }}</td>\n              <td><b>{{ currencyText(lineCost(item)) }}</b></td>\n              <td><span class="small">{{ (item as any).lot_id || '-' }}</span></td>''')
+          rep('pages/imports.vue','<tr v-if="!selectedItems.length"><td colspan="10" class="empty">Phiếu này chưa có dòng chi tiết.</td></tr>','<tr v-if="!selectedItems.length"><td colspan="12" class="empty">Phiếu này chưa có dòng chi tiết.</td></tr>')
+
+          # trusted warehouse transaction
+          rep('composables/useWarehouseTransactions.ts', "  unit?: string\n  note?: string", "  unit?: string\n  unit_cost?: number\n  vat_percent?: number\n  unit_cost_with_vat?: number\n  line_cost?: number\n  note?: string")
+          rep('composables/useWarehouseTransactions.ts', '''function signedNumber(value: any) {\n  const quantity = toNumber(value)\n  if (quantity === 0) throw new Error('Số lượng điều chỉnh phải khác 0.')\n  return quantity\n}''', '''function signedNumber(value: any) {\n  const quantity = toNumber(value)\n  if (quantity === 0) throw new Error('Số lượng điều chỉnh phải khác 0.')\n  return quantity\n}\n\nfunction roundMoney(value: any) {\n  return Math.round(toNumber(value) * 100) / 100\n}\n\nfunction importCostFields(line: any, quantity: number) {\n  const unitCost = Math.max(0, toNumber(line?.unit_cost))\n  const vatPercent = Math.max(0, toNumber(line?.vat_percent))\n  const unitCostWithVat = roundMoney(unitCost * (1 + vatPercent / 100))\n  return { unit_cost: unitCost, vat_percent: vatPercent, unit_cost_with_vat: unitCostWithVat, line_cost: roundMoney(quantity * unitCostWithVat) }\n}''')
+          rep('composables/useWarehouseTransactions.ts','''      preparedLines.push({\n        ...line,\n        product,\n        warehouse,\n        quantity,\n        itemId:''','''      preparedLines.push({\n        ...line,\n        ...importCostFields(line, quantity),\n        product,\n        warehouse,\n        quantity,\n        itemId:''')
+          rep('composables/useWarehouseTransactions.ts',"    const supplier = input.supplier || {}\n    const orderPayload = {","    const supplier = input.supplier || {}\n    const totalCost = roundMoney(preparedLines.reduce((sum, line) => sum + toNumber(line.line_cost), 0))\n    const orderPayload = {")
+          rep('composables/useWarehouseTransactions.ts',"      supplier_name: supplier.name || supplier.supplier_name || '',\n      note: input.note || '',","      supplier_name: supplier.name || supplier.supplier_name || '',\n      total_cost: totalCost,\n      note: input.note || '',",1)
+          rep('composables/useWarehouseTransactions.ts',"          unit: line.unit || line.product.unit || '',\n          note: line.note || '',\n          legacy_line_key: '',","          unit: line.unit || line.product.unit || '',\n          unit_cost: line.unit_cost,\n          vat_percent: line.vat_percent,\n          unit_cost_with_vat: line.unit_cost_with_vat,\n          line_cost: line.line_cost,\n          note: line.note || '',\n          legacy_line_key: '',")
+          rep('composables/useWarehouseTransactions.ts','''      return {\n        ...line,\n        product,\n        warehouse,\n        quantity,\n        itemId:''','''      return {\n        ...line,\n        ...importCostFields(line, quantity),\n        product,\n        warehouse,\n        quantity,\n        itemId:''')
+          rep('composables/useWarehouseTransactions.ts',"    const balanceDeltas = new Map<string, BalanceDelta>()","    const totalCost = roundMoney(preparedNew.reduce((sum, line) => sum + toNumber(line.line_cost), 0))\n\n    const balanceDeltas = new Map<string, BalanceDelta>()",1)
+          rep('composables/useWarehouseTransactions.ts',"        supplier_name: supplier.name || supplier.supplier_name || '',\n        note: input.note || '',","        supplier_name: supplier.name || supplier.supplier_name || '',\n        total_cost: totalCost,\n        note: input.note || '',",1)
+          rep('composables/useWarehouseTransactions.ts',"          unit: line.unit || line.product.unit || '',\n          note: line.note || '',\n          legacy_line_key: oldItems[index]?.legacy_line_key || '',","          unit: line.unit || line.product.unit || '',\n          unit_cost: line.unit_cost,\n          vat_percent: line.vat_percent,\n          unit_cost_with_vat: line.unit_cost_with_vat,\n          line_cost: line.line_cost,\n          note: line.note || '',\n          legacy_line_key: oldItems[index]?.legacy_line_key || '',")
+
+          # inventory
+          rep('pages/inventory.vue',"        && Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost')\n      const unitCost = hasCost ? toNumber((costItem as any).unit_cost) : null","        && (Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost_with_vat')\n          || Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost'))\n      const unitCost = hasCost\n        ? toNumber((costItem as any).unit_cost_with_vat ?? (costItem as any).unit_cost)\n        : null")
+          for old,new in [('Giá trị tồn cao nhất','Giá trị tồn có VAT cao nhất'),('Giá trị tồn đã xác định','Giá trị tồn có VAT'),('<th v-if="canViewCost">Giá trị tồn</th>','<th v-if="canViewCost">Giá trị tồn có VAT</th>'),('<label>Giá trị đã xác định</label>','<label>Giá trị có VAT</label>'),('<label>Giá nhập bình quân</label>','<label>Giá nhập có VAT bình quân</label>'),('<th>Giá nhập</th>\n                <th>Giá trị còn lại</th>','<th>Giá nhập có VAT</th>\n                <th>Giá trị còn lại có VAT</th>')]: rep('pages/inventory.vue',old,new)
+
+          # printing
+          rep('pages/printing.vue','''  const supplierNames = [...new Set(detailItems.map(item => String(item.supplier_name || '').trim()).filter(Boolean))]\n  return {\n    ...order,\n    detailItems,\n    supplier_summary:''','''  const supplierNames = [...new Set(detailItems.map(item => String(item.supplier_name || '').trim()).filter(Boolean))]\n  const productMap = new Map<string, { key: string; product_code: string; product_name: string; line_count: number }>()\n  detailItems.forEach(item => {\n    const key = String(item.product_id || item.product_code || item.product_name || item.id)\n    const current = productMap.get(key)\n    if (current) current.line_count += 1\n    else productMap.set(key, { key, product_code: String(item.product_code || ''), product_name: String(item.product_name || ''), line_count: 1 })\n  })\n  return {\n    ...order,\n    detailItems,\n    product_summary: Array.from(productMap.values()),\n    supplier_summary:''')
+          rep('pages/printing.vue',"              <th>Mã AM</th>\n              <th>NCC theo dòng</th>","              <th>Mã AM</th>\n              <th>Sản phẩm</th>\n              <th>NCC theo dòng</th>")
+          rep('pages/printing.vue',"              <td>{{ row.am_code || '-' }}</td>\n              <td>{{ row.supplier_summary || '-' }}</td>",'''              <td>{{ row.am_code || '-' }}</td>\n              <td class="printing-products-cell">\n                <div v-for="product in row.product_summary" :key="product.key" class="printing-product-line">\n                  <b>{{ product.product_code || '-' }}</b><span>{{ product.product_name || 'Sản phẩm' }}</span><small v-if="product.line_count > 1">{{ product.line_count }} dòng</small>\n                </div>\n                <span v-if="!row.product_summary.length">-</span>\n              </td>\n              <td>{{ row.supplier_summary || '-' }}</td>''')
+          rep('pages/printing.vue','<tr v-if="!filtered.length"><td colspan="9" class="empty">Chưa có tiến độ in ấn phù hợp.</td></tr>','<tr v-if="!filtered.length"><td colspan="10" class="empty">Chưa có tiến độ in ấn phù hợp.</td></tr>')
+          rep('pages/printing.vue','.printing-table { min-width: 1320px; }','''.printing-table { min-width: 1580px; }\n.printing-products-cell { min-width: 280px; }\n.printing-product-line { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; }\n.printing-product-line span { color: var(--text); }\n.printing-product-line small { color: var(--muted); white-space: nowrap; }''')
+
+          for f in ['.github/workflows/apply-payment-import-vat-printing.yml','.github/workflows/run-payment-import-vat-printing.yml','.github/workflows/apply-final-payment-import-vat-printing.yml','.github/workflows/apply-source-final.yml','.github/payment-import-vat-printing.trigger','.github/payment-import-vat-printing.final-trigger','.github/payment-import-vat-printing.error']:
+              Path(f).unlink(missing_ok=True)
+          PY
+      - name: Commit source changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add searchable payment orders and VAT inventory values"
+          git push origin HEAD:agent/payment-import-vat-printing-table
