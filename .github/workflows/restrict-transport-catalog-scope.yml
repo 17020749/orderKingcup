@@ -1,4 +1,5 @@
 name: Restrict transport catalog scope
+# one-time scope correction
 
 on:
   push:
