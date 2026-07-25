@@ -93,7 +93,7 @@ function navIcon(key: string) {
   const icons: Record<string, string> = {
     dashboard: '⌂', orders: '▤', export_requests: '↗', customers: '◉', payments: '₫', invoices: '▣',
     imports: '↓', warehouse_export_requests: '⇥', exports: '↑', inventory_adjustments: '±', inventory: '▥',
-    warehouse_settings: '⚙', shipments: '⌁', products: '◇', printing: '▧', activity_logs: '◷',
+    warehouse_settings: '⚙', shipments: '⌁', bus_transport: '⇢', transport_carriers: '▰', products: '◇', printing: '▧', activity_logs: '◷',
     settings_users: '♙', permission_audit: '✓', settings_general: '⚙',
   }
   return icons[key] || '•'

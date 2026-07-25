@@ -22,7 +22,7 @@ test('route và sidebar dùng một manifest, không có path hoặc key trùng'
   assert.deepEqual(
     accessModulesForNavigation().map(module => module.key),
     APP_ACCESS_MODULES.slice().sort((left, right) => {
-      const sectionOrder = { business: 10, warehouse: 20, standalone: 30, settings: 40 }
+      const sectionOrder = { business: 10, warehouse: 20, transport: 30, standalone: 40, settings: 50 }
       return sectionOrder[left.navSection] - sectionOrder[right.navSection]
         || left.navOrder - right.navOrder
     }).map(module => module.key),

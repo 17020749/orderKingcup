@@ -2487,6 +2487,45 @@ hasAnyPerm([
       allow delete: if isAdmin();
     }
 
+    match /transport_carriers/{docId} {
+      allow read: if hasAnyPerm([
+        'transport_carriers.view',
+        'bus_transport.view', 'bus_transport.create', 'bus_transport.edit'
+      ]);
+
+      allow create: if hasPerm('transport_carriers.create')
+        && request.resource.data.get('id', '') == docId
+        && validBoundedString(request.resource.data.get('carrier_code', ''), 1, 100)
+        && validBoundedString(request.resource.data.get('carrier_name', ''), 1, 200)
+        && request.resource.data.get('active', false) == true
+        && request.resource.data.get('deleted', true) == false
+        && request.resource.data.get('created_at', null) == request.time
+        && request.resource.data.get('updated_at', null) == request.time
+        && ownEmailField(request.resource.data, 'created_by')
+        && ownEmailField(request.resource.data, 'updated_by');
+
+      allow update: if isAdmin()
+        || (
+          hasPerm('transport_carriers.edit')
+          && unchanged(['id', 'carrier_code', 'created_at', 'created_by', 'deleted', 'active', 'status', 'deleted_at', 'deleted_by'])
+          && request.resource.data.get('updated_at', null) == request.time
+          && ownEmailField(request.resource.data, 'updated_by')
+        )
+        || (
+          hasPerm('transport_carriers.delete')
+          && onlyChanged(['deleted', 'active', 'status', 'deleted_at', 'deleted_by', 'updated_at', 'updated_by'])
+          && request.resource.data.get('deleted', false) == true
+          && request.resource.data.get('active', true) == false
+          && request.resource.data.get('status', '') == 'deleted'
+          && request.resource.data.get('deleted_at', null) == request.time
+          && request.resource.data.get('updated_at', null) == request.time
+          && ownEmailField(request.resource.data, 'deleted_by')
+          && ownEmailField(request.resource.data, 'updated_by')
+        );
+
+      allow delete: if isAdmin();
+    }
+
     match /bus_transport_orders/{docId} {
       allow read: if hasPerm('bus_transport.view');
 
