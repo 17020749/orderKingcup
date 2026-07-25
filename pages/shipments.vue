@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { CustomerDoc, OrderDoc, OrderItemDoc, ShipmentDoc } from '~/types/models'
+import { collection, getDocs } from 'firebase/firestore'
+import type { CustomerDoc, OrderDoc, OrderItemDoc, ShipmentDoc, TransportCarrierDoc } from '~/types/models'
 import { formatDateTime, isActive, makeId, money, normalizeText, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
@@ -13,6 +14,7 @@ type ShipmentWithPayerAmounts = ShipmentDoc & {
   company_shipping_amount?: number
 }
 
+const { db } = useFirebaseServices()
 const { mutateOrderRelation } = useAtomicOrderRelations()
 const {
   loadScopedOrders,
@@ -35,6 +37,7 @@ const pageMode = ref<'cursor' | 'full'>('cursor')
 const loadingMore = ref(false)
 const orders = ref<OrderDoc[]>([])
 const customers = ref<CustomerDoc[]>([])
+const transportCarriers = ref<TransportCarrierDoc[]>([])
 const itemsByOrder = ref<Record<string, OrderItemDoc[]>>({})
 const loading = ref(false)
 const saving = ref(false)
@@ -87,6 +90,13 @@ function resetFilters() {
   dateTo.value = ''
 }
 
+const transportCarrierOptions = computed(() => transportCarriers.value.map(row => ({
+  value: row.id,
+  label: `${row.carrier_name}${row.vehicle_plate ? ` - ${row.vehicle_plate}` : ''}`,
+  subLabel: [row.carrier_phone, row.driver_name].filter(Boolean).join(' · '),
+  search: `${row.carrier_code || ''} ${row.carrier_name || ''} ${row.carrier_phone || ''} ${row.vehicle_plate || ''} ${row.driver_name || ''}`,
+})))
+const selectedTransportCarrier = computed(() => transportCarriers.value.find(row => row.id === form.transport_carrier_id) || null)
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id))
 
 function shipmentActionDecision(action: 'create' | 'edit' | 'delete', row?: ShipmentWithPayerAmounts | null, order?: OrderDoc | null) {
@@ -161,7 +171,11 @@ const orderOptions = computed(() => orders.value.map(order => ({
 const shipmentDetailLabels: Record<string, string> = {
   order_id: 'ID đơn hàng',
   order_code: 'Mã đơn',
+  transport_carrier_id: 'ID nhà xe',
   carrier: 'Nhà vận chuyển',
+  carrier_phone: 'SĐT nhà xe',
+  vehicle_plate: 'Biển số xe',
+  driver_name: 'Chủ xe/Tài xế',
   tracking_code: 'Mã đơn (tương thích dữ liệu cũ)',
   shipping_fee: 'Tổng phí giao hàng',
   customer_pays_shipping: 'Khách trả phí',
@@ -179,15 +193,38 @@ const shipmentDetailLabels: Record<string, string> = {
   note: 'Ghi chú',
 }
 
+function findTransportCarrierSnapshot(row: Partial<ShipmentWithPayerAmounts>) {
+  if (row.transport_carrier_id) return transportCarriers.value.find(item => item.id === row.transport_carrier_id) || null
+  const name = normalizeText(row.carrier || '')
+  const plate = normalizeText(row.vehicle_plate || '')
+  return transportCarriers.value.find(item => (
+    name && normalizeText(item.carrier_name) === name
+    && (!plate || normalizeText(item.vehicle_plate || '') === plate)
+  )) || null
+}
+
+function chooseTransportCarrier() {
+  const carrier = selectedTransportCarrier.value
+  if (!carrier) return
+  Object.assign(form, {
+    transport_carrier_id: carrier.id,
+    carrier: carrier.carrier_name || '',
+    carrier_phone: carrier.carrier_phone || '',
+    vehicle_plate: carrier.vehicle_plate || '',
+    driver_name: carrier.driver_name || '',
+  })
+}
+
 async function loadRows(force = false, append = false) {
   if (append && (!hasMoreRows.value || loadingMore.value)) return
   if (append) loadingMore.value = true
   else loading.value = true
   try {
     if (!append) {
-      const [loadedOrders, loadedCustomers] = await Promise.all([
+      const [loadedOrders, loadedCustomers, carrierSnapshot] = await Promise.all([
         loadScopedOrders(force),
         loadScopedCustomers(force),
+        getDocs(collection(db, 'transport_carriers')),
       ])
       const activeOrders = loadedOrders.filter(isActive)
       const [loadedItems, loadedPayments] = await Promise.all([
@@ -206,6 +243,10 @@ async function loadRows(force = false, append = false) {
       })
       itemsByOrder.value = itemMap
       customers.value = loadedCustomers.filter(isActive)
+      transportCarriers.value = carrierSnapshot.docs
+        .map(item => ({ id: item.id, ...(item.data() || {}) } as TransportCarrierDoc))
+        .filter(isActive)
+        .sort((left, right) => String(left.carrier_name || '').localeCompare(String(right.carrier_name || ''), 'vi'))
       orders.value = activeOrders.map(order => ({
         ...order,
         ...computePaymentStatus(order, paymentMap[order.id] || []),
@@ -300,13 +341,18 @@ function openModal(row?: ShipmentWithPayerAmounts) {
       company_pays_shipping: row.company_pays_shipping === true,
       company_shipping_amount: splitAmounts.company,
       company_shipping_revenue_mode: row.company_shipping_revenue_mode || '',
+      transport_carrier_id: findTransportCarrierSnapshot(row)?.id || row.transport_carrier_id || '',
     })
   } else {
     Object.assign(form, {
       id: makeId('shp'),
       order_id: '',
       order_code: '',
+      transport_carrier_id: '',
       carrier: '',
+      carrier_phone: '',
+      vehicle_plate: '',
+      driver_name: '',
       tracking_code: '',
       shipping_fee: 0,
       shipping_status: 'Chờ giao',
@@ -330,6 +376,8 @@ function openModal(row?: ShipmentWithPayerAmounts) {
 
 async function save() {
   if (!form.order_id) return showToast('Vui lòng chọn đơn hàng.', 'error')
+  if (!editing.value && !form.transport_carrier_id) return showToast('Vui lòng chọn nhà xe.', 'error')
+  if (form.transport_carrier_id) chooseTransportCarrier()
   if (!form.customer_pays_shipping && !form.company_pays_shipping) return showToast('Vui lòng chọn ít nhất một bên trả phí vận chuyển.', 'error')
 
   const customerAmount = form.customer_pays_shipping ? roundShippingAmount(form.customer_shipping_amount) : 0
@@ -448,7 +496,7 @@ onMounted(() => loadRows())
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
               <td>{{ row.order_code }}</td>
-              <td>{{ row.carrier }}</td>
+              <td><b>{{ row.carrier || '-' }}</b><div class="small subtle">{{ [row.vehicle_plate, row.carrier_phone].filter(Boolean).join(' · ') }}</div></td>
               <td>{{ row.order_code }}</td>
               <td>{{ payerLabel(row) }}</td>
               <td>{{ formatDateTime(row.shipped_date) }}</td>
@@ -485,7 +533,10 @@ onMounted(() => loadRows())
           />
         </div>
         <div class="form-group"><label>Mã đơn</label><input v-model="form.order_code" class="input readonly-field" readonly /></div>
-        <div class="form-group"><label>Nhà vận chuyển</label><input v-model="form.carrier" class="input" /></div>
+        <div class="form-group full"><label>Nhà xe</label><SearchableSelect v-model="form.transport_carrier_id" :options="transportCarrierOptions" placeholder="Tìm tên nhà xe, số điện thoại, biển số..." @change="chooseTransportCarrier" /></div>
+        <div class="form-group"><label>Số điện thoại nhà xe</label><input v-model="form.carrier_phone" class="input readonly-field" readonly /></div>
+        <div class="form-group"><label>Biển số xe</label><input v-model="form.vehicle_plate" class="input readonly-field" readonly /></div>
+        <div class="form-group"><label>Chủ xe/Tài xế</label><input v-model="form.driver_name" class="input readonly-field" readonly /></div>
         <div class="form-group"><label>Ngày giao</label><input v-model="form.shipped_date" class="input" type="date" /></div>
         <div class="form-group"><label>Trạng thái</label><select v-model="form.shipping_status" class="select"><option>Chờ giao</option><option>Đang giao</option><option>Đã giao</option><option>Giao thất bại</option><option>Hoàn hàng</option></select></div>
       </div>

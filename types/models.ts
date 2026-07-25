@@ -273,11 +273,35 @@ export interface ExportOrderItemDoc {
   revision?: number
 }
 
+export interface TransportCarrierDoc {
+  id: string
+  carrier_code?: string
+  carrier_name: string
+  carrier_phone?: string
+  vehicle_plate?: string
+  driver_name?: string
+  note?: string
+  status?: string
+  active?: boolean
+  deleted?: boolean
+  created_by?: string
+  created_at?: any
+  updated_by?: string
+  updated_at?: any
+  deleted_by?: string
+  deleted_at?: any
+  source?: string
+}
+
 export interface ShipmentDoc {
   id: string
   order_id: string
   order_code?: string
+  transport_carrier_id?: string
   carrier?: string
+  carrier_phone?: string
+  vehicle_plate?: string
+  driver_name?: string
   tracking_code?: string
   shipping_fee?: number
   cod_amount?: number
@@ -318,6 +342,7 @@ export interface BusTransportDoc {
   receiver_name?: string
   receiver_phone?: string
   receiver_address?: string
+  transport_carrier_id?: string
   carrier_name?: string
   carrier_phone?: string
   vehicle_plate?: string

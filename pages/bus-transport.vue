@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { collection, doc, getDocs, serverTimestamp, writeBatch } from 'firebase/firestore'
-import type { BusTransportDoc, ExportRequestDoc } from '~/types/models'
+import type { BusTransportDoc, ExportRequestDoc, TransportCarrierDoc } from '~/types/models'
 import { formatDateTime, isActive, makeCode, makeId, normalizeText, safeJsonParse, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared lifecycle helper is executed directly by Node tests.
@@ -15,6 +15,7 @@ const { requestLineProgress } = useWarehouseLogic()
 
 const rows = ref<BusTransportDoc[]>([])
 const requests = ref<ExportRequestDoc[]>([])
+const carriers = ref<TransportCarrierDoc[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
@@ -77,6 +78,13 @@ const requestOptions = computed(() => activeRequests.value
     search: `${requestCode(row)} ${row.order_code || ''} ${row.customer_name || ''} ${requestStatusLabel(row.status)}`,
   })))
 
+const carrierOptions = computed(() => carriers.value.map(row => ({
+  value: row.id,
+  label: `${row.carrier_name}${row.vehicle_plate ? ` - ${row.vehicle_plate}` : ''}`,
+  subLabel: [row.carrier_phone, row.driver_name].filter(Boolean).join(' · '),
+  search: `${row.carrier_code || ''} ${row.carrier_name || ''} ${row.carrier_phone || ''} ${row.vehicle_plate || ''} ${row.driver_name || ''}`,
+})))
+const selectedCarrier = computed(() => carriers.value.find(row => row.id === form.transport_carrier_id) || null)
 const selectedRequest = computed(() => requests.value.find(row => row.id === form.source_request_id) || null)
 const selectedRequestItems = computed(() => selectedRequest.value
   ? requestLineProgress(selectedRequest.value).map((line: any) => ({
@@ -138,6 +146,28 @@ function requestRecipient(row: any) {
   }
 }
 
+function findCarrierSnapshot(row: Partial<BusTransportDoc>) {
+  if (row.transport_carrier_id) return carriers.value.find(item => item.id === row.transport_carrier_id) || null
+  const name = normalizeText(row.carrier_name || '')
+  const plate = normalizeText(row.vehicle_plate || '')
+  return carriers.value.find(item => (
+    name && normalizeText(item.carrier_name) === name
+    && (!plate || normalizeText(item.vehicle_plate || '') === plate)
+  )) || null
+}
+
+function chooseCarrier() {
+  const carrier = selectedCarrier.value
+  if (!carrier) return
+  Object.assign(form, {
+    transport_carrier_id: carrier.id,
+    carrier_name: carrier.carrier_name || '',
+    carrier_phone: carrier.carrier_phone || '',
+    vehicle_plate: carrier.vehicle_plate || '',
+    driver_name: carrier.driver_name || '',
+  })
+}
+
 async function chooseRequest() {
   const request = selectedRequest.value
   if (!request) return
@@ -169,6 +199,7 @@ async function openModal(row?: BusTransportDoc) {
       source_request_id: row.source_request_id || '',
       request_code: row.request_code || row.export_order_code || '',
       request_status: row.request_status || '',
+      transport_carrier_id: findCarrierSnapshot(row)?.id || row.transport_carrier_id || '',
       carrier_name: row.carrier_name || '',
       carrier_phone: row.carrier_phone || '',
       vehicle_plate: row.vehicle_plate || '',
@@ -183,7 +214,7 @@ async function openModal(row?: BusTransportDoc) {
       source_request_id: '', request_code: '', request_status: '',
       export_order_id: '', export_order_code: '', order_id: '', order_code: '',
       customer_id: '', customer_name: '', receiver_name: '', receiver_phone: '', receiver_address: '',
-      carrier_name: '', carrier_phone: '', vehicle_plate: '', driver_name: '', departure_at: '',
+      transport_carrier_id: '', carrier_name: '', carrier_phone: '', vehicle_plate: '', driver_name: '', departure_at: '',
       transport_status: 'Chờ xuất phát', note: '',
     })
   }
@@ -207,6 +238,8 @@ function activityPayload(action: string, code: string, before: any, after: any) 
 
 async function save() {
   if (!form.source_request_id) return showToast('Vui lòng chọn yêu cầu xuất kho.', 'error')
+  if (!editing.value && !form.transport_carrier_id) return showToast('Vui lòng chọn nhà xe.', 'error')
+  if (form.transport_carrier_id) chooseCarrier()
   if (editing.value && !canEdit.value) return showToast('Bạn không có quyền sửa đơn vận chuyển.', 'error')
   if (!editing.value && !canCreate.value) return showToast('Bạn không có quyền tạo đơn vận chuyển.', 'error')
   const source = selectedRequest.value
@@ -225,6 +258,7 @@ async function save() {
         receiver_name: String(form.receiver_name || '').trim(),
         receiver_phone: String(form.receiver_phone || '').trim(),
         receiver_address: String(form.receiver_address || '').trim(),
+        transport_carrier_id: String(form.transport_carrier_id || '').trim(),
         carrier_name: String(form.carrier_name || '').trim(),
         carrier_phone: String(form.carrier_phone || '').trim(),
         vehicle_plate: String(form.vehicle_plate || '').trim(),
@@ -255,6 +289,7 @@ async function save() {
         receiver_name: form.receiver_name || '',
         receiver_phone: form.receiver_phone || '',
         receiver_address: form.receiver_address || '',
+        transport_carrier_id: String(form.transport_carrier_id || '').trim(),
         carrier_name: String(form.carrier_name || '').trim(),
         carrier_phone: String(form.carrier_phone || '').trim(),
         vehicle_plate: String(form.vehicle_plate || '').trim(),
@@ -328,15 +363,20 @@ async function loadRows(force = false) {
   if (!canView.value) return
   loading.value = true
   try {
-    const [transportSnapshot, requestSnapshot] = await Promise.all([
+    const [transportSnapshot, requestSnapshot, carrierSnapshot] = await Promise.all([
       getDocs(collection(db, 'bus_transport_orders')),
       getDocs(collection(db, 'order_export_requests')),
+      getDocs(collection(db, 'transport_carriers')),
     ])
     rows.value = transportSnapshot.docs
       .map(item => ({ id: item.id, ...(item.data() || {}) } as BusTransportDoc))
       .filter(isActive)
       .sort((left, right) => timestampValue(right.updated_at || right.created_at) - timestampValue(left.updated_at || left.created_at))
     requests.value = requestSnapshot.docs.map(item => ({ id: item.id, ...(item.data() || {}) } as ExportRequestDoc)).filter(isActive)
+    carriers.value = carrierSnapshot.docs
+      .map(item => ({ id: item.id, ...(item.data() || {}) } as TransportCarrierDoc))
+      .filter(isActive)
+      .sort((left, right) => String(left.carrier_name || '').localeCompare(String(right.carrier_name || ''), 'vi'))
     if (force) showToast('Đã làm mới dữ liệu vận chuyển nhà xe.', 'success')
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được dữ liệu vận chuyển nhà xe.'), 'error')
@@ -401,10 +441,11 @@ onMounted(() => loadRows())
         <div class="form-group"><label>Họ tên người nhận</label><input v-model="form.receiver_name" class="input readonly-field" readonly /></div>
         <div class="form-group"><label>Số điện thoại người nhận</label><input v-model="form.receiver_phone" class="input readonly-field" readonly /></div>
         <div class="form-group full"><label>Địa chỉ nhận</label><input v-model="form.receiver_address" class="input readonly-field" readonly /></div>
-        <div class="form-group"><label>Tên nhà xe</label><input v-model="form.carrier_name" class="input" /></div>
-        <div class="form-group"><label>Số điện thoại nhà xe</label><input v-model="form.carrier_phone" class="input" /></div>
-        <div class="form-group"><label>Biển số xe</label><input v-model="form.vehicle_plate" class="input" /></div>
-        <div class="form-group"><label>Tên chủ xe/Tài xế</label><input v-model="form.driver_name" class="input" /></div>
+        <div class="form-group full"><label>Nhà xe <span class="required">*</span></label><SearchableSelect v-model="form.transport_carrier_id" :options="carrierOptions" placeholder="Tìm tên nhà xe, số điện thoại, biển số..." @change="chooseCarrier" /></div>
+        <div class="form-group"><label>Số điện thoại nhà xe</label><input v-model="form.carrier_phone" class="input readonly-field" readonly /></div>
+        <div class="form-group"><label>Biển số xe</label><input v-model="form.vehicle_plate" class="input readonly-field" readonly /></div>
+        <div class="form-group"><label>Tên chủ xe/Tài xế</label><input v-model="form.driver_name" class="input readonly-field" readonly /></div>
+        <div class="form-group"><label>Tên nhà xe</label><input v-model="form.carrier_name" class="input readonly-field" readonly /></div>
         <div class="form-group"><label>Giờ bắt đầu xuất phát</label><input v-model="form.departure_at" class="input" type="datetime-local" /></div>
         <div class="form-group"><label>Trạng thái vận chuyển</label><select v-model="form.transport_status" class="select"><option>Chờ xuất phát</option><option>Đã xuất phát</option><option>Đã hoàn thành</option></select></div>
         <div class="form-group full"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>

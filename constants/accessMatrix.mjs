@@ -1,8 +1,9 @@
 export const NAV_SECTION_DEFINITIONS = [
   { key: 'business', label: 'Kinh doanh', order: 10, grouped: true },
   { key: 'warehouse', label: 'Kho', order: 20, grouped: true },
-  { key: 'standalone', label: '', order: 30, grouped: false },
-  { key: 'settings', label: 'Cài đặt', order: 40, grouped: true },
+  { key: 'transport', label: 'Thông tin vận chuyển', order: 30, grouped: true },
+  { key: 'standalone', label: '', order: 40, grouped: false },
+  { key: 'settings', label: 'Cài đặt', order: 50, grouped: true },
 ]
 
 export const APP_ACCESS_MODULES = [
@@ -19,8 +20,10 @@ export const APP_ACCESS_MODULES = [
   { key: 'inventory_adjustments', path: '/inventory-adjustments', label: 'Điều chỉnh tồn', permission: 'page.inventory_adjustments', navSection: 'warehouse', navOrder: 40 },
   { key: 'inventory', path: '/inventory', label: 'Tồn kho', permission: 'page.inventory', navSection: 'warehouse', navOrder: 50 },
   { key: 'warehouse_settings', path: '/warehouse-settings', label: 'Danh mục kho', permission: 'page.warehouse_settings', navSection: 'warehouse', navOrder: 60 },
-  { key: 'shipments', path: '/shipments', label: 'Vận chuyển', permission: 'page.shipments', navSection: 'warehouse', navOrder: 70 },
-  { key: 'bus_transport', path: '/bus-transport', label: 'Vận chuyển nhà xe', permission: 'page.bus_transport', navSection: 'warehouse', navOrder: 80 },
+
+  { key: 'shipments', path: '/shipments', label: 'Vận chuyển', permission: 'page.shipments', navSection: 'transport', navOrder: 10 },
+  { key: 'bus_transport', path: '/bus-transport', label: 'Vận chuyển nhà xe', permission: 'page.bus_transport', navSection: 'transport', navOrder: 20 },
+  { key: 'transport_carriers', path: '/transport-carriers', label: 'Danh sách nhà xe', permission: 'page.transport_carriers', navSection: 'transport', navOrder: 30 },
 
   { key: 'products', path: '/products', label: 'Sản phẩm', permission: 'page.products', navSection: 'standalone', navOrder: 10 },
   { key: 'printing', path: '/printing', label: 'Tiến độ in ấn', permission: 'page.printing', navSection: 'standalone', navOrder: 20 },
@@ -144,6 +147,12 @@ export const PERMISSION_DEPENDENCIES = {
   'bus_transport.create': ['page.bus_transport', 'bus_transport.view'],
   'bus_transport.edit': ['page.bus_transport', 'bus_transport.view'],
   'bus_transport.delete': ['page.bus_transport', 'bus_transport.view'],
+
+  'page.transport_carriers': ['transport_carriers.view'],
+  'transport_carriers.view': ['page.transport_carriers'],
+  'transport_carriers.create': ['page.transport_carriers', 'transport_carriers.view'],
+  'transport_carriers.edit': ['page.transport_carriers', 'transport_carriers.view'],
+  'transport_carriers.delete': ['page.transport_carriers', 'transport_carriers.view'],
 
   'page.invoices': ['invoices.view', 'orders.view'],
   'invoices.view': ['page.invoices', 'orders.view'],
