@@ -23,17 +23,30 @@ jobs:
       - name: Extract and apply patch
         shell: bash
         run: |
-          # Execute the guarded source patch and remove both temporary workflows after success.
+          rm -f TRANSPORT_PATCH_ERROR.txt
           awk '/python <<'"'"'PY'"'"'/{copy=1; next} /^          PY$/{copy=0} copy { sub(/^          /, ""); print }' .github/workflows/apply-transport-info-catalog.yml > /tmp/apply.py
-          python /tmp/apply.py
+          set +e
+          python /tmp/apply.py > /tmp/transport-patch.log 2>&1
+          status=$?
+          cat /tmp/transport-patch.log
+          if [ "$status" -ne 0 ]; then
+            cp /tmp/transport-patch.log TRANSPORT_PATCH_ERROR.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add TRANSPORT_PATCH_ERROR.txt
+            git commit -m "Record transport catalog patch failure" || true
+            git push origin HEAD:agent/transport-info-catalog || true
+            exit "$status"
+          fi
 
       - name: Commit intended files and remove temporary workflows
         shell: bash
         run: |
+          rm -f TRANSPORT_PATCH_ERROR.txt
           rm -f .github/workflows/apply-transport-info-catalog.yml
           rm -f .github/workflows/run-transport-info-catalog.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add constants/permissions.ts constants/accessMatrix.mjs components/AppShell.vue types/models.ts pages/transport-carriers.vue pages/shipments.vue pages/bus-transport.vue firestore.rules .github/workflows/apply-transport-info-catalog.yml .github/workflows/run-transport-info-catalog.yml
+          git add constants/permissions.ts constants/accessMatrix.mjs components/AppShell.vue types/models.ts pages/transport-carriers.vue pages/shipments.vue pages/bus-transport.vue firestore.rules TRANSPORT_PATCH_ERROR.txt .github/workflows/apply-transport-info-catalog.yml .github/workflows/run-transport-info-catalog.yml
           git commit -m "Add shared transport carrier catalog"
           git push origin HEAD:agent/transport-info-catalog
