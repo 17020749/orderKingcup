@@ -25,6 +25,20 @@ jobs:
         run: |
           rm -f TRANSPORT_PATCH_ERROR.txt
           awk '/python <<'"'"'PY'"'"'/{copy=1; next} /^          PY$/{copy=0} copy { sub(/^          /, ""); print }' .github/workflows/apply-transport-info-catalog.yml > /tmp/apply.py
+          python <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/apply.py')
+          source = path.read_text()
+          source = source.replace(
+              '"       carrier_name: \'\', carrier_phone: \'\', vehicle_plate: \'\', driver_name: \'\', departure_at: \'\',\\n",',
+              '"      carrier_name: \'\', carrier_phone: \'\', vehicle_plate: \'\', driver_name: \'\', departure_at: \'\',\\n",',
+          )
+          source = source.replace(
+              '"       transport_carrier_id: \'\', carrier_name: \'\', carrier_phone: \'\', vehicle_plate: \'\', driver_name: \'\', departure_at: \'\',\\n",',
+              '"      transport_carrier_id: \'\', carrier_name: \'\', carrier_phone: \'\', vehicle_plate: \'\', driver_name: \'\', departure_at: \'\',\\n",',
+          )
+          path.write_text(source)
+          PY
           set +e
           python /tmp/apply.py > /tmp/transport-patch.log 2>&1
           status=$?
