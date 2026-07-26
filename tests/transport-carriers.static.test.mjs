@@ -7,10 +7,14 @@ import { test } from 'node:test'
 const carrierPage = readFileSync('pages/transport-carriers.vue', 'utf8')
 const shipmentsPage = readFileSync('pages/shipments.vue', 'utf8')
 const busTransportPage = readFileSync('pages/bus-transport.vue', 'utf8')
+const labelModal = readFileSync('components/ParcelLabelPrintModal.vue', 'utf8')
+const multiSelect = readFileSync('components/SearchableMultiSelect.vue', 'utf8')
+const provinceData = readFileSync('data/vietnamProvincesV1.ts', 'utf8')
+const provinceComposable = readFileSync('composables/useVietnamProvinces.ts', 'utf8')
 const accessMatrix = readFileSync('constants/accessMatrix.mjs', 'utf8')
 const permissions = readFileSync('constants/permissions.ts', 'utf8')
 
-test('danh sách nhà xe có page riêng và bốn quyền CRUD độc lập', () => {
+ test('danh sách nhà xe có page riêng và bốn quyền CRUD độc lập', () => {
   assert.match(accessMatrix, /path: '\/transport-carriers'/)
   assert.match(accessMatrix, /label: 'Danh sách nhà xe'/)
   for (const permission of [
@@ -31,14 +35,36 @@ test('ba page chỉ được gom trong nhóm Thông tin vận chuyển', () => {
   }
 })
 
-test('chỉ vận chuyển nhà xe dùng danh mục và lưu ID cùng snapshot nhà xe', () => {
+test('dữ liệu tỉnh thành v1 có fallback nội bộ và multi select tìm kiếm', () => {
+  assert.match(provinceData, /provinces\.open-api\.vn\/api\/v1\/\?depth=1/)
+  assert.ok((provinceData.match(/\{ code:/g) || []).length >= 63)
+  assert.match(provinceComposable, /VIETNAM_PROVINCES_V1/)
+  assert.match(provinceComposable, /\$fetch<unknown>\(VIETNAM_PROVINCES_V1_API_URL\)/)
+  assert.match(multiSelect, /defineEmits/)
+  assert.match(multiSelect, /selectedOptions/)
+  assert.match(multiSelect, /Gõ để tìm/)
+  assert.match(carrierPage, /SearchableMultiSelect v-model="form\.service_province_codes"/)
+})
+
+test('chỉ vận chuyển nhà xe dùng danh mục và lưu ID cùng snapshot địa chỉ, tỉnh thành', () => {
   assert.match(busTransportPage, /collection\(db, 'transport_carriers'\)/)
-  assert.match(busTransportPage, /SearchableSelect v-model="form\.transport_carrier_id"/)
-  assert.match(busTransportPage, /transport_carrier_id:/)
+  assert.match(busTransportPage, /filteredCarrierCards/)
+  assert.match(busTransportPage, /@click="selectCarrier\(carrier\)"/)
+  assert.match(busTransportPage, /transport_carrier_id: carrier\.id/)
   assert.match(busTransportPage, /carrier_name: carrier\.carrier_name/)
   assert.match(busTransportPage, /carrier_phone: carrier\.carrier_phone/)
-  assert.match(busTransportPage, /vehicle_plate: carrier\.vehicle_plate/)
+  assert.match(busTransportPage, /carrier_address: carrier\.carrier_address/)
+  assert.match(busTransportPage, /carrier_province_codes:/)
+  assert.match(busTransportPage, /selected_province_code:/)
   assert.match(busTransportPage, /driver_name: carrier\.driver_name/)
+})
+
+test('page bus transport lọc nhà xe theo tỉnh và hiển thị card để chọn', () => {
+  assert.match(busTransportPage, /carrierProvinceFilter/)
+  assert.match(busTransportPage, /provinceFilterOptions/)
+  assert.match(busTransportPage, /service_province_codes/)
+  assert.match(busTransportPage, /class="carrier-card"/)
+  assert.match(busTransportPage, /Không có nhà xe phục vụ tỉnh thành hoặc từ khóa này/)
 })
 
 test('page shipments giữ nguyên nghiệp vụ cũ và không phụ thuộc danh mục nhà xe', () => {
@@ -49,8 +75,14 @@ test('page shipments giữ nguyên nghiệp vụ cũ và không phụ thuộc da
 })
 
 test('thông tin snapshot trên form vận chuyển nhà xe là chỉ đọc', () => {
-  for (const field of ['carrier_phone', 'vehicle_plate', 'driver_name', 'carrier_name']) {
+  for (const field of ['carrier_phone', 'driver_name', 'carrier_name', 'carrier_address']) {
     assert.match(busTransportPage, new RegExp(`v-model="form\\.${field}"[^>]*readonly`))
+  }
+})
+
+test('biển số được bỏ khỏi danh mục, vận chuyển nhà xe và mẫu in', () => {
+  for (const source of [carrierPage, busTransportPage, labelModal]) {
+    assert.doesNotMatch(source, /vehicle_plate|Biển số xe|Biển số/)
   }
 })
 

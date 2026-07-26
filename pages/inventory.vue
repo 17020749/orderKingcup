@@ -205,8 +205,12 @@ function lotDetailsForRow(row: any): InventoryLotDetailRow[] {
         && Boolean(costItem)
         && (Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost_with_vat')
           || Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost'))
+      const baseUnitCost = toNumber((costItem as any)?.unit_cost)
+      const itemVatRate = Math.max(0, Math.min(100, toNumber((costItem as any)?.vat_rate ?? (costItem as any)?.vat_percent)))
       const unitCost = hasCost
-        ? toNumber((costItem as any).unit_cost_with_vat ?? (costItem as any).unit_cost)
+        ? Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost_with_vat')
+          ? toNumber((costItem as any).unit_cost_with_vat)
+          : Math.round(baseUnitCost * (1 + itemVatRate / 100) * 100) / 100
         : null
       const availableQuantity = roundQuantity(lot.available_quantity)
 

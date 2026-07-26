@@ -15,7 +15,8 @@ export type ParcelLabelData = {
   rows: ParcelLabelRow[]
   carrierName?: string
   carrierPhone?: string
-  vehiclePlate?: string
+  carrierAddress?: string
+  selectedProvinceName?: string
   driverName?: string
   departureAt?: string
   note?: string
@@ -47,8 +48,9 @@ function carrierSummary(data: ParcelLabelData) {
   const values = [
     data.carrierName && `Nhà xe: ${data.carrierName}`,
     data.carrierPhone && `SĐT nhà xe: ${data.carrierPhone}`,
-    data.vehiclePlate && `Biển số: ${data.vehiclePlate}`,
     data.driverName && `Chủ xe/Tài xế: ${data.driverName}`,
+    data.selectedProvinceName && `Tỉnh vận chuyển: ${data.selectedProvinceName}`,
+    data.carrierAddress && `Địa chỉ nhà xe: ${data.carrierAddress}`,
     data.departureAt && `Giờ xuất phát: ${formatDateTime(data.departureAt)}`,
   ].filter(Boolean)
   return values.join(' · ')
