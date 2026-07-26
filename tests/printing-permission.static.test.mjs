@@ -70,3 +70,16 @@ test('Firestore Rules link printing.orders_view to source order ownership', () =
   assert.match(rules, /ownsOrderById/)
   assert.match(rules, /printingCanReadProgress/)
 })
+
+
+test('printing list renders every product as a child row under its parent progress', () => {
+  const listSection = printingPage.slice(
+    printingPage.indexOf('<table class="printing-table">'),
+    printingPage.indexOf('<BaseModal', printingPage.indexOf('<table class="printing-table">')),
+  )
+  assert.match(listSection, /<template v-for="row in filtered"/)
+  assert.match(listSection, /v-for="\(item, itemIndex\) in row\.detailItems"/)
+  assert.match(listSection, /class="printing-child-row"/)
+  assert.doesNotMatch(listSection, /<th>Mã AM<\/th>/)
+  assert.doesNotMatch(listSection, /Tiến độ dòng/)
+})

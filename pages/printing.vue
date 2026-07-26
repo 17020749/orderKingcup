@@ -214,17 +214,9 @@ const enrichedRows = computed(() => rows.value.map(order => {
     .map(item => toEpoch(item.expected_done_at))
     .filter(epoch => !Number.isNaN(epoch))
   const supplierNames = [...new Set(detailItems.map(item => String(item.supplier_name || '').trim()).filter(Boolean))]
-  const productMap = new Map<string, { key: string; product_code: string; product_name: string; line_count: number }>()
-  detailItems.forEach(item => {
-    const key = String(item.product_id || item.product_code || item.product_name || item.id)
-    const current = productMap.get(key)
-    if (current) current.line_count += 1
-    else productMap.set(key, { key, product_code: String(item.product_code || ''), product_name: String(item.product_name || ''), line_count: 1 })
-  })
   return {
     ...order,
     detailItems,
-    product_summary: Array.from(productMap.values()),
     supplier_summary: supplierNames.join(', '),
     print_status: orderStatus(detailItems),
     total_print_quantity: detailItems.reduce((sum, item) => sum + toNumber(item.print_quantity), 0),
@@ -615,10 +607,8 @@ onBeforeUnmount(() => {
           <thead>
             <tr>
               <th>Mã đơn hàng</th>
-              <th>Mã AM</th>
               <th>Sản phẩm</th>
               <th>NCC theo dòng</th>
-              <th>Tiến độ dòng</th>
               <th>SL dự kiến</th>
               <th>SL thực tế</th>
               <th>Hạn gần nhất</th>
@@ -627,30 +617,51 @@ onBeforeUnmount(() => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in filtered" :key="row.id">
-              <td><b>{{ row.order_code }}</b><div class="small subtle">{{ row.created_by || '-' }}</div></td>
-              <td>{{ row.am_code || '-' }}</td>
-              <td class="printing-products-cell">
-                <div v-for="product in row.product_summary" :key="product.key" class="printing-product-line">
-                  <b>{{ product.product_code || '-' }}</b><span>{{ product.product_name || 'Sản phẩm' }}</span><small v-if="product.line_count > 1">{{ product.line_count }} dòng</small>
-                </div>
-                <span v-if="!row.product_summary.length">-</span>
-              </td>
-              <td>{{ row.supplier_summary || '-' }}</td>
-              <td><b>{{ row.completed_count }}/{{ row.detailItems.length }}</b> dòng</td>
-              <td>{{ quantityText(row.total_print_quantity) }}</td>
-              <td>{{ quantityText(row.total_actual_quantity) }}</td>
-              <td>{{ row.next_due_at ? formatDateTime(row.next_due_at) : '-' }}</td>
-              <td><span class="badge" :class="statusClass(row.print_status)">{{ row.print_status }}</span></td>
-              <td>
-                <div class="action-buttons">
-                  <button class="btn-sm btn-view" @click="openDetail(row)">Chi tiết</button>
-                  <button v-if="canEditOrder(row)" class="btn-sm" @click="openEditModal(row)">Sửa</button>
-                  <button v-if="canDeleteOrder(row)" class="btn-sm btn-delete" @click="removeOrder(row)">Xóa</button>
-                </div>
-              </td>
-            </tr>
-            <tr v-if="!filtered.length"><td colspan="10" class="empty">Chưa có tiến độ in ấn phù hợp.</td></tr>
+            <template v-for="row in filtered" :key="row.id">
+              <tr class="printing-parent-row">
+                <td><b>{{ row.order_code }}</b><div class="small subtle">{{ row.created_by || '-' }}</div></td>
+                <td><b>{{ row.detailItems.length }}</b> dòng sản phẩm</td>
+                <td>{{ row.supplier_summary || '-' }}</td>
+                <td>{{ quantityText(row.total_print_quantity) }}</td>
+                <td>{{ quantityText(row.total_actual_quantity) }}</td>
+                <td>{{ row.next_due_at ? formatDateTime(row.next_due_at) : '-' }}</td>
+                <td><span class="badge" :class="statusClass(row.print_status)">{{ row.print_status }}</span></td>
+                <td>
+                  <div class="action-buttons">
+                    <button class="btn-sm btn-view" @click="openDetail(row)">Chi tiết</button>
+                    <button v-if="canEditOrder(row)" class="btn-sm" @click="openEditModal(row)">Sửa</button>
+                    <button v-if="canDeleteOrder(row)" class="btn-sm btn-delete" @click="removeOrder(row)">Xóa</button>
+                  </div>
+                </td>
+              </tr>
+              <tr
+                v-for="(item, itemIndex) in row.detailItems"
+                :key="`${row.id}:${item.id}`"
+                class="printing-child-row"
+              >
+                <td><span class="printing-child-marker">↳ Dòng {{ itemIndex + 1 }}</span></td>
+                <td class="printing-child-product">
+                  <b>{{ item.product_code || '-' }}</b>
+                  <div>{{ item.product_name || 'Sản phẩm' }}</div>
+                  <div class="small subtle">
+                    <span v-if="item.logo">Logo: {{ item.logo }}</span>
+                    <span v-if="item.logo_color"> · Màu: {{ item.logo_color }}</span>
+                    <span v-if="item.note"> · {{ item.note }}</span>
+                  </div>
+                </td>
+                <td>{{ item.supplier_name || '-' }}</td>
+                <td>{{ quantityText(item.print_quantity) }}</td>
+                <td>{{ quantityText(item.actual_print_quantity) }}</td>
+                <td>{{ item.expected_done_at ? formatDateTime(item.expected_done_at) : '-' }}</td>
+                <td><span class="badge" :class="statusClass(itemStatus(item))">{{ itemStatus(item) }}</span></td>
+                <td></td>
+              </tr>
+              <tr v-if="!row.detailItems.length" class="printing-child-row">
+                <td></td>
+                <td colspan="7" class="empty">Tiến độ này chưa có dòng sản phẩm.</td>
+              </tr>
+            </template>
+            <tr v-if="!filtered.length"><td colspan="8" class="empty">Chưa có tiến độ in ấn phù hợp.</td></tr>
           </tbody>
         </table>
       </div>
@@ -795,11 +806,12 @@ onBeforeUnmount(() => {
 .complete-card strong { color: #15803d; }
 .printing-toolbar .input { max-width: 720px; }
 .printing-toolbar .select { width: 220px; }
-.printing-table { min-width: 1580px; }
-.printing-products-cell { min-width: 280px; }
-.printing-product-line { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; }
-.printing-product-line span { color: var(--text); }
-.printing-product-line small { color: var(--muted); white-space: nowrap; }
+.printing-table { min-width: 1380px; }
+.printing-parent-row td { background: #f8fafc; border-top: 2px solid var(--line); font-weight: 600; }
+.printing-child-row td { background: #fff; vertical-align: middle; }
+.printing-child-marker { color: var(--muted); font-weight: 700; white-space: nowrap; }
+.printing-child-product { min-width: 300px; padding-left: 18px; }
+.printing-child-product > div:not(.small) { margin-top: 2px; }
 .printing-header-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .print-fields-grid { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)) auto; gap: 10px; align-items: end; margin-top: 14px; }
 .complete-checkbox { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 10px; font-weight: 800; white-space: nowrap; }

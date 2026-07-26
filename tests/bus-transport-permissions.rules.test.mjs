@@ -100,10 +100,15 @@ function transport(id = 'bus-1', overrides = {}) {
     order_code: 'DH-001',
     customer_id: 'customer-1',
     customer_name: 'Khách hàng chuẩn',
+    transport_carrier_id: 'carrier-1',
     carrier_name: 'Nhà xe A',
-    carrier_phone: '',
-    vehicle_plate: '',
-    driver_name: '',
+    carrier_phone: '0909000000',
+    carrier_address: 'Bến xe Miền Đông, TP. Hồ Chí Minh',
+    carrier_province_codes: [74, 75, 79],
+    carrier_province_names: ['Tỉnh Bình Dương', 'Tỉnh Đồng Nai', 'Thành phố Hồ Chí Minh'],
+    selected_province_code: 75,
+    selected_province_name: 'Tỉnh Đồng Nai',
+    driver_name: 'Nguyễn Văn Tài',
     departure_at: '',
     receiver_name: 'Khách hàng chuẩn',
     receiver_phone: '0909000000',
@@ -193,11 +198,15 @@ test('bus_transport.create tạo từ yêu cầu hợp lệ và chặn yêu cầ
   }))
 })
 
-test('bus_transport.edit sửa thông tin nhà xe nhưng không đổi liên kết yêu cầu', async () => {
+test('bus_transport.edit sửa snapshot nhà xe nhưng không đổi liên kết yêu cầu', async () => {
   const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
   await assertSucceeds(updateDoc(doc(db, 'bus_transport_orders', 'bus-1'), {
     carrier_name: 'Nhà xe B',
-    vehicle_plate: '15C-12345',
+    carrier_address: 'Địa chỉ mới',
+    carrier_province_codes: [75, 79, 80],
+    carrier_province_names: ['Tỉnh Đồng Nai', 'Thành phố Hồ Chí Minh', 'Tỉnh Long An'],
+    selected_province_code: 80,
+    selected_province_name: 'Tỉnh Long An',
     updated_by: EDITOR,
     updated_at: serverTimestamp(),
   }))

@@ -31,7 +31,8 @@ function printDocument() {
   const html = buildParcelLabelPrintHtml({
     type: props.type, receiverName: receiverName.value, receiverPhone: receiverPhone.value, receiverAddress: receiverAddress.value,
     orderCode: orderCode.value, rows: printRows.value, carrierName: transport?.carrier_name || '', carrierPhone: transport?.carrier_phone || '',
-    vehiclePlate: transport?.vehicle_plate || '', driverName: transport?.driver_name || '', departureAt: transport?.departure_at || '', note: transport?.note || '',
+    carrierAddress: transport?.carrier_address || '', selectedProvinceName: transport?.selected_province_name || '',
+    driverName: transport?.driver_name || '', departureAt: transport?.departure_at || '', note: transport?.note || '',
   })
   openPrintDocument(html, () => showToast('Trình duyệt đang chặn cửa sổ in. Hãy cho phép pop-up cho trang này.', 'error'))
 }
@@ -52,7 +53,8 @@ function printDocument() {
     </div>
     <div v-if="isBusCarrier" class="carrier-box">
       <strong>Thông tin nhà xe</strong><div>{{ busTransport?.carrier_name || 'Chưa nhập tên nhà xe' }}</div>
-      <div class="small subtle">{{ [busTransport?.carrier_phone, busTransport?.vehicle_plate, busTransport?.driver_name].filter(Boolean).join(' · ') || 'Chưa có SĐT, biển số hoặc tên chủ xe/tài xế' }}</div>
+      <div class="small subtle">{{ [busTransport?.carrier_phone, busTransport?.driver_name, busTransport?.selected_province_name].filter(Boolean).join(' · ') || 'Chưa có SĐT, tên chủ xe/tài xế hoặc tỉnh vận chuyển' }}</div>
+      <div v-if="busTransport?.carrier_address" class="small subtle">{{ busTransport.carrier_address }}</div>
     </div>
     <div class="table-wrap" style="margin-top:14px">
       <table style="min-width:720px"><thead><tr><th>STT</th><th>Tên hàng hóa</th><th>Số kiện</th><th>Logo</th></tr></thead>
