@@ -643,7 +643,7 @@ export function useScopedQueries() {
     const orderIds = cleanIds(orders)
     if (!orderIds.length) return [] as InvoiceDoc[]
     const canReadForRelation = canAll('invoices.view_all')
-      || ['invoices.view', 'invoices.create', 'invoices.edit', 'invoices.delete'].some(key => hasPermission(key))
+      || ['invoices.view', 'invoices.create', 'invoices.edit', 'invoices.delete', 'orders.edit', 'orders.delete'].some(key => hasPermission(key))
     if (!canReadForRelation) return [] as InvoiceDoc[]
     return sortNewest(
       (await fetchByFieldValues<InvoiceDoc>('invoices', 'order_id', orderIds)).filter(isActive) as InvoiceDoc[],

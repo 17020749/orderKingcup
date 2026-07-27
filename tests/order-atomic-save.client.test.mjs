@@ -46,7 +46,7 @@ test('tính đúng số write cho tạo và sửa đơn', () => {
     mode: 'create',
     existingItems: [],
     nextItems: [{ id: 'a' }, { id: 'b' }],
-  }), 5) // sequence + order + activity + 2 items
+  }), 6) // sequence + order + invoice + activity + 2 items
 
   assert.equal(estimateAtomicOrderWrites({
     mode: 'edit',
