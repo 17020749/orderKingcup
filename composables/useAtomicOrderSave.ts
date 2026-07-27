@@ -147,13 +147,13 @@ export function useAtomicOrderSave() {
       }
 
       const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}
-    const invoiceSnapshot = invoiceRef && shouldReadExistingInvoiceSnapshot({
-      mode: input.mode,
-      invoiceMutation,
-      persistedOrder: existingOrder,
-    })
-      ? await transaction.get(invoiceRef)
-      : null
+      const invoiceSnapshot = invoiceRef && shouldReadExistingInvoiceSnapshot({
+        mode: input.mode,
+        invoiceMutation,
+        persistedOrder: existingOrder,
+      })
+        ? await transaction.get(invoiceRef)
+        : null
       const effectiveOwnership = resolveOrderOwnershipForSave({
         mode: input.mode,
         persistedOrder: existingOrder,
