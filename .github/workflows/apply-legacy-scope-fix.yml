@@ -69,11 +69,33 @@ jobs:
           tests/unified-permission-decisions.client.test.mjs
           tests/order-permission-scope-regression.client.test.mjs
 
-      - name: Run focused Firestore Rules scope tests
+      - name: Capture exact legacy scope Rules tests
+        id: exact_rules
+        shell: bash
+        run: |
+          set +e
+          npx --no-install firebase emulators:exec --only firestore \
+            "node --test --test-concurrency=1 tests/order-legacy-missing-identity.rules.test.mjs" \
+            > legacy-scope-rules.log 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload exact Rules log
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-scope-rules-log
+          path: legacy-scope-rules.log
+          if-no-files-found: error
+
+      - name: Stop on exact Rules failure
+        if: steps.exact_rules.outputs.status != '0'
+        run: exit 1
+
+      - name: Run related Firestore Rules tests
         run: >-
           npx --no-install firebase emulators:exec --only firestore
           "node --test --test-concurrency=1
-          tests/order-legacy-missing-identity.rules.test.mjs
           tests/invoice-order-repair-permissions.rules.test.mjs
           tests/order-invoice-flow.rules.test.mjs"
 
@@ -102,3 +124,15 @@ jobs:
           git add -A
           git commit -m 'fix: scope legacy orders by stable sale code'
           git push origin HEAD:agent/fix-sale-legacy-missing-invoice-runtime
+
+  report-rules:
+    needs: apply-and-verify
+    if: always() && needs.apply-and-verify.result == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download exact Rules log
+        uses: actions/download-artifact@v4
+        with:
+          name: legacy-scope-rules-log
+      - name: Print exact Rules failure
+        run: tail -n 260 legacy-scope-rules.log
