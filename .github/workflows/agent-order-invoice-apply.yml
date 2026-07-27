@@ -74,18 +74,16 @@ jobs:
             tests/order-invoice-flow.client.test.mjs \
             2>&1 | tee .agent-order-invoice/last-failure.log
 
-      - name: Persist focused failure
+      - name: Upload focused failure
         if: steps.focused.outcome == 'failure'
-        run: |
-          git rm -r --ignore-unmatch .nuxt
-          git checkout origin/dev -- .nuxt
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git add -f .agent-order-invoice/last-failure.log
-          git commit -m 'ci: capture focused invoice flow failure'
-          git push origin HEAD:agent/order-invoice-atomic-flow
-          exit 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-client-failure
+          path: .agent-order-invoice/last-failure.log
+
+      - name: Stop after focused failure
+        if: steps.focused.outcome == 'failure'
+        run: exit 1
 
       - name: Run permission tests
         id: permissions
@@ -95,18 +93,16 @@ jobs:
           set -o pipefail
           npm run test:permissions 2>&1 | tee .agent-order-invoice/last-failure.log
 
-      - name: Persist permission failure
+      - name: Upload permission failure
         if: steps.permissions.outcome == 'failure'
-        run: |
-          git rm -r --ignore-unmatch .nuxt
-          git checkout origin/dev -- .nuxt
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git add -f .agent-order-invoice/last-failure.log
-          git commit -m 'ci: capture permission regression failure'
-          git push origin HEAD:agent/order-invoice-atomic-flow
-          exit 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: permission-failure
+          path: .agent-order-invoice/last-failure.log
+
+      - name: Stop after permission failure
+        if: steps.permissions.outcome == 'failure'
+        run: exit 1
 
       - name: Run full Firestore Rules tests
         id: rules
@@ -116,18 +112,16 @@ jobs:
           set -o pipefail
           npm run test:rules 2>&1 | tee .agent-order-invoice/last-failure.log
 
-      - name: Persist Rules failure
+      - name: Upload Rules failure
         if: steps.rules.outcome == 'failure'
-        run: |
-          git rm -r --ignore-unmatch .nuxt
-          git checkout origin/dev -- .nuxt
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git add -f .agent-order-invoice/last-failure.log
-          git commit -m 'ci: capture Firestore Rules failure'
-          git push origin HEAD:agent/order-invoice-atomic-flow
-          exit 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestore-rules-failure
+          path: .agent-order-invoice/last-failure.log
+
+      - name: Stop after Rules failure
+        if: steps.rules.outcome == 'failure'
+        run: exit 1
 
       - name: Build application
         id: build
@@ -137,18 +131,16 @@ jobs:
           set -o pipefail
           npm run build 2>&1 | tee .agent-order-invoice/last-failure.log
 
-      - name: Persist build failure
+      - name: Upload build failure
         if: steps.build.outcome == 'failure'
-        run: |
-          git rm -r --ignore-unmatch .nuxt
-          git checkout origin/dev -- .nuxt
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git add -f .agent-order-invoice/last-failure.log
-          git commit -m 'ci: capture build failure'
-          git push origin HEAD:agent/order-invoice-atomic-flow
-          exit 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure
+          path: .agent-order-invoice/last-failure.log
+
+      - name: Stop after build failure
+        if: steps.build.outcome == 'failure'
+        run: exit 1
 
       - name: Remove bootstrap and generated files
         run: |
