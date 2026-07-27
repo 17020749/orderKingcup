@@ -6,7 +6,7 @@ import {
   stripOrderEditSystemFields,
 } from '../utils/orderAtomicSave.mjs'
 
-// These tests guard the two regressions found during the audit after PR #101 was merged.
+// These tests guard the regressions found during the audits after the atomic order/invoice changes.
 
 test('sửa order loại bỏ toàn bộ field hệ thống dễ bị stale trước khi ghi', () => {
   const payload = Object.fromEntries(ORDER_EDIT_SYSTEM_FIELDS.map(field => [field, `stale:${field}`]))
@@ -39,9 +39,14 @@ test('trang hóa đơn chỉ tải parent order của invoice đang hiển thị
   assert.match(scoped, /fetchByFieldValues<OrderDoc>\('orders', 'id', orderIds\)/)
 })
 
-test('không hiển thị nút sửa hoặc xóa invoice khi thiếu parent order được phép đọc', () => {
+test('trang hóa đơn yêu cầu parent đã tải và invoices.view_all cùng action', () => {
   const invoices = readFileSync('pages/invoices.vue', 'utf8')
+  const scoped = readFileSync('composables/useScopedQueries.ts', 'utf8')
   assert.match(invoices, /function parentOrderForInvoice/)
   assert.match(invoices, /if \(!order\) return false/)
-  assert.match(invoices, /orders\.view_all/)
+  assert.match(invoices, /viewAllPermission: 'invoices\.view_all'/)
+  assert.match(invoices, /record: null/)
+  assert.match(invoices, /parent: null/)
+  assert.match(scoped, /canAll\('invoices\.view_all'\)/)
+  assert.match(scoped, /getDocFromServer\(doc\(db, 'orders', orderId\)\)/)
 })
