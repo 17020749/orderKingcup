@@ -84,9 +84,9 @@ test('trang hóa đơn chỉ sửa/xóa và không còn luồng tạo thủ côn
   assert.doesNotMatch(invoices, /availableOrders/)
   assert.doesNotMatch(invoices, /openModal\(\)/)
   assert.match(invoices, /action: 'edit'/)
-  assert.match(invoices, /action: 'delete'/)
+  assert.match(invoices, /mode: 'delete'/)
   assert.match(invoices, /validateAccountingInvoice/)
-  assert.match(invoices, /Đã xuất/)
+  assert.match(invoices, /INVOICE_STATUS_OPTIONS/)
 })
 
 test('xóa order cascade invoice nhưng vẫn dùng blocker payment và shipment', () => {

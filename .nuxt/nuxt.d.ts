@@ -1,5 +1,3 @@
-/// <reference types="~/modules/warehouse-cost" />
-/// <reference types="~/modules/scoped-order-items" />
 /// <reference types="@nuxt/devtools" />
 /// <reference types="@nuxt/telemetry" />
 /// <reference path="types/nitro-layouts.d.ts" />

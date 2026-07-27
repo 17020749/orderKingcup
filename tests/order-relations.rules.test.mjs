@@ -313,7 +313,7 @@ test('invoice create/delete cập nhật invoice_status và count cùng giao d�
   const updateBatch = writeBatch(db)
   updateBatch.update(doc(db, 'invoices', 'inv-a'), {
     invoice_status: 'Yêu cầu xuất',
-    relation_revision: 2,
+    relation_revision: 1,
     updated_at: 'now-2',
   })
   updateBatch.update(doc(db, 'orders', 'order-a'), {

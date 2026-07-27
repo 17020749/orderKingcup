@@ -1493,17 +1493,23 @@ service cloud.firestore {
     }
 
     function invoiceAccountingUpdateValid(orderId) {
-      let path = orderPath(orderId);
-      return accountingInvoiceStatusValue(request.resource.data.get('invoice_status', ''))
-        && invoiceAmountValid(request.resource.data)
-        && issuedInvoiceFieldsValid(request.resource.data)
-        && request.resource.data.get('id', '') == resource.data.get('id', '')
-        && request.resource.data.get('relation_revision', -1) == resource.data.get('relation_revision', 0) + 1
-        && existsAfter(path)
-        && getAfter(path).data.get('invoice_status', '') == request.resource.data.get('invoice_status', '');
-    }
+  let path = orderPath(orderId);
+  return (
+      unchanged(['invoice_status'])
+      || accountingInvoiceStatusValue(request.resource.data.get('invoice_status', ''))
+    )
+    && invoiceAmountValid(request.resource.data)
+    && issuedInvoiceFieldsValid(request.resource.data)
+    && request.resource.data.get('id', '') == resource.data.get('id', '')
+    && (
+      unchanged(['relation_revision'])
+      || request.resource.data.get('relation_revision', -1) == resource.data.get('relation_revision', 0) + 1
+    )
+    && existsAfter(path)
+    && getAfter(path).data.get('invoice_status', '') == request.resource.data.get('invoice_status', '');
+}
 
-    function saleInvoiceStatusUpdateAllowed(invoiceId) {
+function saleInvoiceStatusUpdateAllowed(invoiceId) {
       let orderId = resource.data.get('order_id', '');
       let path = orderPath(orderId);
       let order = get(path).data;
