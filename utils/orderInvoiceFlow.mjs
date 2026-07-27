@@ -49,6 +49,41 @@ export function buildOrderInvoiceId(orderId) {
   return `inv_${cleanOrderId}`
 }
 
+export function planOrderEditInvoiceMutation({
+  orderId,
+  persistedStatus,
+  requestedStatus,
+  currentInvoice = null,
+  activeInvoiceCount = currentInvoice ? 1 : 0,
+  payload = {},
+} = {}) {
+  if (Number(activeInvoiceCount) > 1) {
+    throw new Error('Đơn hàng có nhiều hóa đơn đang hoạt động. Hãy xử lý trùng trước khi lưu.')
+  }
+
+  const normalizedRequestedStatus = normalizeInvoiceStatus(requestedStatus)
+  if (!currentInvoice) {
+    return {
+      mode: 'legacy_create',
+      invoiceId: buildOrderInvoiceId(orderId),
+      requestedStatus: normalizedRequestedStatus,
+      payload: { ...payload },
+    }
+  }
+
+  const statusChanged = normalizeInvoiceStatus(persistedStatus) !== 'Đã xuất'
+    && invoiceStatusChangeRequested(persistedStatus, normalizedRequestedStatus)
+  if (!statusChanged) return undefined
+
+  return {
+    mode: 'status_update',
+    invoiceId: currentInvoice.id,
+    requestedStatus: normalizedRequestedStatus,
+    expectedStatus: currentInvoice.invoice_status,
+    expectedRelationRevision: Number(currentInvoice.relation_revision) || 0,
+  }
+}
+
 export function validateAccountingInvoice(input = {}) {
   const status = normalizeInvoiceStatus(input.invoice_status)
   if (!ACCOUNTING_INVOICE_STATUSES.includes(status)) {
