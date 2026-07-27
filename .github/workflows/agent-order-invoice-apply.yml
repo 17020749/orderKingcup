@@ -217,7 +217,7 @@ jobs:
 
       - name: Remove bootstrap and generated files
         run: |
-          git rm -r --ignore-unmatch .nuxt
+          git rm -r -f --ignore-unmatch .nuxt
           git checkout origin/dev -- .nuxt
           rm -rf .agent-order-invoice .github/workflows/agent-order-invoice-apply.yml
 
