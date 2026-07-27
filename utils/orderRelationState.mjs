@@ -188,11 +188,9 @@ export function orderRelationDeleteBlocker(order = {}) {
     return 'Đơn hàng cũ chưa hoàn tất đồng bộ khóa thanh toán, hóa đơn và vận chuyển. Vui lòng tải lại sau khi hệ thống xử lý.'
   }
   const payments = number(order.payment_record_count)
-  const invoices = number(order.invoice_record_count)
   const shipments = number(order.shipment_record_count)
   const reasons = []
   if (payments > 0) reasons.push(`${payments} phiếu thanh toán`)
-  if (invoices > 0) reasons.push(`${invoices} hóa đơn`)
   if (shipments > 0) reasons.push(`${shipments} bản ghi vận chuyển`)
   return reasons.length
     ? `Không thể xóa đơn hàng vì còn ${reasons.join(', ')} đang hoạt động.`

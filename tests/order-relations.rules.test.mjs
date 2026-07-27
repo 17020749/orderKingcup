@@ -312,14 +312,15 @@ test('invoice create/delete cập nhật invoice_status và count cùng giao d�
 
   const updateBatch = writeBatch(db)
   updateBatch.update(doc(db, 'invoices', 'inv-a'), {
-    invoice_status: 'HĐ nháp',
+    invoice_status: 'Yêu cầu xuất',
+    relation_revision: 1,
     updated_at: 'now-2',
   })
   updateBatch.update(doc(db, 'orders', 'order-a'), {
     ...relationMeta('invoices', 'update', 'inv-a'),
     invoice_record_count: 1,
     invoice_relation_revision: 2,
-    invoice_status: 'HĐ nháp',
+    invoice_status: 'Yêu cầu xuất',
   })
   await assertSucceeds(updateBatch.commit())
 

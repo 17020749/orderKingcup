@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { collection, doc, getDoc, serverTimestamp, writeBatch } from 'firebase/firestore'
 import { INVOICE_STATUS_OPTIONS, ORDER_CLASSIFICATION_OPTIONS, ORDER_STATUS_OPTIONS, VAT_RATE_OPTIONS } from '~/constants/permissions'
-import type { CustomerDoc, OrderDoc, OrderItemDoc, PaymentDoc, PrintOrderDoc, PrintOrderItemDoc, ProductDoc } from '~/types/models'
+import type { CustomerDoc, InvoiceDoc, OrderDoc, OrderItemDoc, PaymentDoc, PrintOrderDoc, PrintOrderItemDoc, ProductDoc } from '~/types/models'
 import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
 import { customerCodeValidationError, normalizeCustomerCode, normalizeUserCode, userCodeValidationError } from '~/utils/orderCode'
 import { generateCustomerCode } from '~/utils/customerCode'
@@ -13,8 +13,16 @@ import { toDateKey } from '~/utils/listFilters'
 import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import { printingDeleteBlocker } from '~/utils/orderPrintingDeleteLock.mjs'
-// @ts-ignore Shared ESM helper is executed directly by Node client tests.
-import { orderRelationDeleteBlocker } from '~/utils/orderRelationState.mjs'
+// @ts-ignore Shared ESM helpers are executed directly by Node client tests.
+import { isActiveOrderRelation, orderRelationDeleteBlocker, selectCanonicalInvoice } from '~/utils/orderRelationState.mjs'
+// @ts-ignore Shared ESM helpers are executed directly by Node client tests.
+import {
+  assertSaleInvoiceStatus,
+  buildOrderInvoiceId,
+  invoiceStatusChangeRequested,
+  normalizeInvoiceStatus,
+  SALE_INVOICE_STATUSES,
+} from '~/utils/orderInvoiceFlow.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import {
   warehouseOrderDeleteBlocker,
@@ -33,6 +41,7 @@ const {
   loadScopedOrderItems,
   loadPersistedOrder,
   loadScopedPaymentsForOrders,
+  loadScopedInvoicesForOrders,
   loadScopedExportRequestsForOrders,
   loadScopedExportRequests,
   loadScopedCustomers,
@@ -111,6 +120,8 @@ function resetFilters() {
 }
 
 const itemCount = computed(() => `${formItems.value.length} dòng`)
+const saleInvoiceStatusOptions = SALE_INVOICE_STATUSES
+const invoiceStatusLocked = computed(() => normalizeInvoiceStatus(editing.value?.invoice_status || form.invoice_status) === 'Đã xuất')
 const modalTotals = computed(() => calcItems(formItems.value, form))
 const selectedDetailItems = computed(() => selectedDetail.value ? (itemsByOrder.value[selectedDetail.value.id] || []) : [])
 const selectedDetailRequests = computed(() => selectedDetail.value
@@ -585,7 +596,12 @@ function openModal(row?: OrderDoc) {
   if (row && !canEditRow(row)) return showToast(orderActionError('edit', row), 'error')
   editing.value = row || null
   Object.keys(form).forEach(key => delete form[key])
-  Object.assign(form, row ? { ...row, order_date: dateTimeLocal(row.order_date) || row.order_date } : {
+  const normalizedRow = row ? {
+    ...row,
+    order_date: dateTimeLocal(row.order_date) || row.order_date,
+    invoice_status: normalizeInvoiceStatus(row.invoice_status),
+  } : null
+  Object.assign(form, normalizedRow || {
     id: makeId('ord'),
     order_code: '',
     order_sequence: '',
@@ -600,6 +616,7 @@ function openModal(row?: OrderDoc) {
     owner_email: appUser.value?.email || '',
     order_status: 'Mới tạo',
     order_classification: 'Chăm sóc',
+    invoice_status: 'Không xuất',
     vat_rate: 0,
     discount_amount: 0,
     note: '',
@@ -713,6 +730,15 @@ async function saveOrder() {
       throw new Error(`${userCodeError} Vui lòng nhờ quản trị viên cập nhật tài khoản.`)
     }
 
+    const persistedInvoiceStatus = normalizeInvoiceStatus(editing.value?.invoice_status || 'Không xuất')
+    const formInvoiceStatus = normalizeInvoiceStatus(form.invoice_status)
+    const requestedInvoiceStatus = persistedInvoiceStatus === 'Đã xuất'
+      ? 'Đã xuất'
+      : assertSaleInvoiceStatus(formInvoiceStatus)
+    if (persistedInvoiceStatus === 'Đã xuất' && formInvoiceStatus !== 'Đã xuất') {
+      throw new Error('Hóa đơn đã xuất. Sale không được thay đổi trạng thái từ đơn hàng.')
+    }
+
     const saveItems = buildSaveItems()
     if (editing.value) {
       saveStage = 'load_edit_dependencies'
@@ -749,6 +775,32 @@ async function saveOrder() {
     if (requestedDiscount < 0) throw new Error('Số tiền giảm giá không được âm.')
     if (requestedDiscount > totals.actual_revenue) throw new Error('Số tiền giảm giá không được lớn hơn tổng tiền đơn.')
 
+    let invoiceMutation: any
+    if (!editing.value) {
+      invoiceMutation = {
+        mode: 'create',
+        invoiceId: buildOrderInvoiceId(form.id),
+        requestedStatus: requestedInvoiceStatus,
+        payload: {
+          tax_code: selectedCustomer?.tax_code || '',
+          company_name: selectedCustomer?.company_name || '',
+          billing_address: selectedCustomer?.billing_address || '',
+          note: '',
+        },
+      }
+    } else if (persistedInvoiceStatus !== 'Đã xuất' && invoiceStatusChangeRequested(persistedInvoiceStatus, requestedInvoiceStatus)) {
+      const activeInvoices = (await loadScopedInvoicesForOrders([editing.value], true)).filter(isActiveOrderRelation) as InvoiceDoc[]
+      const currentInvoice = selectCanonicalInvoice(activeInvoices) as InvoiceDoc | null
+      if (!currentInvoice) throw new Error('Không tìm thấy hóa đơn đang hoạt động của đơn. Hãy tải lại dữ liệu.')
+      invoiceMutation = {
+        mode: 'status_update',
+        invoiceId: currentInvoice.id,
+        requestedStatus: requestedInvoiceStatus,
+        expectedStatus: currentInvoice.invoice_status,
+        expectedRelationRevision: toNumber(currentInvoice.relation_revision),
+      }
+    }
+
     const baseOrder: any = { ...form, ...totals }
     if (editing.value) {
       const protectedFields = [
@@ -778,7 +830,7 @@ async function saveOrder() {
       items_count: totals.items.length,
       search_text: normalizeText(`${form.order_code || ''} ${form.customer_name} ${form.phone}`),
       ...(editing.value ? {} : {
-        invoice_status: 'Không xuất',
+        invoice_status: requestedInvoiceStatus,
         warehouse_fulfillment_status: form.warehouse_fulfillment_status || 'chua_xuat',
         warehouse_request_status: form.warehouse_request_status || '',
         printing_progress_count: 0,
@@ -789,14 +841,14 @@ async function saveOrder() {
         printing_lock_updated_at: serverTimestamp(),
         relation_lock_version: 1,
         payment_record_count: 0,
-        invoice_record_count: 0,
+        invoice_record_count: 1,
         shipment_record_count: 0,
         payment_relation_revision: 0,
-        invoice_relation_revision: 0,
+        invoice_relation_revision: 1,
         shipment_relation_revision: 0,
-        relation_last_module: 'all',
-        relation_last_action: 'reconcile',
-        relation_last_document_id: '',
+        relation_last_module: 'invoices',
+        relation_last_action: 'create',
+        relation_last_document_id: buildOrderInvoiceId(form.id),
         relation_updated_by: createdBy,
         relation_updated_at: serverTimestamp(),
         shipment_status: '',
@@ -824,6 +876,7 @@ async function saveOrder() {
       orderPayload,
       nextItems: totals.items,
       existingItems,
+      invoiceMutation,
       activityAction: editing.value ? 'update' : 'create',
       activityItemName: form.customer_name || form.order_code,
       activityBefore: editing.value
@@ -834,6 +887,7 @@ async function saveOrder() {
 
     invalidateScopedCache('orders')
     invalidateScopedCache('order_items')
+    invalidateScopedCache('invoices')
     invalidateScopedCache('activity_logs')
 
     saveStage = 'post_commit_sync'
@@ -922,14 +976,17 @@ async function softDeleteOrder(row: OrderDoc) {
 
   let latestOrder = row
   let latestRequests: any[] = []
+  let latestInvoices: InvoiceDoc[] = []
   try {
-    const [latestOrderSnap, loadedRequests] = await Promise.all([
+    const [latestOrderSnap, loadedRequests, loadedInvoices] = await Promise.all([
       getDoc(doc(db, 'orders', row.id)),
       loadScopedExportRequests([row], true),
+      loadScopedInvoicesForOrders([row], true),
     ])
     if (!latestOrderSnap.exists()) throw new Error('Không tìm thấy đơn hàng cần xóa.')
     latestOrder = { ...latestOrderSnap.data(), id: latestOrderSnap.id } as OrderDoc
     latestRequests = loadedRequests.filter(request => request.order_id === row.id && isActive(request))
+    latestInvoices = loadedInvoices.filter(invoice => invoice.order_id === row.id && isActive(invoice))
   } catch (error) {
     return showToast(reportFirebaseError(error, 'Không kiểm tra được trạng thái yêu cầu xuất kho của đơn.'), 'error')
   }
@@ -955,7 +1012,7 @@ async function softDeleteOrder(row: OrderDoc) {
     const latestRelationBlocker = orderRelationDeleteBlocker(latestOrder)
     if (latestRelationBlocker) throw new Error(latestRelationBlocker)
 
-    if (orderItems.length + orderRequests.length + 2 > 500) {
+    if (orderItems.length + orderRequests.length + latestInvoices.length + 2 > 500) {
       throw new Error('Đơn hàng có quá nhiều dữ liệu liên quan để xóa an toàn trong một lần.')
     }
 
@@ -990,13 +1047,23 @@ async function softDeleteOrder(row: OrderDoc) {
       })
     })
 
+    latestInvoices.forEach(invoice => {
+      batch.update(doc(db, 'invoices', invoice.id), {
+        deleted: true,
+        active: false,
+        status: 'deleted',
+        deleted_at: deletedAt,
+        updated_at: deletedAt
+      })
+    })
+
     batch.set(doc(collection(db, 'activity_logs')), {
       module: 'orders',
       action: 'delete',
       item_code: row.order_code,
       item_name: row.customer_name || row.order_code,
       changed_by: appUser.value?.email || '',
-      after_json: JSON.stringify({ order_id: row.id, deleted: true, deleted_requests: orderRequests.length }),
+      after_json: JSON.stringify({ order_id: row.id, deleted: true, deleted_requests: orderRequests.length, deleted_invoices: latestInvoices.length }),
       created_at: deletedAt,
       active: true,
       deleted: false
@@ -1010,6 +1077,7 @@ async function softDeleteOrder(row: OrderDoc) {
     invalidateScopedCache('orders')
     invalidateScopedCache('order_items')
     invalidateScopedCache('order_export_requests')
+    invalidateScopedCache('invoices')
     invalidateScopedCache('activity_logs')
     showToast('Đã xóa đơn hàng', 'success')
   }).catch(error => {
@@ -1283,6 +1351,14 @@ onMounted(loadRows)
         <div class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
         <div class="form-group"><label>Phân loại đơn</label><select v-model="form.order_classification" class="select"><option v-for="s in ORDER_CLASSIFICATION_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
+        <div class="form-group">
+          <label>Hóa đơn</label>
+          <select v-model="form.invoice_status" class="select" :disabled="invoiceStatusLocked">
+            <option v-for="status in saleInvoiceStatusOptions" :key="status" :value="status">{{ status }}</option>
+            <option v-if="invoiceStatusLocked" value="Đã xuất">Đã xuất</option>
+          </select>
+          <div v-if="invoiceStatusLocked" class="small subtle">Hóa đơn đã xuất; chỉ người có quyền tại trang Hóa đơn được cập nhật.</div>
+        </div>
         <div class="form-group"><label>VAT %</label><select v-model.number="form.vat_rate" class="select"><option v-for="s in VAT_RATE_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div class="form-group"><label>Số tiền giảm giá</label><input v-model.number="form.discount_amount" class="input" type="number" min="0" /></div>
       </div>

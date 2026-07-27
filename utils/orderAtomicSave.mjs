@@ -43,10 +43,16 @@ export function planAtomicOrderItems(existingItems = [], nextItems = []) {
   }
 }
 
-export function estimateAtomicOrderWrites({ mode, existingItems = [], nextItems = [] } = {}) {
+export function estimateAtomicOrderWrites({
+  mode,
+  existingItems = [],
+  nextItems = [],
+  updateInvoiceStatus = false,
+} = {}) {
   const plan = planAtomicOrderItems(existingItems, nextItems)
   const sequenceWrites = mode === 'create' ? 1 : 0
-  return sequenceWrites + 1 + 1 + plan.upsertItems.length + plan.removedItems.length
+  const invoiceWrites = mode === 'create' || updateInvoiceStatus ? 1 : 0
+  return sequenceWrites + 1 + 1 + invoiceWrites + plan.upsertItems.length + plan.removedItems.length
 }
 
 export function assertAtomicOrderWriteLimit(input = {}) {
