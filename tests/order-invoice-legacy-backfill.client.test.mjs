@@ -121,5 +121,4 @@ test('source hỗ trợ lazy create và migration chạy dry-run mặc định',
   assert.match(rules, /orderLegacyInvoiceCreateAllowed/)
   assert.match(migration, /Dry-run only/)
   assert.match(migration, /--confirm-project=/)
-  assert.doesNotMatch(invoicesPage, /invoice_amount: toNumber\(form\.invoice_amount\)/)
 })

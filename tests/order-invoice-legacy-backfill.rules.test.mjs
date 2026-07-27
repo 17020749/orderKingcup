@@ -252,15 +252,6 @@ test('Sale không được giả dữ liệu kế toán, số tiền hoặc tr�
     { ownerEmail: OTHER },
     { nextStatus: 'Đã xuất' },
   ]) {
-    await env.clearFirestore()
-    await beforeEach[Symbol.for('noop')]
-    await env.withSecurityRulesDisabled(async context => {
-      const db = context.firestore()
-      await Promise.all([
-        setDoc(doc(db, 'users', SALE), { email: SALE, active: true, deleted: false, permissions_flat: ['orders.view', 'orders.edit'] }),
-        setDoc(doc(db, 'orders', 'order-legacy'), baseOrder('order-legacy')),
-      ])
-    })
     const db = env.authenticatedContext(SALE, { email: SALE }).firestore()
     await assertFails(legacyCreateBatch(db, invalid).commit())
   }

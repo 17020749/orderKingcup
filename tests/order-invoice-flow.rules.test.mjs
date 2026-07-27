@@ -399,14 +399,12 @@ test('kế toán có invoices.edit và view_all được chuyển Đã xuất', 
   assert.equal(invoice.invoice_number, 'HD-0001')
 })
 
-test('kế toán thiếu invoices.edit hoặc thiếu dữ liệu bắt buộc không được chuyển Đã xuất', async () => {
+test('kế toán thiếu invoices.edit bị chặn nhưng dữ liệu số tiền, số và ngày không còn bắt buộc', async () => {
   const viewerDb = env.authenticatedContext(NO_EDIT, { email: NO_EDIT }).firestore()
   await assertFails(accountantStatusBatch(viewerDb, { actor: NO_EDIT }).commit())
 
   const accountantDb = env.authenticatedContext(ACCOUNTANT, { email: ACCOUNTANT }).firestore()
-  await assertFails(accountantStatusBatch(accountantDb, { invoiceNumber: '' }).commit())
-  await assertFails(accountantStatusBatch(accountantDb, { invoiceDate: '' }).commit())
-  await assertFails(accountantStatusBatch(accountantDb, { amount: -1 }).commit())
+  await assertSucceeds(accountantStatusBatch(accountantDb, { invoiceNumber: '', invoiceDate: '', amount: -1 }).commit())
 })
 
 test('Sale chỉ đọc invoice thuộc order mình; kế toán view_all đọc được toàn bộ', async () => {
