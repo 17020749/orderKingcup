@@ -87,17 +87,12 @@ jobs:
           const fs = require('node:fs')
           const path = 'firestore.rules'
           const source = fs.readFileSync(path, 'utf8')
-          const before = `    function invoiceAccountingUpdateValid(orderId) {
-            let path = orderPath(orderId);
-            return accountingInvoiceStatusValue(request.resource.data.get('invoice_status', ''))
-              && invoiceAmountValid(request.resource.data)
-              && issuedInvoiceFieldsValid(request.resource.data)
-              && request.resource.data.get('id', '') == resource.data.get('id', '')
-              && request.resource.data.get('relation_revision', -1) == resource.data.get('relation_revision', 0) + 1
-              && existsAfter(path)
-              && getAfter(path).data.get('invoice_status', '') == request.resource.data.get('invoice_status', '');
-          }`
-          const after = `    function invoiceAccountingUpdateValid(orderId) {
+          const pattern = /    function invoiceAccountingUpdateValid\(orderId\) \{[\s\S]*?\n    \}\n\n    function saleInvoiceStatusUpdateAllowed/
+          const matches = source.match(pattern)
+          if (!matches || matches.length !== 1) {
+            throw new Error('Expected exactly one invoiceAccountingUpdateValid function boundary.')
+          }
+          const replacement = `    function invoiceAccountingUpdateValid(orderId) {
             let path = orderPath(orderId);
             return (
                 unchanged(['invoice_status'])
@@ -112,11 +107,10 @@ jobs:
               )
               && existsAfter(path)
               && getAfter(path).data.get('invoice_status', '') == request.resource.data.get('invoice_status', '');
-          }`
-          if (!source.includes(before)) {
-            throw new Error('Legacy invoice compatibility target is missing or already changed.')
           }
-          fs.writeFileSync(path, source.replace(before, after))
+
+          function saleInvoiceStatusUpdateAllowed`
+          fs.writeFileSync(path, source.replace(pattern, replacement))
           NODE
 
       - name: Run focused client regression tests
