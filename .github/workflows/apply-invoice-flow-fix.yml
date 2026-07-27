@@ -54,7 +54,9 @@ jobs:
           java-version: '21'
 
       - name: Apply guarded patch
-        run: node .agent-invoice-flow-fix/patch.mjs
+        run: |
+          node .agent-invoice-flow-fix/patch.mjs
+          node .agent-invoice-flow-fix/optimize-rules.mjs
 
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
