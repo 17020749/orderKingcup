@@ -6,6 +6,7 @@ function block(...lines) {
 
 async function replaceOnce(path, before, after) {
   const source = await readFile(path, 'utf8')
+  if (source.includes(after)) return
   const count = source.split(before).length - 1
   if (count !== 1) throw new Error(`${path}: expected one guarded match, found ${count}`)
   await writeFile(path, source.replace(before, after))
