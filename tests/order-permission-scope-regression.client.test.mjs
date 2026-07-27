@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { resolveOrderOwnershipForSave } from '../utils/orderAtomicSave.mjs'
 
+// Legacy orders may legitimately keep blank ownership fields. Editing must not
+// replace those immutable values with the current admin or Sale email.
 test('sửa order giữ nguyên tuyệt đối ownership legacy, kể cả field trống', () => {
   const ownership = resolveOrderOwnershipForSave({
     mode: 'edit',
