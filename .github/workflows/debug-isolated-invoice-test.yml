@@ -1,0 +1,49 @@
+name: Capture isolated invoice emulator log
+
+on:
+  push:
+    branches:
+      - agent/fix-sale-edit-legacy-orders-v2
+  pull_request:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-sale-edit-legacy-orders-v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Reuse final patch preparation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          lines = Path('.github/workflows/finalize-isolated-invoice-fix.yml').read_text().splitlines()
+          start = lines.index("          python3 - <<'PY'") + 1
+          end = lines.index('          PY', start)
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines[start:end]) + '\n'
+          Path('/tmp/apply_invoice_fix.py').write_text(script)
+          PY
+          python3 /tmp/apply_invoice_fix.py
+      - run: npm ci
+      - name: Capture focused emulator output
+        run: |
+          set +e
+          npx firebase emulators:exec --only firestore "node --test --test-concurrency=1 tests/order-missing-invoice-transaction.rules.test.mjs" > invoice-emulator.log 2>&1
+          echo "$?" > invoice-emulator-exit-code.txt
+          cat invoice-emulator.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: invoice-emulator-log
+          path: |
+            invoice-emulator.log
+            invoice-emulator-exit-code.txt
