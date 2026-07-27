@@ -81,6 +81,44 @@ jobs:
           fs.writeFileSync(path, source)
           NODE
 
+      - name: Preserve legacy accounting invoice edits
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = 'firestore.rules'
+          const source = fs.readFileSync(path, 'utf8')
+          const before = `    function invoiceAccountingUpdateValid(orderId) {
+            let path = orderPath(orderId);
+            return accountingInvoiceStatusValue(request.resource.data.get('invoice_status', ''))
+              && invoiceAmountValid(request.resource.data)
+              && issuedInvoiceFieldsValid(request.resource.data)
+              && request.resource.data.get('id', '') == resource.data.get('id', '')
+              && request.resource.data.get('relation_revision', -1) == resource.data.get('relation_revision', 0) + 1
+              && existsAfter(path)
+              && getAfter(path).data.get('invoice_status', '') == request.resource.data.get('invoice_status', '');
+          }`
+          const after = `    function invoiceAccountingUpdateValid(orderId) {
+            let path = orderPath(orderId);
+            return (
+                unchanged(['invoice_status'])
+                || accountingInvoiceStatusValue(request.resource.data.get('invoice_status', ''))
+              )
+              && invoiceAmountValid(request.resource.data)
+              && issuedInvoiceFieldsValid(request.resource.data)
+              && request.resource.data.get('id', '') == resource.data.get('id', '')
+              && (
+                unchanged(['relation_revision'])
+                || request.resource.data.get('relation_revision', -1) == resource.data.get('relation_revision', 0) + 1
+              )
+              && existsAfter(path)
+              && getAfter(path).data.get('invoice_status', '') == request.resource.data.get('invoice_status', '');
+          }`
+          if (!source.includes(before)) {
+            throw new Error('Legacy invoice compatibility target is missing or already changed.')
+          }
+          fs.writeFileSync(path, source.replace(before, after))
+          NODE
+
       - name: Run focused client regression tests
         id: focused
         continue-on-error: true
