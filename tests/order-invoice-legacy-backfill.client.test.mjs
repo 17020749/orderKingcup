@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
@@ -113,7 +114,6 @@ test('source hỗ trợ lazy create và migration chạy dry-run mặc định',
   const atomic = readFileSync('composables/useAtomicOrderSave.ts', 'utf8')
   const rules = readFileSync('firestore.rules', 'utf8')
   const migration = readFileSync('scripts/backfill-order-invoices.mjs', 'utf8')
-  const invoicesPage = readFileSync('pages/invoices.vue', 'utf8')
 
   assert.match(orders, /mode: 'legacy_create'/)
   assert.match(atomic, /'legacy_create'/)
@@ -121,4 +121,7 @@ test('source hỗ trợ lazy create và migration chạy dry-run mặc định',
   assert.match(rules, /orderLegacyInvoiceCreateAllowed/)
   assert.match(migration, /Dry-run only/)
   assert.match(migration, /--confirm-project=/)
+
+  const syntax = spawnSync(process.execPath, ['--check', 'scripts/backfill-order-invoices.mjs'], { encoding: 'utf8' })
+  assert.equal(syntax.status, 0, syntax.stderr)
 })
