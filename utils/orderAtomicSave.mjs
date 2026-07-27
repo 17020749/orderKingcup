@@ -25,6 +25,10 @@ function text(value) {
   return String(value ?? '').trim()
 }
 
+function persistedText(value) {
+  return String(value ?? '')
+}
+
 export function resolveOrderOwnershipForSave({
   mode,
   persistedOrder = {},
@@ -32,9 +36,9 @@ export function resolveOrderOwnershipForSave({
 } = {}) {
   if (mode === 'edit') {
     return {
-      ownerEmail: text(persistedOrder.owner_email),
-      createdBy: text(persistedOrder.created_by),
-      saleEmail: text(persistedOrder.sale_email),
+      ownerEmail: persistedText(persistedOrder.owner_email),
+      createdBy: persistedText(persistedOrder.created_by),
+      saleEmail: persistedText(persistedOrder.sale_email),
     }
   }
   return {
