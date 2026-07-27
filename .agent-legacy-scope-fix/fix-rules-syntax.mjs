@@ -6,29 +6,14 @@ function block(...lines) {
 
 const path = 'firestore.rules'
 const source = await readFile(path, 'utf8')
-const before = block(
-  '    function currentUserCode() {',
-  "      let code = get(userPath()).data.get('user_code', '');",
-  '      return code is string && code.matches(\'^[A-Z0-9]{1,12}$\') ? code : "";',
-  '    }',
-  '',
-  '    function ownsLegacyOrderByUserCode(data) {',
-  '      let code = currentUserCode();',
-  "      let storedCode = data.get('user_code', '');",
-  "      let orderCode = data.get('order_code', '');",
-  '      return code != ""',
-  '        && storedCode is string',
-  '        && orderCode is string',
-  '        && (',
-  '          storedCode.lower() == code.lower()',
-  '          || (',
-  '            storedCode == ""',
-  "            && orderCode.matches('^' + code + '-.*')",
-  '          )',
-  '        );',
-  '    }',
-)
-const after = block(
+const startMarker = '    function currentUserCode() {'
+const endMarker = '    function ownsOrderData(data) {'
+const start = source.indexOf(startMarker)
+const end = source.indexOf(endMarker, start)
+if (start < 0 || end <= start) {
+  throw new Error(`firestore.rules: invalid helper boundaries start=${start} end=${end}`)
+}
+const helper = block(
   '    function ownsLegacyOrderByUserCode(data) {',
   "      let code = get(userPath()).data.get('user_code', '');",
   "      let storedCode = data.get('user_code', '');",
@@ -45,8 +30,7 @@ const after = block(
   '          )',
   '        );',
   '    }',
+  '',
 )
-const count = source.split(before).length - 1
-if (count !== 1) throw new Error(`firestore.rules: expected one invalid helper, found ${count}`)
-await writeFile(path, source.replace(before, after))
+await writeFile(path, `${source.slice(0, start)}${helper}${source.slice(end)}`)
 console.log('Firestore-compatible legacy ownership helper applied.')
