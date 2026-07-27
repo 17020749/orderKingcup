@@ -14,6 +14,11 @@ function normalizedEmail(value) {
   return String(value || '').trim().toLowerCase()
 }
 
+function normalizedUserCode(value) {
+  const code = String(value || '').trim().toUpperCase()
+  return /^[A-Z0-9]{1,12}$/.test(code) ? code : ''
+}
+
 function permissionSet(values) {
   return new Set((Array.isArray(values) ? values : [])
     .map(value => String(value || '').trim())
@@ -26,9 +31,29 @@ function ownsDocument(document, currentUserEmail, ownerFields = DEFAULT_OWNER_FI
   return ownerFields.some(field => normalizedEmail(document[field]) === email)
 }
 
-function ownsRecordOrParent({ record, parent, currentUserEmail, ownerFields, parentOwnerFields }) {
+function ownsLegacyOrderByUserCode(document, currentUserCode) {
+  const code = normalizedUserCode(currentUserCode)
+  if (!code || !document || typeof document !== 'object') return false
+  const storedCode = normalizedUserCode(document.user_code)
+  if (storedCode) return storedCode === code
+  const orderCode = String(document.order_code || '').trim().toUpperCase()
+  return orderCode.startsWith(`${code}-`)
+}
+
+function ownsRecordOrParent({
+  record,
+  parent,
+  currentUserEmail,
+  currentUserCode,
+  ownerFields,
+  parentOwnerFields,
+  allowLegacyOrderCodeOwnership = false,
+  parentAllowLegacyOrderCodeOwnership = false,
+}) {
   return ownsDocument(record, currentUserEmail, ownerFields)
     || ownsDocument(parent, currentUserEmail, parentOwnerFields)
+    || (allowLegacyOrderCodeOwnership && ownsLegacyOrderByUserCode(record, currentUserCode))
+    || (parentAllowLegacyOrderCodeOwnership && ownsLegacyOrderByUserCode(parent, currentUserCode))
 }
 
 function allowedDecision(ownsRecord, viaViewAll = false) {
@@ -58,8 +83,11 @@ export function moduleViewDecision({
   record,
   parent,
   currentUserEmail,
+  currentUserCode = '',
   ownerFields = DEFAULT_OWNER_FIELDS,
   parentOwnerFields = DEFAULT_OWNER_FIELDS,
+  allowLegacyOrderCodeOwnership = false,
+  parentAllowLegacyOrderCodeOwnership = false,
 }) {
   const grants = permissionSet(permissions)
   const admin = grants.has('*')
@@ -67,8 +95,11 @@ export function moduleViewDecision({
     record,
     parent,
     currentUserEmail,
+    currentUserCode,
     ownerFields,
     parentOwnerFields,
+    allowLegacyOrderCodeOwnership,
+    parentAllowLegacyOrderCodeOwnership,
   })
   const canViewAll = admin || Boolean(viewAllPermission && grants.has(viewAllPermission))
   if (canViewAll) return allowedDecision(ownsRecord, !admin)
@@ -88,8 +119,11 @@ export function moduleActionDecision({
   record,
   parent,
   currentUserEmail,
+  currentUserCode = '',
   ownerFields = DEFAULT_OWNER_FIELDS,
   parentOwnerFields = DEFAULT_OWNER_FIELDS,
+  allowLegacyOrderCodeOwnership = false,
+  parentAllowLegacyOrderCodeOwnership = false,
   businessAllowed = true,
   businessCode = 'business_constraint',
 }) {
@@ -99,8 +133,11 @@ export function moduleActionDecision({
     record,
     parent,
     currentUserEmail,
+    currentUserCode,
     ownerFields,
     parentOwnerFields,
+    allowLegacyOrderCodeOwnership,
+    parentAllowLegacyOrderCodeOwnership,
   })
   if (!admin && (!actionPermission || !grants.has(actionPermission))) {
     return deniedDecision('missing_action', ownsRecord, actionPermission ? [actionPermission] : [])
@@ -194,4 +231,4 @@ export function permissionDecisionMessage(decision, context = {}) {
   })
 }
 
-export { DEFAULT_OWNER_FIELDS, ownsDocument }
+export { DEFAULT_OWNER_FIELDS, ownsDocument, ownsLegacyOrderByUserCode }
