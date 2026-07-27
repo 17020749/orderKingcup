@@ -113,6 +113,28 @@ jobs:
           fs.writeFileSync(path, source.replace(pattern, replacement))
           NODE
 
+      - name: Correct legacy invoice relation fixture
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = 'tests/order-relations.rules.test.mjs'
+          const source = fs.readFileSync(path, 'utf8')
+          const before = `  updateBatch.update(doc(db, 'invoices', 'inv-a'), {
+              invoice_status: 'Yêu cầu xuất',
+              relation_revision: 2,
+              updated_at: 'now-2',
+            })`
+          const after = `  updateBatch.update(doc(db, 'invoices', 'inv-a'), {
+              invoice_status: 'Yêu cầu xuất',
+              relation_revision: 1,
+              updated_at: 'now-2',
+            })`
+          if (!source.includes(before)) {
+            throw new Error('Legacy invoice relation fixture target is missing or already changed.')
+          }
+          fs.writeFileSync(path, source.replace(before, after))
+          NODE
+
       - name: Run focused client regression tests
         id: focused
         continue-on-error: true
