@@ -24,6 +24,8 @@ import {
   SALE_INVOICE_STATUSES,
 } from '~/utils/orderInvoiceFlow.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { stripOrderEditSystemFields } from '~/utils/orderAtomicSave.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import {
   warehouseOrderDeleteBlocker,
   warehouseRequestsForDeleteCascade,
@@ -801,17 +803,9 @@ async function saveOrder() {
       }
     }
 
-    const baseOrder: any = { ...form, ...totals }
-    if (editing.value) {
-      const protectedFields = [
-        'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
-        'payment_count', 'deposit_count', 'collect_count',
-        'warehouse_fulfillment_status', 'warehouse_request_status',
-        'invoice_status',
-        'deleted', 'active', 'status', 'deleted_at', 'created_at'
-      ]
-      protectedFields.forEach(key => delete baseOrder[key])
-    }
+    const baseOrder: any = editing.value
+      ? stripOrderEditSystemFields({ ...form, ...totals })
+      : { ...form, ...totals }
 
     const localPaymentSummary = computePaymentStatus(baseOrder, paymentsByOrder.value[form.id] || [])
     const paymentSummary = editing.value ? {} : localPaymentSummary
