@@ -17,6 +17,7 @@ import { normalizeEmail, toNumber } from '~/utils/format'
 import {
   assertAtomicOrderWriteLimit,
   assertExpectedOrderRevision,
+  buildOrderItemLifecyclePatch,
   buildOrderOperationId,
   nextOrderRevision,
   planAtomicOrderItems,
@@ -349,9 +350,7 @@ export function useAtomicOrderSave() {
           created_by: effectiveOwnership.createdBy,
           order_revision: revision,
           last_operation_id: operationId,
-          status: 'active',
-          active: true,
-          deleted: false,
+          ...buildOrderItemLifecyclePatch(item.isNew),
           updated_at: serverTimestamp(),
           ...(item.isNew ? { created_at: serverTimestamp() } : {}),
         }

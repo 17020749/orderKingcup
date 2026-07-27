@@ -110,6 +110,20 @@ export function planAtomicOrderItems(existingItems = [], nextItems = []) {
   }
 }
 
+// Existing order_items created before lifecycle fields were introduced may not
+// have status/active/deleted at all. Editing such an item must not add those
+// fields implicitly, because Firestore Rules correctly treat lifecycle changes
+// as a separate operation. New items still receive the canonical active state.
+export function buildOrderItemLifecyclePatch(isNew) {
+  return isNew
+    ? {
+        status: 'active',
+        active: true,
+        deleted: false,
+      }
+    : {}
+}
+
 export function estimateAtomicOrderWrites({
   mode,
   existingItems = [],

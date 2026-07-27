@@ -5,6 +5,7 @@ import {
   FIRESTORE_WRITE_LIMIT,
   assertAtomicOrderWriteLimit,
   assertExpectedOrderRevision,
+  buildOrderItemLifecyclePatch,
   buildOrderOperationId,
   estimateAtomicOrderWrites,
   nextOrderRevision,
@@ -28,6 +29,15 @@ test('lập kế hoạch upsert và xóa mềm item trong cùng giao dịch', ()
     ['item-new', true],
   ])
   assert.deepEqual(plan.removedItems.map(item => item.id), ['item-remove'])
+})
+
+test('item legacy đang tồn tại không bị tự thêm lifecycle khi Sale sửa đơn', () => {
+  assert.deepEqual(buildOrderItemLifecyclePatch(false), {})
+  assert.deepEqual(buildOrderItemLifecyclePatch(true), {
+    status: 'active',
+    active: true,
+    deleted: false,
+  })
 })
 
 test('chặn dòng sản phẩm thiếu ID hoặc trùng ID trước khi gọi Firestore', () => {
@@ -91,6 +101,7 @@ test('client thực tế dùng một transaction cho order, items, sequence và 
   assert.match(composable, /transaction\.update\(doc\(db, 'order_items'/)
   assert.match(composable, /transaction\.set\(activityRef/)
   assert.match(composable, /assertExpectedOrderRevision/)
+  assert.match(composable, /buildOrderItemLifecyclePatch\(item\.isNew\)/)
   assert.match(page, /saveOrderAtomic\(/)
   assert.doesNotMatch(page, /commitWriteChunks/)
   assert.doesNotMatch(page, /await orderBatch\.commit\(\)/)
