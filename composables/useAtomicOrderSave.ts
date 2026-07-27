@@ -20,6 +20,7 @@ import {
   buildOrderOperationId,
   nextOrderRevision,
   planAtomicOrderItems,
+  resolveOrderOwnershipForSave,
 } from '~/utils/orderAtomicSave.mjs'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
@@ -144,6 +145,15 @@ export function useAtomicOrderSave() {
       }
 
       const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}
+      const effectiveOwnership = resolveOrderOwnershipForSave({
+        mode: input.mode,
+        persistedOrder: existingOrder,
+        requestedOwnership: {
+          ownerEmail: input.ownerEmail,
+          createdBy: input.createdBy,
+          saleEmail: input.saleEmail,
+        },
+      })
       if (input.mode === 'edit') {
         const decision = moduleActionDecision({
           actionPermission: 'orders.edit',
@@ -264,6 +274,9 @@ export function useAtomicOrderSave() {
         order_sequence: orderSequence,
         user_code: input.userCode,
         customer_code: input.customerCode,
+        owner_email: effectiveOwnership.ownerEmail,
+        created_by: effectiveOwnership.createdBy,
+        sale_email: effectiveOwnership.saleEmail,
         revision,
         last_operation_id: operationId,
         updated_at: serverTimestamp(),
@@ -294,9 +307,9 @@ export function useAtomicOrderSave() {
           invoice_amount: Math.max(0, toNumber(finalOrderPayload.payable_amount)),
           invoice_status: requestedInvoiceStatus,
           created_by: actor,
-          order_owner_email: normalizeEmail(input.ownerEmail),
-          order_created_by: normalizeEmail(input.createdBy),
-          order_sale_email: normalizeEmail(input.saleEmail),
+          order_owner_email: effectiveOwnership.ownerEmail,
+          order_created_by: effectiveOwnership.createdBy,
+          order_sale_email: effectiveOwnership.saleEmail,
           relation_revision: toNumber(invoiceRelationPatch.invoice_relation_revision),
           last_operation_id: operationId,
           status: 'active',
@@ -319,9 +332,9 @@ export function useAtomicOrderSave() {
           ...item,
           order_id: input.orderId,
           order_code: orderCode,
-          owner_email: input.ownerEmail,
-          sale_email: input.saleEmail,
-          created_by: input.createdBy,
+          owner_email: effectiveOwnership.ownerEmail,
+          sale_email: effectiveOwnership.saleEmail,
+          created_by: effectiveOwnership.createdBy,
           order_revision: revision,
           last_operation_id: operationId,
           status: 'active',

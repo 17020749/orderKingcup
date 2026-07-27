@@ -22,7 +22,30 @@ export function stripOrderEditSystemFields(payload = {}) {
 }
 
 function text(value) {
-  return String(value || '').trim()
+  return String(value ?? '').trim()
+}
+
+function persistedText(value) {
+  return String(value ?? '')
+}
+
+export function resolveOrderOwnershipForSave({
+  mode,
+  persistedOrder = {},
+  requestedOwnership = {},
+} = {}) {
+  if (mode === 'edit') {
+    return {
+      ownerEmail: persistedText(persistedOrder.owner_email),
+      createdBy: persistedText(persistedOrder.created_by),
+      saleEmail: persistedText(persistedOrder.sale_email),
+    }
+  }
+  return {
+    ownerEmail: text(requestedOwnership.ownerEmail),
+    createdBy: text(requestedOwnership.createdBy),
+    saleEmail: text(requestedOwnership.saleEmail),
+  }
 }
 
 export function numericRevision(value) {
