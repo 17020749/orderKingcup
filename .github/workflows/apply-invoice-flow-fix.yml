@@ -97,8 +97,26 @@ jobs:
         if: steps.focused_rules.outputs.status != '0'
         run: exit 1
 
-      - name: Run full Firestore Rules tests
-        run: npm run test:rules
+      - name: Capture full Firestore Rules tests
+        id: full_rules
+        shell: bash
+        run: |
+          set +e
+          npm run test:rules > full-rules.log 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload full Rules log
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-rules-log
+          path: full-rules.log
+          if-no-files-found: error
+
+      - name: Stop on full Rules failure
+        if: steps.full_rules.outputs.status != '0'
+        run: exit 1
 
       - name: Build application
         run: npm run build
@@ -123,14 +141,27 @@ jobs:
           git commit -m 'fix: repair missing order invoices and lock accounting scope'
           git push origin HEAD:agent/fix-legacy-invoice-create-and-accounting-scope
 
-  report-focused-rules:
+  report-rules:
     needs: apply-and-verify
     if: always() && needs.apply-and-verify.result == 'failure'
     runs-on: ubuntu-latest
     steps:
       - name: Download focused Rules log
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: focused-rules-log
-      - name: Print focused Rules failure
-        run: tail -n 220 focused-rules.log
+      - name: Download full Rules log
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: full-rules-log
+      - name: Print Rules failure
+        run: |
+          if [ -f full-rules.log ]; then
+            tail -n 260 full-rules.log
+          elif [ -f focused-rules.log ]; then
+            tail -n 220 focused-rules.log
+          else
+            echo 'No Rules log artifact was produced.'
+          fi
