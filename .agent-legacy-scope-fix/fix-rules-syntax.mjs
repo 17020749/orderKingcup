@@ -34,3 +34,4 @@ const helper = block(
 )
 await writeFile(path, `${source.slice(0, start)}${helper}${source.slice(end)}`)
 console.log('Firestore-compatible legacy ownership helper applied.')
+await import('./fix-query-scope.mjs')
