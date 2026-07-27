@@ -1,6 +1,26 @@
 // Pure helpers used by both the Nuxt client flow and Node business-flow tests.
 export const FIRESTORE_WRITE_LIMIT = 500
 
+export const ORDER_EDIT_SYSTEM_FIELDS = Object.freeze([
+  'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
+  'payment_count', 'deposit_count', 'collect_count',
+  'warehouse_fulfillment_status', 'warehouse_request_status',
+  'printing_progress_count', 'printing_lock_version', 'printing_last_action',
+  'printing_last_print_order_id', 'printing_lock_updated_by', 'printing_lock_updated_at',
+  'relation_lock_version', 'payment_record_count', 'invoice_record_count',
+  'shipment_record_count', 'payment_relation_revision', 'invoice_relation_revision',
+  'shipment_relation_revision', 'relation_last_module', 'relation_last_action',
+  'relation_last_document_id', 'relation_updated_by', 'relation_updated_at',
+  'invoice_status', 'shipment_status', 'shipping_fee_total', 'cod_amount_total',
+  'deleted', 'active', 'status', 'deleted_at', 'created_at',
+])
+
+export function stripOrderEditSystemFields(payload = {}) {
+  const clean = { ...(payload || {}) }
+  ORDER_EDIT_SYSTEM_FIELDS.forEach(field => delete clean[field])
+  return clean
+}
+
 function text(value) {
   return String(value || '').trim()
 }

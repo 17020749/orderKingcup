@@ -627,6 +627,23 @@ export function useScopedQueries() {
     return { ...page, rows: page.rows.filter(isActive) as InventoryAdjustmentDoc[] }
   }
 
+  async function loadScopedOrdersForInvoices(invoices: InvoiceDoc[], force = false) {
+    const orderIds = Array.from(new Set(
+      invoices.map(invoice => String(invoice?.order_id || '').trim()).filter(Boolean),
+    ))
+    if (!orderIds.length) return [] as OrderDoc[]
+
+    if (canAll('orders.view_all')) {
+      return (await fetchByFieldValues<OrderDoc>('orders', 'id', orderIds))
+        .filter(isActive) as OrderDoc[]
+    }
+
+    if (!hasPermission('orders.view')) return [] as OrderDoc[]
+    const allowedOrderIds = new Set(orderIds)
+    return (await loadScopedOrders(force))
+      .filter(order => allowedOrderIds.has(order.id))
+  }
+
   async function loadScopedPaymentsForOrders(orders: OrderDoc[], force = false) {
     const orderIds = cleanIds(orders)
     if (!orderIds.length) return [] as PaymentDoc[]
@@ -1009,6 +1026,7 @@ export function useScopedQueries() {
     listCollection,
     loadScopedOrders,
     loadScopedOrdersPage,
+    loadScopedOrdersForInvoices,
     loadScopedOrderItems,
     loadPersistedOrder,
     loadScopedPayments,

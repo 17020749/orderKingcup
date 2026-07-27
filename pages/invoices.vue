@@ -11,8 +11,8 @@ import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 import { toDateKey } from '~/utils/listFilters'
 
 const { mutateOrderRelation } = useAtomicOrderRelations()
-const { loadScopedOrders, loadScopedInvoicesPage, loadScopedInvoicesForOrders } = useScopedQueries()
-const { appUser, permissions } = useAuth()
+const { loadScopedOrdersForInvoices, loadScopedInvoicesPage, loadScopedInvoicesForOrders } = useScopedQueries()
+const { appUser, permissions, hasPermission } = useAuth()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
@@ -67,6 +67,10 @@ function resetFilters() {
   dateTo.value = ''
 }
 
+function parentOrderForInvoice(row: InvoiceDoc) {
+  return orders.value.find(order => order.id === row.order_id) || null
+}
+
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id))
 
 function invoiceActionDecision(action: 'edit' | 'delete', row: InvoiceDoc, order?: OrderDoc | null) {
@@ -81,25 +85,44 @@ function invoiceActionDecision(action: 'edit' | 'delete', row: InvoiceDoc, order
 }
 
 function invoiceActionError(action: 'edit' | 'delete', row: InvoiceDoc) {
-  return permissionDecisionMessage(invoiceActionDecision(action, row), {
+  const order = parentOrderForInvoice(row)
+  if (!order) {
+    return hasPermission('orders.view_all') || hasPermission('*')
+      ? 'Không tải được đơn hàng cha của hóa đơn. Hãy làm mới trang.'
+      : 'Tài khoản cần quyền orders.view_all để sửa hoặc xóa hóa đơn của Sale khác.'
+  }
+  return permissionDecisionMessage(invoiceActionDecision(action, row, order), {
     operation: `${action === 'edit' ? 'sửa' : 'xóa'} hóa đơn`,
     record: row.invoice_number || row.id,
     status: row.status || '',
   })
 }
 
-function canEditInvoice(row: InvoiceDoc) { return invoiceActionDecision('edit', row).allowed }
-function canDeleteInvoice(row: InvoiceDoc) { return invoiceActionDecision('delete', row).allowed }
+function canEditInvoice(row: InvoiceDoc) {
+  const order = parentOrderForInvoice(row)
+  if (!order) return false
+  return invoiceActionDecision('edit', row, order).allowed
+}
+function canDeleteInvoice(row: InvoiceDoc) {
+  const order = parentOrderForInvoice(row)
+  if (!order) return false
+  return invoiceActionDecision('delete', row, order).allowed
+}
 
 async function loadRows(force = false, append = false) {
   if (append && (!hasMoreRows.value || loadingMore.value)) return
   if (append) loadingMore.value = true
   else loading.value = true
   try {
-    if (!append) orders.value = await loadScopedOrders(force)
     const page = await loadScopedInvoicesPage(append ? pageCursor.value : null, PAGE_SIZE, force)
     const loadedRows = page.rows.filter(isActive)
+    const loadedOrders = await loadScopedOrdersForInvoices(loadedRows, force)
     rows.value = append ? appendUniqueRows(rows.value, loadedRows) : loadedRows
+    orders.value = append ? appendUniqueRows(orders.value, loadedOrders) : loadedOrders
+    if (!append && loadedRows.some(row => !parentOrderForInvoice(row))
+      && (hasPermission('invoices.edit') || hasPermission('invoices.delete'))) {
+      showToast('Một số hóa đơn không thể sửa vì tài khoản chưa đọc được đơn hàng cha. Kế toán xử lý toàn bộ hóa đơn cần quyền orders.view_all.', 'warning')
+    }
     pageCursor.value = page.cursor
     hasMoreRows.value = page.hasMore
     pageMode.value = page.mode
