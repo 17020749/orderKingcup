@@ -1,9 +1,13 @@
 name: Apply Raw Legacy Order Fix
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/fix-sale-edit-raw-legacy-orders
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
     paths:
       - '.agent-raw-legacy-order-fix/trigger'
 
@@ -12,6 +16,9 @@ permissions:
 
 jobs:
   apply-and-verify:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/fix-sale-edit-raw-legacy-orders'
     runs-on: ubuntu-latest
     timeout-minutes: 50
     env:
