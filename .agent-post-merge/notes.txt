@@ -1,0 +1,1 @@
+These temporary files are removed by the verification workflow after tests pass.
