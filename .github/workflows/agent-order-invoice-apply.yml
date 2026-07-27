@@ -65,20 +65,80 @@ jobs:
         run: npx --no-install nuxi prepare
 
       - name: Run focused client regression tests
-        run: >-
-          node --test --test-concurrency=1
-          tests/order-atomic-save.client.test.mjs
-          tests/order-relations.client.test.mjs
-          tests/order-invoice-flow.client.test.mjs
+        id: focused
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test --test-concurrency=1 \
+            tests/order-atomic-save.client.test.mjs \
+            tests/order-relations.client.test.mjs \
+            tests/order-invoice-flow.client.test.mjs \
+            2>&1 | tee .agent-order-invoice/last-failure.log
+
+      - name: Persist focused failure
+        if: steps.focused.outcome == 'failure'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'ci: capture focused invoice flow failure'
+          git push origin HEAD:agent/order-invoice-atomic-flow
+          exit 1
 
       - name: Run permission tests
-        run: npm run test:permissions
+        id: permissions
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:permissions 2>&1 | tee .agent-order-invoice/last-failure.log
+
+      - name: Persist permission failure
+        if: steps.permissions.outcome == 'failure'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'ci: capture permission regression failure'
+          git push origin HEAD:agent/order-invoice-atomic-flow
+          exit 1
 
       - name: Run full Firestore Rules tests
-        run: npm run test:rules
+        id: rules
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:rules 2>&1 | tee .agent-order-invoice/last-failure.log
+
+      - name: Persist Rules failure
+        if: steps.rules.outcome == 'failure'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'ci: capture Firestore Rules failure'
+          git push origin HEAD:agent/order-invoice-atomic-flow
+          exit 1
 
       - name: Build application
-        run: npm run build
+        id: build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee .agent-order-invoice/last-failure.log
+
+      - name: Persist build failure
+        if: steps.build.outcome == 'failure'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'ci: capture build failure'
+          git push origin HEAD:agent/order-invoice-atomic-flow
+          exit 1
 
       - name: Remove bootstrap files
         run: rm -rf .agent-order-invoice .github/workflows/agent-order-invoice-apply.yml
