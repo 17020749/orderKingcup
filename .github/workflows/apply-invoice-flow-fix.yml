@@ -57,6 +57,8 @@ jobs:
         run: |
           node .agent-invoice-flow-fix/patch.mjs
           node .agent-invoice-flow-fix/optimize-rules.mjs
+          node .agent-invoice-flow-fix/update-regression-tests.mjs
+          node .agent-invoice-flow-fix/finalize-patch.mjs
 
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -70,6 +72,7 @@ jobs:
           tests/invoice-order-repair-permissions.client.test.mjs
           tests/order-invoice-legacy-backfill.client.test.mjs
           tests/order-permission-scope-regression.client.test.mjs
+          tests/order-invoice-post-merge.client.test.mjs
 
       - name: Capture focused Firestore Rules tests
         id: focused_rules
@@ -80,7 +83,9 @@ jobs:
             "node --test --test-concurrency=1 \
             tests/invoice-order-repair-permissions.rules.test.mjs \
             tests/order-invoice-legacy-backfill.rules.test.mjs \
-            tests/order-invoice-flow.rules.test.mjs" \
+            tests/order-invoice-flow.rules.test.mjs \
+            tests/order-relations.rules.test.mjs \
+            tests/unified-permission-matrix.rules.test.mjs" \
             > focused-rules.log 2>&1
           status=$?
           echo "status=$status" >> "$GITHUB_OUTPUT"
