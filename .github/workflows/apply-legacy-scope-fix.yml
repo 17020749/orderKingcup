@@ -1,0 +1,104 @@
+name: Apply Legacy Order Scope Fix
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
+    paths:
+      - '.agent-legacy-scope-fix/trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/fix-sale-legacy-missing-invoice-runtime'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      NUXT_PUBLIC_FIREBASE_API_KEY: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ci.invalid
+      NUXT_PUBLIC_FIREBASE_PROJECT_ID: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ci-placeholder
+      NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+      NUXT_PUBLIC_FIREBASE_APP_ID: '1:000000000000:web:0000000000000000000000'
+      NUXT_PUBLIC_APP_NAME: KINGCUP CI
+
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/fix-sale-legacy-missing-invoice-runtime
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Pin npm
+        run: npm install --global npm@10.9.2 --no-audit --no-fund
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Apply guarded ownership patch
+        run: node .agent-legacy-scope-fix/patch.mjs
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Prepare Nuxt
+        run: npx --no-install nuxi prepare
+
+      - name: Run focused client scope tests
+        run: >-
+          node --test --test-concurrency=1
+          tests/invoice-order-repair-permissions.client.test.mjs
+          tests/unified-permission-decisions.client.test.mjs
+          tests/order-permission-scope-regression.client.test.mjs
+
+      - name: Run focused Firestore Rules scope tests
+        run: >-
+          npx --no-install firebase emulators:exec --only firestore
+          "node --test --test-concurrency=1
+          tests/order-legacy-missing-identity.rules.test.mjs
+          tests/invoice-order-repair-permissions.rules.test.mjs
+          tests/order-invoice-flow.rules.test.mjs"
+
+      - name: Run full test suite
+        run: npm run test:rules
+
+      - name: Build application
+        run: npm run build
+
+      - name: Generate static site
+        run: npm run generate
+
+      - name: Remove bootstrap and generated files
+        run: |
+          git fetch origin dev
+          git rm -r -f --ignore-unmatch .nuxt .output
+          git checkout origin/dev -- .nuxt 2>/dev/null || true
+          git checkout origin/dev -- .output 2>/dev/null || true
+          git clean -fdx .nuxt .output
+          rm -rf .agent-legacy-scope-fix .github/workflows/apply-legacy-scope-fix.yml
+
+      - name: Commit verified changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: scope legacy orders by stable sale code'
+          git push origin HEAD:agent/fix-sale-legacy-missing-invoice-runtime
