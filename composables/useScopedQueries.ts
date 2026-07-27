@@ -638,6 +638,16 @@ export function useScopedQueries() {
         .filter(isActive) as OrderDoc[]
     }
 
+    if (canAll('invoices.view_all')) {
+      const snapshots = await Promise.all(orderIds.map(orderId => (
+        getDocFromServer(doc(db, 'orders', orderId))
+      )))
+      return snapshots
+        .filter(snapshot => snapshot.exists())
+        .map(snapshot => ({ ...snapshot.data(), id: snapshot.id, firestore_id: snapshot.id } as OrderDoc))
+        .filter(isActive) as OrderDoc[]
+    }
+
     if (!hasPermission('orders.view')) return [] as OrderDoc[]
     const allowedOrderIds = new Set(orderIds)
     return (await loadScopedOrders(force))

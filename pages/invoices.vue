@@ -73,13 +73,13 @@ function parentOrderForInvoice(row: InvoiceDoc) {
 
 const selectedOrder = computed(() => orders.value.find(order => order.id === form.order_id))
 
-function invoiceActionDecision(action: 'edit' | 'delete', row: InvoiceDoc, order?: OrderDoc | null) {
+function invoiceActionDecision(action: 'edit' | 'delete', _row: InvoiceDoc, _order?: OrderDoc | null) {
   return moduleActionDecision({
     actionPermission: `invoices.${action}`,
     viewAllPermission: 'invoices.view_all',
     permissions: permissions.value,
-    record: row,
-    parent: order || orders.value.find(item => item.id === row.order_id) || null,
+    record: null,
+    parent: null,
     currentUserEmail: appUser.value?.email || '',
   })
 }
@@ -87,9 +87,7 @@ function invoiceActionDecision(action: 'edit' | 'delete', row: InvoiceDoc, order
 function invoiceActionError(action: 'edit' | 'delete', row: InvoiceDoc) {
   const order = parentOrderForInvoice(row)
   if (!order) {
-    return hasPermission('orders.view_all') || hasPermission('*')
-      ? 'Không tải được đơn hàng cha của hóa đơn. Hãy làm mới trang.'
-      : 'Tài khoản cần quyền orders.view_all để sửa hoặc xóa hóa đơn của Sale khác.'
+    return 'Không tải được đơn hàng cha của hóa đơn. Hãy làm mới trang.'
   }
   return permissionDecisionMessage(invoiceActionDecision(action, row, order), {
     operation: `${action === 'edit' ? 'sửa' : 'xóa'} hóa đơn`,
@@ -121,7 +119,7 @@ async function loadRows(force = false, append = false) {
     orders.value = append ? appendUniqueRows(orders.value, loadedOrders) : loadedOrders
     if (!append && loadedRows.some(row => !parentOrderForInvoice(row))
       && (hasPermission('invoices.edit') || hasPermission('invoices.delete'))) {
-      showToast('Một số hóa đơn không thể sửa vì tài khoản chưa đọc được đơn hàng cha. Kế toán xử lý toàn bộ hóa đơn cần quyền orders.view_all.', 'warning')
+      showToast('Một số hóa đơn không thể sửa vì chưa tải được đơn hàng cha. Hãy làm mới trang.', 'warning')
     }
     pageCursor.value = page.cursor
     hasMoreRows.value = page.hasMore

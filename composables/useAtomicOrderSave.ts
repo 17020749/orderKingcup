@@ -24,6 +24,8 @@ import {
 } from '~/utils/orderAtomicSave.mjs'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { isActiveOrderRelation } from '~/utils/orderRelationState.mjs'
 
 type AtomicOrderMode = 'create' | 'edit'
 
@@ -183,10 +185,14 @@ export function useAtomicOrderSave() {
         }
         if (invoiceMutation.mode === 'legacy_create') {
           if (invoiceSnapshot?.exists()) {
-            throw new Error('Đơn hàng đã có document hóa đơn theo ID tự động. Hãy tải lại dữ liệu.')
-          }
-          if (toNumber(existingOrder.invoice_record_count) > 0) {
-            throw new Error('Đơn hàng đang ghi nhận đã có hóa đơn. Hãy chạy đồng bộ quan hệ trước khi lưu.')
+            const persistedInvoice = invoiceSnapshot.data()
+            if (isActiveOrderRelation(persistedInvoice)) {
+              throw new Error('Đơn hàng đã có document hóa đơn đang hoạt động. Hãy tải lại dữ liệu.')
+            }
+            if (String(persistedInvoice.order_id || '') !== input.orderId) {
+              throw new Error('Document hóa đơn tự động đang thuộc đơn hàng khác. Hãy xử lý xung đột trước khi lưu.')
+            }
+            existingInvoice = persistedInvoice
           }
         } else if (invoiceMutation.mode === 'status_update') {
           if (!invoiceSnapshot?.exists()) {
@@ -315,7 +321,7 @@ export function useAtomicOrderSave() {
           status: 'active',
           active: true,
           deleted: false,
-          created_at: serverTimestamp(),
+          created_at: existingInvoice?.created_at || serverTimestamp(),
           updated_at: serverTimestamp(),
         })
       } else if (invoiceMutation?.mode === 'status_update' && invoiceRef && existingInvoice) {
