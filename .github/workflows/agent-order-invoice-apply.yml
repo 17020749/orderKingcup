@@ -62,18 +62,23 @@ jobs:
       - name: Prepare Nuxt
         run: npx --no-install nuxi prepare
 
-      - name: Correct focused invoice assertion
+      - name: Correct focused invoice assertions
         run: |
           node <<'NODE'
           const fs = require('node:fs')
           const path = 'tests/order-invoice-flow.client.test.mjs'
-          const source = fs.readFileSync(path, 'utf8')
-          const before = "  assert.match(invoices, /action: 'delete'/)"
-          const after = "  assert.match(invoices, /mode: 'delete'/)"
-          if (!source.includes(before)) {
-            throw new Error('Focused invoice assertion target is missing or already changed.')
+          let source = fs.readFileSync(path, 'utf8')
+          const replacements = [
+            ["  assert.match(invoices, /action: 'delete'/)", "  assert.match(invoices, /mode: 'delete'/)"],
+            ["  assert.match(invoices, /Đã xuất/)", "  assert.match(invoices, /INVOICE_STATUS_OPTIONS/)"],
+          ]
+          for (const [before, after] of replacements) {
+            if (!source.includes(before)) {
+              throw new Error(`Focused invoice assertion target is missing: ${before}`)
+            }
+            source = source.replace(before, after)
           }
-          fs.writeFileSync(path, source.replace(before, after))
+          fs.writeFileSync(path, source)
           NODE
 
       - name: Run focused client regression tests
