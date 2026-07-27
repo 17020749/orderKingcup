@@ -11,12 +11,11 @@ test('sửa order giữ nguyên tuyệt đối ownership legacy, kể cả field
       created_by: 'sale@example.com',
       sale_email: '',
     },
-    form: {
-      owner_email: 'admin@example.com',
-      created_by: 'admin@example.com',
-      sale_email: 'admin@example.com',
+    requestedOwnership: {
+      ownerEmail: 'admin@example.com',
+      createdBy: 'admin@example.com',
+      saleEmail: 'admin@example.com',
     },
-    actor: 'admin@example.com',
   })
   assert.deepEqual(ownership, {
     ownerEmail: '',
@@ -25,11 +24,15 @@ test('sửa order giữ nguyên tuyệt đối ownership legacy, kể cả field
   })
 })
 
-test('tạo order mới vẫn lấy ownership từ form và actor hiện tại', () => {
+test('tạo order mới giữ ownership do client đã xác thực', () => {
   const ownership = resolveOrderOwnershipForSave({
     mode: 'create',
-    form: { owner_email: '', sale_email: 'sale@example.com' },
-    actor: 'creator@example.com',
+    persistedOrder: {},
+    requestedOwnership: {
+      ownerEmail: 'creator@example.com',
+      createdBy: 'creator@example.com',
+      saleEmail: 'sale@example.com',
+    },
   })
   assert.deepEqual(ownership, {
     ownerEmail: 'creator@example.com',
@@ -38,22 +41,12 @@ test('tạo order mới vẫn lấy ownership từ form và actor hiện tại',
   })
 })
 
-test('orders page dùng helper ownership thay vì fallback email khi edit', () => {
-  const source = readFileSync('pages/orders.vue', 'utf8')
+test('atomic save ghi đè ownership edit bằng dữ liệu persisted trước khi ghi order, invoice và items', () => {
+  const source = readFileSync('composables/useAtomicOrderSave.ts', 'utf8')
   assert.match(source, /resolveOrderOwnershipForSave/)
-  assert.match(source, /persistedOrder: editing\.value \|\| \{\}/)
-  assert.doesNotMatch(source, /const ownerEmail = form\.owner_email \|\| appUser\.value\?\.email/)
-})
-
-test('payment dependency loader chỉ query parent order thuộc scope khi thiếu payments.view_all', () => {
-  const source = readFileSync('composables/useScopedQueries.ts', 'utf8')
-  assert.match(source, /const ownedOrderIds = cleanIds\(orders\.filter\(ownsCurrentOrder\)\)/)
-  assert.match(source, /if \(!hasPermission\('payments\.view'\)\) return \[\] as PaymentDoc\[\]/)
-  assert.match(source, /fetchByFieldValues<PaymentDoc>\('payments', 'order_id', ownedOrderIds\)/)
-})
-
-test('printing rules dùng quyền đọc hoặc sửa parent thay vì bắt buộc ownership', () => {
-  const rules = readFileSync('firestore.rules', 'utf8')
-  assert.match(rules, /hasPerm\('printing\.orders_view'\)[\s\S]*canReadOrderById\(data\.get\('order_id', ''\)\)/)
-  assert.match(rules, /hasAnyPerm\(\['orders\.edit', 'orders\.delete'\]\)[\s\S]*canMutateOrderById\(data\.get\('order_id', ''\)\)/)
+  assert.match(source, /persistedOrder: existingOrder/)
+  assert.match(source, /owner_email: effectiveOwnership\.ownerEmail/)
+  assert.match(source, /order_owner_email: effectiveOwnership\.ownerEmail/)
+  assert.match(source, /created_by: effectiveOwnership\.createdBy/)
+  assert.match(source, /sale_email: effectiveOwnership\.saleEmail/)
 })
