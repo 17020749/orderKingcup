@@ -95,14 +95,15 @@ export function useAtomicOrderRelations() {
     actor: string,
   ) {
     const action = mode === 'update' ? 'edit' : mode
+    const requiresGlobalScope = module === 'invoices'
     const decision = moduleActionDecision({
       actionPermission: `${module}.${action}`,
       viewAllPermission: `${module}.view_all`,
       permissions: permissions.value,
-      // Create scope is determined by the selected parent order. Treating a
-      // draft child (whose created_by is the actor) as owned would widen scope.
-      record: mode === 'create' ? null : record,
-      parent: order,
+      // Hóa đơn kế toán luôn cần view_all + action. Sale đổi trạng thái hóa đơn
+      // qua transaction sửa đơn hàng, không đi qua composable relation này.
+      record: requiresGlobalScope ? null : (mode === 'create' ? null : record),
+      parent: requiresGlobalScope ? null : order,
       currentUserEmail: actor,
     })
     if (!decision.allowed) {

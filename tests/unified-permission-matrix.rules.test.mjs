@@ -114,7 +114,7 @@ test('orders tuân theo action AND (owner OR orders.view_all)', async () => {
   await assertSucceeds(updateDoc(doc(db, 'orders', 'order-foreign'), { note: 'all', updated_at: 'now' }))
 })
 
-for (const module of ['payments', 'invoices', 'shipments']) {
+for (const module of ['payments', 'shipments']) {
   test(`${module} tuân theo view/view_all/action cùng module`, async () => {
     await setActorPermissions([`${module}.view`, `${module}.edit`, 'orders.view_all'])
     let db = env.authenticatedContext(ACTOR, { email: ACTOR }).firestore()
@@ -131,3 +131,19 @@ for (const module of ['payments', 'invoices', 'shipments']) {
     await assertSucceeds(updateRelation(db, module, 'foreign'))
   })
 }
+
+test('invoices bắt buộc invoices.view_all + action, kể cả bản ghi do chính user tạo', async () => {
+  await setActorPermissions(['invoices.view', 'invoices.edit', 'orders.view_all'])
+  let db = env.authenticatedContext(ACTOR, { email: ACTOR }).firestore()
+  await assertFails(updateRelation(db, 'invoices', 'own'))
+  await assertFails(updateRelation(db, 'invoices', 'foreign'))
+
+  await setActorPermissions(['invoices.view_all'])
+  db = env.authenticatedContext(ACTOR, { email: ACTOR }).firestore()
+  await assertSucceeds(getDoc(doc(db, 'invoices', 'invoices-foreign')))
+  await assertFails(updateRelation(db, 'invoices', 'foreign'))
+
+  await setActorPermissions(['invoices.view_all', 'invoices.edit'])
+  db = env.authenticatedContext(ACTOR, { email: ACTOR }).firestore()
+  await assertSucceeds(updateRelation(db, 'invoices', 'foreign'))
+})

@@ -163,7 +163,7 @@ export const PAYMENT_STATUS_OPTIONS = ['Chưa thanh toán', 'Đã cọc', 'Đã 
 export const PAYMENT_TYPES = ['Cọc', 'Thu 1', 'Thu 2', 'Thu 3', 'Thanh toán đủ']
 export const PAYMENT_METHODS = ['Chuyển khoản', 'Tiền mặt']
 export const PAYMENT_STATUSES = ['Chưa nhận', 'Đã nhận', 'Giao dịch lỗi']
-export const INVOICE_STATUS_OPTIONS = ['Không xuất', 'Khách lẻ', 'Yêu cầu xuất', 'HĐ nháp', 'Đã xuất']
+export const INVOICE_STATUS_OPTIONS = ['Không xuất', 'Yêu cầu xuất', 'Đã xuất']
 export const VAT_RATE_OPTIONS = [0, 8]
 export const EXPORT_REQUEST_STATUSES = ['cho_xu_ly', 'dang_xu_ly', 'da_tiep_nhan', 'cho_xuat_kho', 'da_xuat', 'tu_choi', 'loi']
 

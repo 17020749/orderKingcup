@@ -117,7 +117,11 @@ test('khóa xóa fail-closed cho đơn legacy và nêu từng dữ liệu còn h
     payment_record_count: 2,
     invoice_record_count: 1,
     shipment_record_count: 1,
-  }), /2 phiếu thanh toán, 1 hóa đơn, 1 bản ghi vận chuyển/)
+  }), /2 phiếu thanh toán, 1 bản ghi vận chuyển/)
+  assert.equal(orderRelationDeleteBlocker({
+    ...readyOrder,
+    invoice_record_count: 1,
+  }), '')
 })
 
 test('đối soát khởi tạo đủ ba count và giữ revision không âm', () => {
@@ -179,10 +183,10 @@ test('source thật dùng transaction nguyên tử cho ba collection quan hệ �
   assert.match(composable, /relationReconcileNeeded/)
   assert.match(orders, /relation_lock_version: 1/)
   assert.match(orders, /discount_amount/)
-  assert.doesNotMatch(orders, /v-model="form\.invoice_status"/)
-  assert.match(orders, /invoice_status: 'Không xuất'/)
-  assert.match(invoices, /availableOrders/)
-  assert.match(invoices, /invoice_record_count/)
+  assert.match(orders, /v-model="form\.invoice_status"/)
+  assert.match(orders, /invoiceStatusLocked/)
+  assert.doesNotMatch(invoices, /availableOrders/)
+  assert.doesNotMatch(invoices, /\+ Thêm hóa đơn/)
   assert.match(composable, /DUPLICATE_ACTIVE_INVOICE_MESSAGE/)
   assert.match(migration, /Dry-run only/)
   assert.match(migration, /--apply/)

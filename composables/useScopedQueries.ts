@@ -189,6 +189,11 @@ export function useScopedQueries() {
     return String(appUser.value?.email || '').trim().toLowerCase()
   }
 
+  function userCode() {
+    const code = String(appUser.value?.user_code || '').trim().toUpperCase()
+    return /^[A-Z0-9]{1,12}$/.test(code) ? code : ''
+  }
+
   function scopePrefix(name: string) {
     const scope = hasPermission('*') ? 'admin' : email()
     return `${scope}:${name}:`
@@ -442,7 +447,11 @@ export function useScopedQueries() {
     }
     if (!hasPermission('orders.view')) return []
     const rows = await listByEmailFields<OrderDoc>('orders', ['owner_email', 'created_by', 'sale_email'], force, 20_000)
-    return sortNewest(rows, 'order_date')
+    const code = userCode()
+    if (!code) return sortNewest(rows, 'order_date')
+    const byStoredCode = await fetchCollection<OrderDoc>('orders', [where('user_code', '==', code)])
+      .catch(() => [] as OrderDoc[])
+    return sortNewest(uniqueById([...rows, ...byStoredCode]).filter(isActive) as OrderDoc[], 'order_date')
   }
 
   async function loadScopedOrderItems(orders: OrderDoc[], force = false) {
@@ -627,6 +636,33 @@ export function useScopedQueries() {
     return { ...page, rows: page.rows.filter(isActive) as InventoryAdjustmentDoc[] }
   }
 
+  async function loadScopedOrdersForInvoices(invoices: InvoiceDoc[], force = false) {
+    const orderIds = Array.from(new Set(
+      invoices.map(invoice => String(invoice?.order_id || '').trim()).filter(Boolean),
+    ))
+    if (!orderIds.length) return [] as OrderDoc[]
+
+    if (canAll('orders.view_all')) {
+      return (await fetchByFieldValues<OrderDoc>('orders', 'id', orderIds))
+        .filter(isActive) as OrderDoc[]
+    }
+
+    if (canAll('invoices.view_all')) {
+      const snapshots = await Promise.all(orderIds.map(orderId => (
+        getDocFromServer(doc(db, 'orders', orderId))
+      )))
+      return snapshots
+        .filter(snapshot => snapshot.exists())
+        .map(snapshot => ({ ...snapshot.data(), id: snapshot.id, firestore_id: snapshot.id } as OrderDoc))
+        .filter(isActive) as OrderDoc[]
+    }
+
+    if (!hasPermission('orders.view')) return [] as OrderDoc[]
+    const allowedOrderIds = new Set(orderIds)
+    return (await loadScopedOrders(force))
+      .filter(order => allowedOrderIds.has(order.id))
+  }
+
   async function loadScopedPaymentsForOrders(orders: OrderDoc[], force = false) {
     const orderIds = cleanIds(orders)
     if (!orderIds.length) return [] as PaymentDoc[]
@@ -643,7 +679,7 @@ export function useScopedQueries() {
     const orderIds = cleanIds(orders)
     if (!orderIds.length) return [] as InvoiceDoc[]
     const canReadForRelation = canAll('invoices.view_all')
-      || ['invoices.view', 'invoices.create', 'invoices.edit', 'invoices.delete'].some(key => hasPermission(key))
+      || ['invoices.view', 'invoices.create', 'invoices.edit', 'invoices.delete', 'orders.edit', 'orders.delete'].some(key => hasPermission(key))
     if (!canReadForRelation) return [] as InvoiceDoc[]
     return sortNewest(
       (await fetchByFieldValues<InvoiceDoc>('invoices', 'order_id', orderIds)).filter(isActive) as InvoiceDoc[],
@@ -1009,6 +1045,7 @@ export function useScopedQueries() {
     listCollection,
     loadScopedOrders,
     loadScopedOrdersPage,
+    loadScopedOrdersForInvoices,
     loadScopedOrderItems,
     loadPersistedOrder,
     loadScopedPayments,

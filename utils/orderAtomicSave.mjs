@@ -1,8 +1,75 @@
 // Pure helpers used by both the Nuxt client flow and Node business-flow tests.
 export const FIRESTORE_WRITE_LIMIT = 500
 
+export const ORDER_EDIT_SYSTEM_FIELDS = Object.freeze([
+  'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
+  'payment_count', 'deposit_count', 'collect_count',
+  'warehouse_fulfillment_status', 'warehouse_request_status',
+  'printing_progress_count', 'printing_lock_version', 'printing_last_action',
+  'printing_last_print_order_id', 'printing_lock_updated_by', 'printing_lock_updated_at',
+  'relation_lock_version', 'payment_record_count', 'invoice_record_count',
+  'shipment_record_count', 'payment_relation_revision', 'invoice_relation_revision',
+  'shipment_relation_revision', 'relation_last_module', 'relation_last_action',
+  'relation_last_document_id', 'relation_updated_by', 'relation_updated_at',
+  'invoice_status', 'shipment_status', 'shipping_fee_total', 'cod_amount_total',
+  'deleted', 'active', 'status', 'deleted_at', 'created_at',
+])
+
+export const ORDER_IMMUTABLE_IDENTITY_FIELDS = Object.freeze([
+  'order_code',
+  'order_sequence',
+  'user_code',
+  'customer_id',
+  'customer_code',
+  'owner_email',
+  'created_by',
+  'sale_email',
+  'created_at',
+])
+
+export function stripOrderEditSystemFields(payload = {}) {
+  const clean = { ...(payload || {}) }
+  ORDER_EDIT_SYSTEM_FIELDS.forEach(field => delete clean[field])
+  return clean
+}
+
 function text(value) {
-  return String(value || '').trim()
+  return String(value ?? '').trim()
+}
+
+function persistedText(value) {
+  return String(value ?? '')
+}
+
+export function preservePersistedOrderIdentityForEdit(payload = {}, persistedOrder = {}) {
+  const next = { ...(payload || {}) }
+  for (const field of ORDER_IMMUTABLE_IDENTITY_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(persistedOrder || {}, field)) {
+      next[field] = persistedOrder[field]
+    } else {
+      delete next[field]
+    }
+  }
+  return next
+}
+
+export function resolveOrderOwnershipForSave({
+  mode,
+  persistedOrder = {},
+  requestedOwnership = {},
+} = {}) {
+  if (mode === 'edit') {
+    return {
+      ownerEmail: persistedText(persistedOrder.owner_email),
+      createdBy: persistedText(persistedOrder.created_by),
+      saleEmail: persistedText(persistedOrder.sale_email),
+    }
+  }
+  return {
+    ownerEmail: text(requestedOwnership.ownerEmail),
+    createdBy: text(requestedOwnership.createdBy),
+    saleEmail: text(requestedOwnership.saleEmail),
+  }
 }
 
 export function numericRevision(value) {
@@ -43,10 +110,46 @@ export function planAtomicOrderItems(existingItems = [], nextItems = []) {
   }
 }
 
-export function estimateAtomicOrderWrites({ mode, existingItems = [], nextItems = [] } = {}) {
+// Existing order_items created before lifecycle fields were introduced may not
+// have status/active/deleted at all. Editing such an item must not add those
+// fields implicitly, because Firestore Rules correctly treat lifecycle changes
+// as a separate operation. New items still receive the canonical active state.
+export function buildOrderItemLifecyclePatch(isNew) {
+  return isNew
+    ? {
+        status: 'active',
+        active: true,
+        deleted: false,
+      }
+    : {}
+}
+
+// A missing invoice document cannot satisfy scoped read rules because
+// resource.data does not exist. Read only when the document must already
+// exist: a status update, or an explicit restore after a soft delete.
+export function shouldReadExistingInvoiceSnapshot({
+  mode,
+  invoiceMutation,
+  persistedOrder = {},
+} = {}) {
+  if (mode !== 'edit' || !invoiceMutation) return false
+  if (invoiceMutation.mode === 'status_update') return true
+  if (invoiceMutation.mode !== 'legacy_create') return false
+  return String(persistedOrder.relation_last_module || '') === 'invoices'
+    && String(persistedOrder.relation_last_action || '') === 'delete'
+    && text(persistedOrder.relation_last_document_id) === text(invoiceMutation.invoiceId)
+}
+
+export function estimateAtomicOrderWrites({
+  mode,
+  existingItems = [],
+  nextItems = [],
+  updateInvoiceStatus = false,
+} = {}) {
   const plan = planAtomicOrderItems(existingItems, nextItems)
   const sequenceWrites = mode === 'create' ? 1 : 0
-  return sequenceWrites + 1 + 1 + plan.upsertItems.length + plan.removedItems.length
+  const invoiceWrites = mode === 'create' || updateInvoiceStatus ? 1 : 0
+  return sequenceWrites + 1 + 1 + invoiceWrites + plan.upsertItems.length + plan.removedItems.length
 }
 
 export function assertAtomicOrderWriteLimit(input = {}) {

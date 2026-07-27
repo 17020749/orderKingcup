@@ -281,19 +281,19 @@ test('payment update và delete đổi revision/count nguyên tử', async () =>
 })
 
 test('invoice create/delete cập nhật invoice_status và count cùng giao dịch', async () => {
-  const db = env.authenticatedContext(SALE, { email: SALE }).firestore()
+  const db = env.authenticatedContext(MANAGER, { email: MANAGER }).firestore()
   const createBatch = writeBatch(db)
   createBatch.set(doc(db, 'invoices', 'inv-a'), {
     id: 'inv-a', order_id: 'order-a', order_code: 'order-a', invoice_number: 'HD-01',
-    invoice_status: 'Đã xuất', created_by: SALE, ...ownership(), active: true, deleted: false,
+    invoice_status: 'Đã xuất', created_by: MANAGER, ...ownership(), active: true, deleted: false,
   })
   createBatch.update(doc(db, 'orders', 'order-a'), {
-    ...relationMeta('invoices', 'create', 'inv-a'), invoice_record_count: 1,
+    ...relationMeta('invoices', 'create', 'inv-a', MANAGER), invoice_record_count: 1,
     invoice_relation_revision: 1, invoice_status: 'Đã xuất',
   })
   await assertSucceeds(createBatch.commit())
 
-  for (const actor of [SALE, ADMIN]) {
+  for (const actor of [MANAGER, ADMIN]) {
     const actorDb = env.authenticatedContext(actor, { email: actor }).firestore()
     const duplicateBatch = writeBatch(actorDb)
     duplicateBatch.set(doc(actorDb, 'invoices', `inv-duplicate-${actor}`), {
@@ -312,14 +312,15 @@ test('invoice create/delete cập nhật invoice_status và count cùng giao d�
 
   const updateBatch = writeBatch(db)
   updateBatch.update(doc(db, 'invoices', 'inv-a'), {
-    invoice_status: 'HĐ nháp',
+    invoice_status: 'Yêu cầu xuất',
+    relation_revision: 1,
     updated_at: 'now-2',
   })
   updateBatch.update(doc(db, 'orders', 'order-a'), {
-    ...relationMeta('invoices', 'update', 'inv-a'),
+    ...relationMeta('invoices', 'update', 'inv-a', MANAGER),
     invoice_record_count: 1,
     invoice_relation_revision: 2,
-    invoice_status: 'HĐ nháp',
+    invoice_status: 'Yêu cầu xuất',
   })
   await assertSucceeds(updateBatch.commit())
 
@@ -328,7 +329,7 @@ test('invoice create/delete cập nhật invoice_status và count cùng giao d�
     deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now',
   })
   deleteBatch.update(doc(db, 'orders', 'order-a'), {
-    ...relationMeta('invoices', 'delete', 'inv-a'), invoice_record_count: 0,
+    ...relationMeta('invoices', 'delete', 'inv-a', MANAGER), invoice_record_count: 0,
     invoice_relation_revision: 3, invoice_status: 'Không xuất',
   })
   await assertSucceeds(deleteBatch.commit())
@@ -337,10 +338,10 @@ test('invoice create/delete cập nhật invoice_status và count cùng giao d�
   replacementBatch.set(doc(db, 'invoices', 'inv-replacement'), {
     id: 'inv-replacement', order_id: 'order-a', order_code: 'order-a',
     invoice_number: 'HD-02', invoice_status: 'Yêu cầu xuất',
-    created_by: SALE, ...ownership(), active: true, deleted: false,
+    created_by: MANAGER, ...ownership(), active: true, deleted: false,
   })
   replacementBatch.update(doc(db, 'orders', 'order-a'), {
-    ...relationMeta('invoices', 'create', 'inv-replacement'),
+    ...relationMeta('invoices', 'create', 'inv-replacement', MANAGER),
     invoice_record_count: 1,
     invoice_relation_revision: 4,
     invoice_status: 'Yêu cầu xuất',
