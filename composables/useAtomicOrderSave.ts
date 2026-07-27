@@ -20,6 +20,7 @@ import {
   buildOrderOperationId,
   nextOrderRevision,
   planAtomicOrderItems,
+  preservePersistedOrderIdentityForEdit,
   resolveOrderOwnershipForSave,
 } from '~/utils/orderAtomicSave.mjs'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
@@ -163,6 +164,8 @@ export function useAtomicOrderSave() {
           permissions: permissions.value,
           record: { ...existingOrder, id: input.orderId },
           currentUserEmail: actor,
+          currentUserCode: appUser.value?.user_code || '',
+          allowLegacyOrderCodeOwnership: true,
         })
         if (!decision.allowed) {
           throw new Error(permissionDecisionMessage(decision, {
@@ -273,7 +276,7 @@ export function useAtomicOrderSave() {
               }
             : {}
 
-      const finalOrderPayload = {
+      const candidateFinalOrderPayload = {
         ...input.orderPayload,
         ...invoiceRelationPatch,
         order_code: orderCode,
@@ -287,6 +290,9 @@ export function useAtomicOrderSave() {
         last_operation_id: operationId,
         updated_at: serverTimestamp(),
       }
+      const finalOrderPayload = input.mode === 'edit'
+        ? preservePersistedOrderIdentityForEdit(candidateFinalOrderPayload, existingOrder)
+        : candidateFinalOrderPayload
 
       if (input.mode === 'create') {
         transaction.set(sequenceRef, {

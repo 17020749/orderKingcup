@@ -19,8 +19,8 @@ import { isActiveOrderRelation, orderRelationDeleteBlocker, selectCanonicalInvoi
 import {
   assertSaleInvoiceStatus,
   buildOrderInvoiceId,
-  invoiceStatusChangeRequested,
   normalizeInvoiceStatus,
+  planOrderEditInvoiceMutation,
   SALE_INVOICE_STATUSES,
 } from '~/utils/orderInvoiceFlow.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
@@ -508,6 +508,8 @@ function orderActionDecision(action: 'edit' | 'delete', row: OrderDoc) {
     permissions: permissions.value,
     record: row,
     currentUserEmail: appUser.value?.email || '',
+    currentUserCode: appUser.value?.user_code || '',
+    allowLegacyOrderCodeOwnership: true,
     businessAllowed: !blocker,
     businessCode: blocker || 'order_locked',
   })
@@ -791,35 +793,22 @@ async function saveOrder() {
         },
       }
     } else {
-      const statusChanged = persistedInvoiceStatus !== 'Đã xuất'
-        && invoiceStatusChangeRequested(persistedInvoiceStatus, requestedInvoiceStatus)
       const activeInvoices = (await loadScopedInvoicesForOrders([editing.value], true))
         .filter(isActiveOrderRelation) as InvoiceDoc[]
-      if (activeInvoices.length > 1) {
-        throw new Error('Đơn hàng có nhiều hóa đơn đang hoạt động. Hãy xử lý trùng trước khi lưu.')
-      }
       const currentInvoice = selectCanonicalInvoice(activeInvoices) as InvoiceDoc | null
-      if (!currentInvoice) {
-        invoiceMutation = {
-          mode: 'legacy_create',
-          invoiceId: buildOrderInvoiceId(form.id),
-          requestedStatus: requestedInvoiceStatus,
-          payload: {
-            tax_code: selectedCustomer?.tax_code || '',
-            company_name: selectedCustomer?.company_name || '',
-            billing_address: selectedCustomer?.billing_address || '',
-            note: '',
-          },
-        }
-      } else if (statusChanged) {
-        invoiceMutation = {
-          mode: 'status_update',
-          invoiceId: currentInvoice.id,
-          requestedStatus: requestedInvoiceStatus,
-          expectedStatus: currentInvoice.invoice_status,
-          expectedRelationRevision: toNumber(currentInvoice.relation_revision),
-        }
-      }
+      invoiceMutation = planOrderEditInvoiceMutation({
+        orderId: form.id,
+        persistedStatus: persistedInvoiceStatus,
+        requestedStatus: requestedInvoiceStatus,
+        currentInvoice,
+        activeInvoiceCount: activeInvoices.length,
+        payload: {
+          tax_code: selectedCustomer?.tax_code || '',
+          company_name: selectedCustomer?.company_name || '',
+          billing_address: selectedCustomer?.billing_address || '',
+          note: '',
+        },
+      })
     }
 
     const baseOrder: any = editing.value

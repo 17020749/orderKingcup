@@ -109,13 +109,15 @@ test('trạng thái không nhận diện được mặc định về Không xu�
   assert.equal(normalizeBackfillInvoiceStatus('trạng thái cũ lạ'), 'Không xuất')
 })
 
-test('source hỗ trợ lazy create và migration chạy dry-run mặc định', () => {
+test('source hỗ trợ lazy create qua runtime planner và migration chạy dry-run mặc định', () => {
   const orders = readFileSync('pages/orders.vue', 'utf8')
+  const flow = readFileSync('utils/orderInvoiceFlow.mjs', 'utf8')
   const atomic = readFileSync('composables/useAtomicOrderSave.ts', 'utf8')
   const rules = readFileSync('firestore.rules', 'utf8')
   const migration = readFileSync('scripts/backfill-order-invoices.mjs', 'utf8')
 
-  assert.match(orders, /mode: 'legacy_create'/)
+  assert.match(orders, /planOrderEditInvoiceMutation/)
+  assert.match(flow, /mode: 'legacy_create'/)
   assert.match(atomic, /'legacy_create'/)
   assert.match(rules, /legacyInvoiceCreateFromExistingOrderAllowed/)
   assert.match(rules, /orderLegacyInvoiceCreateAllowed/)
