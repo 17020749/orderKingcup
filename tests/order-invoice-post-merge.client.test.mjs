@@ -6,6 +6,8 @@ import {
   stripOrderEditSystemFields,
 } from '../utils/orderAtomicSave.mjs'
 
+// These tests guard the two regressions found during the audit after PR #101 was merged.
+
 test('sửa order loại bỏ toàn bộ field hệ thống dễ bị stale trước khi ghi', () => {
   const payload = Object.fromEntries(ORDER_EDIT_SYSTEM_FIELDS.map(field => [field, `stale:${field}`]))
   payload.customer_name = 'Khách vẫn được sửa'
