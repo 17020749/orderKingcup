@@ -15,6 +15,18 @@ export const ORDER_EDIT_SYSTEM_FIELDS = Object.freeze([
   'deleted', 'active', 'status', 'deleted_at', 'created_at',
 ])
 
+export const ORDER_IMMUTABLE_IDENTITY_FIELDS = Object.freeze([
+  'order_code',
+  'order_sequence',
+  'user_code',
+  'customer_id',
+  'customer_code',
+  'owner_email',
+  'created_by',
+  'sale_email',
+  'created_at',
+])
+
 export function stripOrderEditSystemFields(payload = {}) {
   const clean = { ...(payload || {}) }
   ORDER_EDIT_SYSTEM_FIELDS.forEach(field => delete clean[field])
@@ -27,6 +39,18 @@ function text(value) {
 
 function persistedText(value) {
   return String(value ?? '')
+}
+
+export function preservePersistedOrderIdentityForEdit(payload = {}, persistedOrder = {}) {
+  const next = { ...(payload || {}) }
+  for (const field of ORDER_IMMUTABLE_IDENTITY_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(persistedOrder || {}, field)) {
+      next[field] = persistedOrder[field]
+    } else {
+      delete next[field]
+    }
+  }
+  return next
 }
 
 export function resolveOrderOwnershipForSave({
