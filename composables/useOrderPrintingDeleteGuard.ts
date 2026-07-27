@@ -2,7 +2,10 @@ import { collection, getDocs, query, where } from 'firebase/firestore'
 import type { OrderDoc, PrintOrderDoc, PrintOrderItemDoc } from '~/types/models'
 import { isActive } from '~/utils/format'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
-import { SAFE_RELATION_QUERY_CHUNK_SIZE } from '~/utils/orderItemScope.mjs'
+import {
+  SAFE_NESTED_RELATION_QUERY_CHUNK_SIZE,
+  SAFE_RELATION_QUERY_CHUNK_SIZE,
+} from '~/utils/orderItemScope.mjs'
 
 function cleanIds(orders: OrderDoc[]) {
   return Array.from(new Set(
@@ -73,17 +76,22 @@ export function useOrderPrintingDeleteGuard() {
     const printOrderIds = printOrders.map(row => row.id).filter(Boolean)
     if (!printOrderIds.length) return { printOrders, printItems: [] as PrintOrderItemDoc[] }
 
-    const groups = await Promise.all(chunks(printOrderIds).map(async ids => {
-      const snapshot = await getDocs(query(
-        collection(db, 'print_order_items'),
-        where('print_order_id', 'in', ids),
-      ))
-      return snapshot.docs.map(item => ({
-        ...item.data(),
-        id: item.id,
-        firestore_id: item.id,
-      } as PrintOrderItemDoc))
-    }))
+    // print_order_items Rules read both the print-order parent and its source
+    // order. Use the nested limit so accounts with many printing progresses do
+    // not exceed Firestore's per-query Rules document-access budget.
+    const groups = await Promise.all(
+      chunks(printOrderIds, SAFE_NESTED_RELATION_QUERY_CHUNK_SIZE).map(async ids => {
+        const snapshot = await getDocs(query(
+          collection(db, 'print_order_items'),
+          where('print_order_id', 'in', ids),
+        ))
+        return snapshot.docs.map(item => ({
+          ...item.data(),
+          id: item.id,
+          firestore_id: item.id,
+        } as PrintOrderItemDoc))
+      }),
+    )
     const unique = new Map<string, PrintOrderItemDoc>()
     groups.flat().forEach(row => unique.set(row.id, row))
     return { printOrders, printItems: Array.from(unique.values()) }
