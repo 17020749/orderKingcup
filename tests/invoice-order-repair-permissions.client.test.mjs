@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { planOrderEditInvoiceMutation } from '../utils/orderInvoiceFlow.mjs'
 import { preservePersistedOrderIdentityForEdit } from '../utils/orderAtomicSave.mjs'
+import { moduleActionDecision } from '../utils/permissionDecisions.mjs'
 
 test('client runtime chọn legacy_create khi order cũ không có invoice dù counter từng ghi 1', () => {
   const mutation = planOrderEditInvoiceMutation({
@@ -66,9 +67,9 @@ test('client edit giữ nguyên cả sự vắng mặt của field identity trê
     id: 'ord_1784691728437_2c2195192150',
     order_code: 'SALE01-ABC001-0001',
     customer_id: 'customer-legacy',
-    owner_email: 'hieunt051999@gmail.com',
-    created_by: 'hieunt051999@gmail.com',
-    sale_email: 'hieunt051999@gmail.com',
+    owner_email: '',
+    created_by: '',
+    sale_email: '',
   }
   const payload = preservePersistedOrderIdentityForEdit({
     order_code: 'SALE01-ABC001-0001',
@@ -92,6 +93,33 @@ test('client edit giữ nguyên cả sự vắng mặt của field identity trê
   for (const field of ['order_sequence', 'user_code', 'customer_code', 'created_at']) {
     assert.equal(Object.hasOwn(payload, field), false, `${field} không được tự thêm vào order legacy`)
   }
+})
+
+test('client nhận ownership legacy bằng user_code hoặc tiền tố order_code, không nhận order Sale khác', () => {
+  const permissions = ['orders.edit']
+  const owned = moduleActionDecision({
+    actionPermission: 'orders.edit',
+    viewAllPermission: 'orders.view_all',
+    permissions,
+    record: { order_code: 'SALE01-ABC001-0001', owner_email: '', created_by: '', sale_email: '' },
+    currentUserEmail: 'hieunt051999@gmail.com',
+    currentUserCode: 'SALE01',
+    allowLegacyOrderCodeOwnership: true,
+  })
+  assert.equal(owned.allowed, true)
+  assert.equal(owned.ownsRecord, true)
+
+  const foreign = moduleActionDecision({
+    actionPermission: 'orders.edit',
+    viewAllPermission: 'orders.view_all',
+    permissions,
+    record: { order_code: 'SALE01-ABC001-0001', owner_email: '', created_by: '', sale_email: '' },
+    currentUserEmail: 'other-sale@example.com',
+    currentUserCode: 'SALE02',
+    allowLegacyOrderCodeOwnership: true,
+  })
+  assert.equal(foreign.allowed, false)
+  assert.equal(foreign.code, 'missing_scope')
 })
 
 test('orders.vue dùng runtime planner thay vì tự dựng nhánh legacy bằng source rời rạc', () => {

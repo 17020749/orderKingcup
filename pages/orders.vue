@@ -508,6 +508,8 @@ function orderActionDecision(action: 'edit' | 'delete', row: OrderDoc) {
     permissions: permissions.value,
     record: row,
     currentUserEmail: appUser.value?.email || '',
+    currentUserCode: appUser.value?.user_code || '',
+    allowLegacyOrderCodeOwnership: true,
     businessAllowed: !blocker,
     businessCode: blocker || 'order_locked',
   })

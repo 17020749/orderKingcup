@@ -189,6 +189,11 @@ export function useScopedQueries() {
     return String(appUser.value?.email || '').trim().toLowerCase()
   }
 
+  function userCode() {
+    const code = String(appUser.value?.user_code || '').trim().toUpperCase()
+    return /^[A-Z0-9]{1,12}$/.test(code) ? code : ''
+  }
+
   function scopePrefix(name: string) {
     const scope = hasPermission('*') ? 'admin' : email()
     return `${scope}:${name}:`
@@ -442,7 +447,11 @@ export function useScopedQueries() {
     }
     if (!hasPermission('orders.view')) return []
     const rows = await listByEmailFields<OrderDoc>('orders', ['owner_email', 'created_by', 'sale_email'], force, 20_000)
-    return sortNewest(rows, 'order_date')
+    const code = userCode()
+    if (!code) return sortNewest(rows, 'order_date')
+    const byStoredCode = await fetchCollection<OrderDoc>('orders', [where('user_code', '==', code)])
+      .catch(() => [] as OrderDoc[])
+    return sortNewest(uniqueById([...rows, ...byStoredCode]).filter(isActive) as OrderDoc[], 'order_date')
   }
 
   async function loadScopedOrderItems(orders: OrderDoc[], force = false) {

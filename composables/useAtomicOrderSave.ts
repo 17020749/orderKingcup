@@ -164,6 +164,8 @@ export function useAtomicOrderSave() {
           permissions: permissions.value,
           record: { ...existingOrder, id: input.orderId },
           currentUserEmail: actor,
+          currentUserCode: appUser.value?.user_code || '',
+          allowLegacyOrderCodeOwnership: true,
         })
         if (!decision.allowed) {
           throw new Error(permissionDecisionMessage(decision, {

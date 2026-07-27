@@ -649,10 +649,27 @@ service cloud.firestore {
     // Order ownership helpers
     // ---------------------------------------------------------------------
 
+    function ownsLegacyOrderByUserCode(data) {
+      let code = get(userPath()).data.get('user_code', '');
+      let storedCode = data.get('user_code', '');
+      let orderCode = data.get('order_code', '');
+      return code is string
+        && code.matches('^[A-Z0-9]{1,12}$')
+        && storedCode is string
+        && orderCode is string
+        && (
+          storedCode.lower() == code.lower()
+          || (
+            storedCode == ''
+            && orderCode.matches('^' + code + '-.*')
+          )
+        );
+    }
     function ownsOrderData(data) {
       return ownEmailField(data, 'owner_email')
         || ownEmailField(data, 'created_by')
-        || ownEmailField(data, 'sale_email');
+        || ownEmailField(data, 'sale_email')
+        || ownsLegacyOrderByUserCode(data);
     }
 
     function ownsOrderChildData(data) {

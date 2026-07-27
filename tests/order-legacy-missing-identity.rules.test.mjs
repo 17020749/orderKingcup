@@ -27,9 +27,9 @@ function legacyOrder() {
     order_code: 'SALE01-ABC001-0001',
     customer_id: 'customer-legacy',
     customer_name: 'Khách legacy',
-    owner_email: SALE,
-    created_by: SALE,
-    sale_email: SALE,
+    owner_email: '',
+    created_by: '',
+    sale_email: '',
     warehouse_fulfillment_status: 'chua_xuat',
     payable_amount: 150000,
     actual_revenue: 150000,
@@ -91,9 +91,9 @@ function repairMissingInvoiceBatch(db, actor, identityDrift = {}) {
     billing_address: '',
     note: '',
     created_by: actor,
-    order_owner_email: SALE,
-    order_created_by: SALE,
-    order_sale_email: SALE,
+    order_owner_email: '',
+    order_created_by: '',
+    order_sale_email: '',
     relation_revision: 1,
     last_operation_id: operationId,
     active: true,
@@ -123,7 +123,7 @@ function repairMissingInvoiceBatch(db, actor, identityDrift = {}) {
   return batch
 }
 
-test('Sale sở hữu order cũ thiếu invoice và thiếu identity field vẫn sửa + tạo invoice nguyên tử', async () => {
+test('Sale được nhận scope legacy bằng tiền tố order_code dù ownership email trống', async () => {
   const db = env.authenticatedContext(SALE, { email: SALE }).firestore()
   await assertSucceeds(repairMissingInvoiceBatch(db, SALE).commit())
 
@@ -132,6 +132,9 @@ test('Sale sở hữu order cũ thiếu invoice và thiếu identity field vẫn
   assert.equal(order.invoice_record_count, 1)
   assert.equal(invoice.order_id, ORDER_ID)
   assert.equal(invoice.created_by, SALE)
+  assert.equal(order.owner_email, '')
+  assert.equal(order.created_by, '')
+  assert.equal(order.sale_email, '')
   for (const field of ['order_sequence', 'user_code', 'customer_code', 'created_at']) {
     assert.equal(Object.hasOwn(order, field), false, `${field} phải tiếp tục vắng mặt sau edit`)
   }
@@ -149,4 +152,13 @@ test('Client tự thêm identity field còn thiếu vào order legacy bị Rules
 test('Sale khác không được lợi dụng nhánh repair để tạo invoice cho order không sở hữu', async () => {
   const db = env.authenticatedContext(OTHER_SALE, { email: OTHER_SALE }).firestore()
   await assertFails(repairMissingInvoiceBatch(db, OTHER_SALE).commit())
+})
+
+
+test('Sale direct get được order legacy theo tiền tố order_code nhưng Sale khác bị chặn', async () => {
+  const saleDb = env.authenticatedContext(SALE, { email: SALE }).firestore()
+  await assertSucceeds(getDoc(doc(saleDb, 'orders', ORDER_ID)))
+
+  const otherDb = env.authenticatedContext(OTHER_SALE, { email: OTHER_SALE }).firestore()
+  await assertFails(getDoc(doc(otherDb, 'orders', ORDER_ID)))
 })
