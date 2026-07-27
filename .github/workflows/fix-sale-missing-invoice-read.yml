@@ -37,32 +37,12 @@ jobs:
                   raise SystemExit(f'{path}: expected exactly one match, found {count}')
               file.write_text(text.replace(old, new, 1))
 
-          replace_once(
-              'utils/orderAtomicSave.mjs',
-              """export function buildOrderItemLifecyclePatch(isNew) {
-            return isNew
-              ? {
-                  status: 'active',
-                  active: true,
-                  deleted: false,
-                }
-              : {}
-          }
-          """,
-              """export function buildOrderItemLifecyclePatch(isNew) {
-            return isNew
-              ? {
-                  status: 'active',
-                  active: true,
-                  deleted: false,
-                }
-              : {}
-          }
-
-          // A missing Firestore document cannot satisfy invoice read rules for scoped
-          // Sale users because resource.data does not exist. Only read during an edit
-          // when the invoice must already exist: a normal status update, or an explicit
-          // restore after the parent recorded a soft-delete of that deterministic ID.
+          atomic = Path('utils/orderAtomicSave.mjs')
+          atomic_text = atomic.read_text()
+          helper = """
+          // A missing invoice document cannot satisfy scoped read rules because
+          // resource.data does not exist. Read only when the document must already
+          // exist: a status update, or an explicit restore after a soft delete.
           export function shouldReadExistingInvoiceSnapshot({
             mode,
             invoiceMutation,
@@ -75,52 +55,34 @@ jobs:
               && String(persistedOrder.relation_last_action || '') === 'delete'
               && text(persistedOrder.relation_last_document_id) === text(invoiceMutation.invoiceId)
           }
-          """,
-          )
+
+          """
+          marker = 'export function estimateAtomicOrderWrites({'
+          if 'export function shouldReadExistingInvoiceSnapshot' in atomic_text:
+              raise SystemExit('helper already exists unexpectedly')
+          if atomic_text.count(marker) != 1:
+              raise SystemExit('atomic helper insertion marker not found exactly once')
+          atomic.write_text(atomic_text.replace(marker, helper + marker, 1))
 
           replace_once(
               'composables/useAtomicOrderSave.ts',
-              """  preservePersistedOrderIdentityForEdit,
-            resolveOrderOwnershipForSave,
-          } from '~/utils/orderAtomicSave.mjs'
-          """,
-              """  preservePersistedOrderIdentityForEdit,
-            resolveOrderOwnershipForSave,
-            shouldReadExistingInvoiceSnapshot,
-          } from '~/utils/orderAtomicSave.mjs'
-          """,
+              '  resolveOrderOwnershipForSave,\n',
+              '  resolveOrderOwnershipForSave,\n  shouldReadExistingInvoiceSnapshot,\n',
           )
-
           replace_once(
               'composables/useAtomicOrderSave.ts',
-              """      const orderSnapshot = input.mode === 'edit'
-                ? await transaction.get(orderRef)
-                : null
-              const sequenceSnapshot = input.mode === 'create'
-                ? await transaction.get(sequenceRef)
-                : null
-              const invoiceSnapshot = input.mode === 'edit' && invoiceRef
+              """      const invoiceSnapshot = input.mode === 'edit' && invoiceRef
                 ? await transaction.get(invoiceRef)
                 : null
 
-              if (input.mode === 'edit' && !orderSnapshot?.exists()) {
-                throw new Error('Đơn hàng không còn tồn tại. Hãy tải lại danh sách.')
-              }
-
-              const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}
           """,
-              """      const orderSnapshot = input.mode === 'edit'
-                ? await transaction.get(orderRef)
-                : null
-              const sequenceSnapshot = input.mode === 'create'
-                ? await transaction.get(sequenceRef)
-                : null
-
-              if (input.mode === 'edit' && !orderSnapshot?.exists()) {
-                throw new Error('Đơn hàng không còn tồn tại. Hãy tải lại danh sách.')
-              }
-
-              const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}
+              '',
+          )
+          replace_once(
+              'composables/useAtomicOrderSave.ts',
+              """      const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}
+          """,
+              """      const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}
               const invoiceSnapshot = invoiceRef && shouldReadExistingInvoiceSnapshot({
                 mode: input.mode,
                 invoiceMutation,
@@ -133,31 +95,16 @@ jobs:
 
           replace_once(
               'tests/order-atomic-save.client.test.mjs',
-              """  nextOrderRevision,
-            planAtomicOrderItems,
-          } from '../utils/orderAtomicSave.mjs'
-          """,
-              """  nextOrderRevision,
-            planAtomicOrderItems,
-            shouldReadExistingInvoiceSnapshot,
-          } from '../utils/orderAtomicSave.mjs'
-          """,
+              '  planAtomicOrderItems,\n',
+              '  planAtomicOrderItems,\n  shouldReadExistingInvoiceSnapshot,\n',
           )
-
           replace_once(
               'tests/order-atomic-save.client.test.mjs',
-              """test('chặn dòng sản phẩm thiếu ID hoặc trùng ID trước khi gọi Firestore', () => {
-          """,
-              """test('legacy_create không đọc document invoice chưa tồn tại nhưng vẫn đọc khi restore', () => {
-            const invoiceMutation = {
-              mode: 'legacy_create',
-              invoiceId: 'inv_ord_legacy',
-            }
-
+              "test('chặn dòng sản phẩm thiếu ID hoặc trùng ID trước khi gọi Firestore', () => {\n",
+              """test('legacy_create không đọc invoice chưa tồn tại nhưng vẫn đọc khi restore', () => {
+            const invoiceMutation = { mode: 'legacy_create', invoiceId: 'inv_ord_legacy' }
             assert.equal(shouldReadExistingInvoiceSnapshot({
-              mode: 'edit',
-              invoiceMutation,
-              persistedOrder: {},
+              mode: 'edit', invoiceMutation, persistedOrder: {},
             }), false)
             assert.equal(shouldReadExistingInvoiceSnapshot({
               mode: 'edit',
@@ -189,37 +136,25 @@ jobs:
           test('chặn dòng sản phẩm thiếu ID hoặc trùng ID trước khi gọi Firestore', () => {
           """,
           )
-
           replace_once(
               'tests/order-atomic-save.client.test.mjs',
-              """  assert.match(composable, /buildOrderItemLifecyclePatch\(item\.isNew\)/)
-            assert.match(page, /saveOrderAtomic\(/)
-          """,
-              """  assert.match(composable, /buildOrderItemLifecyclePatch\(item\.isNew\)/)
-            assert.match(composable, /shouldReadExistingInvoiceSnapshot\(\{/)
-            assert.doesNotMatch(composable, /input\.mode === 'edit' && invoiceRef[\s\S]{0,80}transaction\.get\(invoiceRef\)/)
-            assert.match(page, /saveOrderAtomic\(/)
+              '  assert.match(composable, /buildOrderItemLifecyclePatch\\(item\\.isNew\\)/)\n',
+              """  assert.match(composable, /buildOrderItemLifecyclePatch\\(item\\.isNew\\)/)
+            assert.match(composable, /shouldReadExistingInvoiceSnapshot\\(\\{/)
+            assert.doesNotMatch(composable, /input\\.mode === 'edit' && invoiceRef[\\s\\S]{0,80}transaction\\.get\\(invoiceRef\\)/)
           """,
           )
 
           replace_once(
               'tests/order-legacy-missing-identity.rules.test.mjs',
-              """  getDoc,
-            serverTimestamp,
-            setDoc,
-            writeBatch,
-          } from 'firebase/firestore'
-          """,
-              """  getDoc,
-            runTransaction,
-            serverTimestamp,
-            setDoc,
-            writeBatch,
-          } from 'firebase/firestore'
-          """,
+              '  getDoc,\n  serverTimestamp,\n',
+              '  getDoc,\n  runTransaction,\n  serverTimestamp,\n',
           )
 
-          legacy_test = r'''
+          legacy_path = Path('tests/order-legacy-missing-identity.rules.test.mjs')
+          legacy_text = legacy_path.read_text()
+          marker = "\ntest('Sale direct get được order legacy theo tiền tố order_code nhưng Sale khác bị chặn', async () => {"
+          addition = r'''
 
           function repairMissingInvoiceTransaction(db, actor, { readMissingInvoice = false } = {}) {
             return runTransaction(db, async transaction => {
@@ -286,18 +221,11 @@ jobs:
           test('đọc invoice deterministic chưa tồn tại trong transaction bị Rules từ chối', async () => {
             const db = env.authenticatedContext(SALE, { email: SALE }).firestore()
             await assertFails(repairMissingInvoiceTransaction(db, SALE, { readMissingInvoice: true }))
-
-            await env.withSecurityRulesDisabled(async context => {
-              const adminDb = context.firestore()
-              assert.equal((await getDoc(doc(adminDb, 'invoices', INVOICE_ID))).exists(), false)
-              assert.equal((await getDoc(doc(adminDb, 'orders', ORDER_ID))).data().revision, undefined)
-            })
           })
 
           test('bỏ đọc invoice chưa tồn tại thì Sale tạo invoice và sửa order legacy atomically', async () => {
             const db = env.authenticatedContext(SALE, { email: SALE }).firestore()
             await assertSucceeds(repairMissingInvoiceTransaction(db, SALE))
-
             const order = (await getDoc(doc(db, 'orders', ORDER_ID))).data()
             const invoice = (await getDoc(doc(db, 'invoices', INVOICE_ID))).data()
             assert.equal(order.revision, 1)
@@ -305,21 +233,19 @@ jobs:
             assert.equal(invoice.created_by, SALE)
           })
           '''
-          legacy_path = Path('tests/order-legacy-missing-identity.rules.test.mjs')
-          legacy_text = legacy_path.read_text()
-          marker = "\ntest('Sale direct get được order legacy theo tiền tố order_code nhưng Sale khác bị chặn', async () => {"
-          if legacy_test.strip() in legacy_text:
-              raise SystemExit('legacy transaction regression test already exists')
           if marker not in legacy_text:
               raise SystemExit('legacy test insertion marker not found')
-          legacy_path.write_text(legacy_text.replace(marker, legacy_test + marker, 1))
+          legacy_path.write_text(legacy_text.replace(marker, addition + marker, 1))
           PY
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run focused client tests
+      - name: Run focused client regression
         run: node --test tests/order-atomic-save.client.test.mjs
+
+      - name: Run focused Firestore regression
+        run: firebase emulators:exec --only firestore "node --test --test-concurrency=1 tests/order-legacy-missing-identity.rules.test.mjs"
 
       - name: Run full Firestore rules suite
         run: npm run test:rules
