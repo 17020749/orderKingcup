@@ -1688,7 +1688,7 @@ test('Sale sửa yêu cầu được gửi broadcast cập nhật cho đúng nh�
 
 
 
-test('Bước 7 sửa nội dung đơn và hóa đơn qua hai luồng được bảo vệ', async () => {
+test('Bước 7 sửa order được bảo vệ và Sale không thao tác trực tiếp trên invoice page', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
   await assertSucceeds(updateDoc(doc(db, 'orders', 'order-a'), {
     note: 'Đã cập nhật',
@@ -1712,7 +1712,7 @@ test('Bước 7 sửa nội dung đơn và hóa đơn qua hai luồng được b
     relation_updated_at: 'now', invoice_record_count: 1,
     invoice_relation_revision: 1, invoice_status: 'Khách lẻ', updated_at: 'now'
   })
-  await assertSucceeds(batch.commit())
+  await assertFails(batch.commit())
 })
 
 test('V7.4 chặn đổi trạng thái hóa đơn khi chỉ có quyền sửa đơn', async () => {

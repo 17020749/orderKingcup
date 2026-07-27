@@ -1063,7 +1063,7 @@ service cloud.firestore {
     function orderInvoiceSummaryUpdateAllowed(orderId) {
       let action = request.resource.data.get('relation_last_action', '');
       let documentId = request.resource.data.get('relation_last_document_id', '');
-      return (ownsOrderData(resource.data) || hasPerm('invoices.view_all'))
+      return hasPerm('invoices.view_all')
         && orderIdentityUnchanged()
         && onlyChanged([
           'invoice_status', 'invoice_record_count', 'invoice_relation_revision',
@@ -1492,7 +1492,7 @@ service cloud.firestore {
         && order.get('relation_updated_at', null) == request.time;
     }
 
-    function legacyInvoiceCreateFromExistingOrderAllowed(invoiceId) {
+    function legacyInvoicePayloadMatchesExistingOrder(invoiceId) {
       let orderId = request.resource.data.get('order_id', '');
       let path = orderPath(orderId);
       let before = get(path).data;
@@ -1525,12 +1525,29 @@ service cloud.firestore {
         && request.resource.data.get('status', '') == 'active'
         && request.resource.data.get('active', false) == true
         && request.resource.data.get('deleted', true) == false
-        && request.resource.data.get('created_at', null) == request.time
         && request.resource.data.get('updated_at', null) == request.time
         && after.get('invoice_record_count', -1) == 1
         && after.get('relation_lock_version', 0) == 1
         && relationMetadataMatches(after, 'invoices', 'create', invoiceId)
         && after.get('relation_updated_at', null) == request.time;
+    }
+
+    function legacyInvoiceCreateFromExistingOrderAllowed(invoiceId) {
+      return legacyInvoicePayloadMatchesExistingOrder(invoiceId)
+        && request.resource.data.get('created_at', null) == request.time;
+    }
+
+    function legacyInvoiceRestoreFromExistingOrderAllowed(invoiceId) {
+      return !activeRelationData(resource.data)
+        && resource.data.get('order_id', '') == request.resource.data.get('order_id', '')
+        && legacyInvoicePayloadMatchesExistingOrder(invoiceId)
+        && (
+          unchanged(['created_at'])
+          || (
+            resource.data.get('created_at', null) == null
+            && request.resource.data.get('created_at', null) == request.time
+          )
+        );
     }
 
     function invoiceAccountingUpdateValid(orderId) {
@@ -1640,7 +1657,7 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && orderIdentityUnchanged()
         && orderLegacyInvoiceCreateKeepsOtherSystemFields()
         && fulfillmentStatus() != 'da_xuat_du'
-        && resource.data.get('invoice_record_count', 0) == 0
+        && resource.data.get('invoice_record_count', 0) in [0, 1]
         && request.resource.data.get('invoice_record_count', -1) == 1
         && request.resource.data.get('invoice_relation_revision', -1) == currentRevision + 1
         && request.resource.data.get('relation_lock_version', 0) == 1
@@ -1655,8 +1672,18 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && relationMetadataMatches(request.resource.data, 'invoices', 'create', invoiceId)
         && request.resource.data.get('relation_updated_at', null) == request.time
         && request.resource.data.get('updated_at', null) == request.time
-        && !exists(childPath)
-        && existsAfter(childPath)
+        && (
+          (
+            !exists(childPath)
+            && existsAfter(childPath)
+          )
+          || (
+            exists(childPath)
+            && !activeRelationData(get(childPath).data)
+            && get(childPath).data.get('order_id', '') == orderId
+            && existsAfter(childPath)
+          )
+        )
         && activeRelationData(getAfter(childPath).data)
         && getAfter(childPath).data.get('order_id', '') == orderId
         && getAfter(childPath).data.get('invoice_status', '') == request.resource.data.get('invoice_status', '')
@@ -2272,7 +2299,24 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
     // ---------------------------------------------------------------------
 
     match /orders/{docId} {
-      allow read: if hasPerm('orders.view_all')
+      allow get: if hasPerm('invoices.view_all')
+        || hasPerm('orders.view_all')
+        || hasPerm('printing.view_all')
+        || (
+          hasPerm('printing.orders_view')
+          && ownsOrderData(resource.data)
+        )
+        || (
+          hasPerm('customers.orders_view')
+          && resource.data.get('customer_id', '') is string
+          && ownsCustomerById(resource.data.get('customer_id', ''))
+        )
+        || (
+          hasPerm('orders.view')
+          && ownsOrderData(resource.data)
+        );
+
+      allow list: if hasPerm('orders.view_all')
         || hasPerm('printing.view_all')
         || (
           hasPerm('printing.orders_view')
@@ -2335,9 +2379,19 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
               || (
                 request.resource.data.get('relation_last_module', '') == 'invoices'
                 && (
-                  orderInvoiceSummaryUpdateAllowed(docId)
-                  || orderSaleInvoiceStatusUpdateAllowed(docId)
-                  || orderLegacyInvoiceCreateAllowed(docId)
+                  request.resource.data.get('relation_last_action', '') == 'create'
+                    ? (
+                      request.resource.data.get('revision', -1) == resource.data.get('revision', 0) + 1
+                        ? orderLegacyInvoiceCreateAllowed(docId)
+                        : orderInvoiceSummaryUpdateAllowed(docId)
+                    )
+                    : request.resource.data.get('relation_last_action', '') == 'update'
+                      ? (
+                        request.resource.data.get('revision', -1) == resource.data.get('revision', 0) + 1
+                          ? orderSaleInvoiceStatusUpdateAllowed(docId)
+                          : orderInvoiceSummaryUpdateAllowed(docId)
+                      )
+                      : orderInvoiceSummaryUpdateAllowed(docId)
                 )
               )
               || (
@@ -2823,6 +2877,33 @@ hasAnyPerm([
       allow delete: if isAdmin();
     }
 
+    function invoiceRequestOrderExistsBefore() {
+      let orderId = request.resource.data.get('order_id', '');
+      return orderId is string
+        && orderId != ''
+        && exists(orderPath(orderId));
+    }
+
+    function invoiceRequestOrderRevisionAdvanced() {
+      let orderId = request.resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      return orderId is string
+        && orderId != ''
+        && exists(path)
+        && existsAfter(path)
+        && getAfter(path).data.get('revision', -1) == get(path).data.get('revision', 0) + 1;
+    }
+
+    function invoiceRequestOrderDeletedAfter() {
+      let orderId = request.resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      return orderId is string
+        && orderId != ''
+        && existsAfter(path)
+        && getAfter(path).data.get('deleted', false) == true
+        && getAfter(path).data.get('active', true) == false;
+    }
+
     match /invoices/{docId} {
       allow read: if isAdmin()
         || hasPerm('invoices.view_all')
@@ -2842,44 +2923,58 @@ hasAnyPerm([
           && canMutateOrderById(resource.data.order_id)
         );
 
-      allow create: if autoInvoiceCreateFromNewOrderAllowed(docId)
-        || legacyInvoiceCreateFromExistingOrderAllowed(docId)
-        || (
-          hasPerm('invoices.create')
-          && relationCreateBase(request.resource.data.order_id, 'invoices.view_all')
-          && invoiceCreateCountTransitionMatches(request.resource.data.order_id)
-          && relationParentMarkerMatches(
-            request.resource.data.order_id, 'invoices', 'create', docId,
-            'invoice_relation_revision'
-          )
-        );
+      allow create: if invoiceRequestOrderExistsBefore()
+        ? (
+          invoiceRequestOrderRevisionAdvanced()
+            ? legacyInvoiceCreateFromExistingOrderAllowed(docId)
+            : (
+              hasPerm('invoices.view_all')
+              && hasPerm('invoices.create')
+              && relationCreateBase(request.resource.data.order_id, 'invoices.view_all')
+              && invoiceCreateCountTransitionMatches(request.resource.data.order_id)
+              && relationParentMarkerMatches(
+                request.resource.data.order_id, 'invoices', 'create', docId,
+                'invoice_relation_revision'
+              )
+            )
+        )
+        : autoInvoiceCreateFromNewOrderAllowed(docId);
 
       allow update: if (
           changedAny(['deleted', 'active', 'deleted_at'])
             ? (
-              (
-                relationExistingChildBase(resource.data.order_id, 'invoices.view_all')
-                && hasPerm('invoices.delete')
-                && softDeleteOnly()
-                && relationParentMarkerMatches(
-                  resource.data.order_id, 'invoices', 'delete', docId,
-                  'invoice_relation_revision'
+              request.resource.data.get('active', false) == true
+                && request.resource.data.get('deleted', true) == false
+                ? legacyInvoiceRestoreFromExistingOrderAllowed(docId)
+                : (
+                  invoiceRequestOrderDeletedAfter()
+                    ? invoiceOrderCascadeDeleteAllowed()
+                    : (
+                      hasPerm('invoices.view_all')
+                      && relationExistingChildBase(resource.data.order_id, 'invoices.view_all')
+                      && hasPerm('invoices.delete')
+                      && softDeleteOnly()
+                      && relationParentMarkerMatches(
+                        resource.data.order_id, 'invoices', 'delete', docId,
+                        'invoice_relation_revision'
+                      )
+                    )
                 )
-              )
-              || invoiceOrderCascadeDeleteAllowed()
             )
             : (
-              (
-                relationExistingChildBase(resource.data.order_id, 'invoices.view_all')
-                && hasPerm('invoices.edit')
-                && unchanged(['deleted', 'active', 'status', 'deleted_at'])
-                && invoiceAccountingUpdateValid(resource.data.order_id)
-                && relationParentMarkerMatches(
-                  resource.data.order_id, 'invoices', 'update', docId,
-                  'invoice_relation_revision'
+              invoiceRequestOrderRevisionAdvanced()
+                ? saleInvoiceStatusUpdateAllowed(docId)
+                : (
+                  hasPerm('invoices.view_all')
+                  && relationExistingChildBase(resource.data.order_id, 'invoices.view_all')
+                  && hasPerm('invoices.edit')
+                  && unchanged(['deleted', 'active', 'status', 'deleted_at'])
+                  && invoiceAccountingUpdateValid(resource.data.order_id)
+                  && relationParentMarkerMatches(
+                    resource.data.order_id, 'invoices', 'update', docId,
+                    'invoice_relation_revision'
+                  )
                 )
-              )
-              || saleInvoiceStatusUpdateAllowed(docId)
             )
         )
         || isAdmin();
