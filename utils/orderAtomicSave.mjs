@@ -124,6 +124,22 @@ export function buildOrderItemLifecyclePatch(isNew) {
     : {}
 }
 
+// A missing invoice document cannot satisfy scoped read rules because
+// resource.data does not exist. Read only when the document must already
+// exist: a status update, or an explicit restore after a soft delete.
+export function shouldReadExistingInvoiceSnapshot({
+  mode,
+  invoiceMutation,
+  persistedOrder = {},
+} = {}) {
+  if (mode !== 'edit' || !invoiceMutation) return false
+  if (invoiceMutation.mode === 'status_update') return true
+  if (invoiceMutation.mode !== 'legacy_create') return false
+  return String(persistedOrder.relation_last_module || '') === 'invoices'
+    && String(persistedOrder.relation_last_action || '') === 'delete'
+    && text(persistedOrder.relation_last_document_id) === text(invoiceMutation.invoiceId)
+}
+
 export function estimateAtomicOrderWrites({
   mode,
   existingItems = [],

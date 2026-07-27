@@ -23,6 +23,7 @@ import {
   planAtomicOrderItems,
   preservePersistedOrderIdentityForEdit,
   resolveOrderOwnershipForSave,
+  shouldReadExistingInvoiceSnapshot,
 } from '~/utils/orderAtomicSave.mjs'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
@@ -140,15 +141,19 @@ export function useAtomicOrderSave() {
       const sequenceSnapshot = input.mode === 'create'
         ? await transaction.get(sequenceRef)
         : null
-      const invoiceSnapshot = input.mode === 'edit' && invoiceRef
-        ? await transaction.get(invoiceRef)
-        : null
 
       if (input.mode === 'edit' && !orderSnapshot?.exists()) {
         throw new Error('Đơn hàng không còn tồn tại. Hãy tải lại danh sách.')
       }
 
       const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}
+      const invoiceSnapshot = invoiceRef && shouldReadExistingInvoiceSnapshot({
+        mode: input.mode,
+        invoiceMutation,
+        persistedOrder: existingOrder,
+      })
+        ? await transaction.get(invoiceRef)
+        : null
       const effectiveOwnership = resolveOrderOwnershipForSave({
         mode: input.mode,
         persistedOrder: existingOrder,
