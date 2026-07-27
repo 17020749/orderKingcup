@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { shouldReadExistingInvoiceSnapshot } from '../utils/orderAtomicSave.mjs'
 
+// Untouched legacy orders have no invoice document to authorize as a read.
 test('untouched legacy order does not read a missing deterministic invoice', () => {
   const mutation = { mode: 'legacy_create', invoiceId: 'inv_order-legacy' }
   assert.equal(shouldReadExistingInvoiceSnapshot({
