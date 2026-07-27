@@ -2,10 +2,15 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { APP_ACCESS_MODULES } from '../constants/accessMatrix.mjs'
+import {
+  SAFE_NESTED_RELATION_QUERY_CHUNK_SIZE,
+  SAFE_RELATION_QUERY_CHUNK_SIZE,
+} from '../utils/orderItemScope.mjs'
 
 const printDocuments = readFileSync('utils/orderPrintDocuments.ts', 'utf8')
 const permissions = readFileSync('constants/permissions.ts', 'utf8')
 const printingQueries = readFileSync('composables/usePrintingScopedQueries.ts', 'utf8')
+const printingDeleteGuard = readFileSync('composables/useOrderPrintingDeleteGuard.ts', 'utf8')
 const printingPage = readFileSync('pages/printing.vue', 'utf8')
 const routes = readFileSync('constants/appRoutes.ts', 'utf8')
 const login = readFileSync('pages/login.vue', 'utf8')
@@ -32,10 +37,24 @@ test('printing separates operator actions from source-order owner visibility', (
   assert.match(printingQueries, /SAFE_RELATION_QUERY_CHUNK_SIZE/)
   assert.match(printingQueries, /Promise\.allSettled/)
   assert.match(printingQueries, /fetchByIds<PrintOrderDoc>\('print_orders', 'order_id'/)
-  assert.match(printingQueries, /fetchByIds<PrintOrderItemDoc>\('print_order_items', 'print_order_id'/)
+  assert.match(printingQueries, /fetchByIds<PrintOrderItemDoc>/)
   assert.match(printingPage, /canViewOwnOrders/)
   assert.match(printingPage, /moduleActionDecision/)
   assert.match(printingPage, /parentOwnerFields: \['owner_email', 'created_by', 'sale_email'\]/)
+})
+
+test('nested printing item queries stay below the Firestore Rules access-call limit', () => {
+  assert.equal(SAFE_RELATION_QUERY_CHUNK_SIZE, 5)
+  assert.equal(SAFE_NESTED_RELATION_QUERY_CHUNK_SIZE, 4)
+  assert.match(printingQueries, /SAFE_NESTED_RELATION_QUERY_CHUNK_SIZE/)
+  assert.match(
+    printingQueries,
+    /printOrders\.map\(order => order\.id\),\s*SAFE_NESTED_RELATION_QUERY_CHUNK_SIZE/,
+  )
+  assert.match(
+    printingDeleteGuard,
+    /chunks\(printOrderIds, SAFE_NESTED_RELATION_QUERY_CHUNK_SIZE\)/,
+  )
 })
 
 test('read-only source-order owners do not receive printing action buttons', () => {
