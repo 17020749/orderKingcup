@@ -13,6 +13,8 @@ import {
 } from '../utils/orderInvoiceFlow.mjs'
 import { estimateAtomicOrderWrites } from '../utils/orderAtomicSave.mjs'
 
+// Regression contract: invoice changes must not alter the ordinary order-edit path.
+
 test('chuẩn hóa đúng trạng thái legacy và giới hạn trạng thái của Sale', () => {
   assert.deepEqual(SALE_INVOICE_STATUSES, ['Không xuất', 'Yêu cầu xuất'])
   assert.deepEqual(ACCOUNTING_INVOICE_STATUSES, ['Không xuất', 'Yêu cầu xuất', 'Đã xuất'])
