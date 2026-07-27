@@ -7,6 +7,7 @@ on:
     types:
       - opened
       - reopened
+      - synchronize
     paths:
       - '.agent-invoice-flow-fix/trigger'
 
@@ -68,13 +69,31 @@ jobs:
           tests/order-invoice-legacy-backfill.client.test.mjs
           tests/order-permission-scope-regression.client.test.mjs
 
-      - name: Run focused Firestore Rules tests
-        run: >-
-          npx --no-install firebase emulators:exec --only firestore
-          "node --test --test-concurrency=1
-          tests/invoice-order-repair-permissions.rules.test.mjs
-          tests/order-invoice-legacy-backfill.rules.test.mjs
-          tests/order-invoice-flow.rules.test.mjs"
+      - name: Capture focused Firestore Rules tests
+        id: focused_rules
+        shell: bash
+        run: |
+          set +e
+          npx --no-install firebase emulators:exec --only firestore \
+            "node --test --test-concurrency=1 \
+            tests/invoice-order-repair-permissions.rules.test.mjs \
+            tests/order-invoice-legacy-backfill.rules.test.mjs \
+            tests/order-invoice-flow.rules.test.mjs" \
+            > focused-rules.log 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload focused Rules log
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-rules-log
+          path: focused-rules.log
+          if-no-files-found: error
+
+      - name: Stop on focused Rules failure
+        if: steps.focused_rules.outputs.status != '0'
+        run: exit 1
 
       - name: Run full Firestore Rules tests
         run: npm run test:rules
@@ -101,3 +120,15 @@ jobs:
           git add -A
           git commit -m 'fix: repair missing order invoices and lock accounting scope'
           git push origin HEAD:agent/fix-legacy-invoice-create-and-accounting-scope
+
+  report-focused-rules:
+    needs: apply-and-verify
+    if: always() && needs.apply-and-verify.result == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download focused Rules log
+        uses: actions/download-artifact@v4
+        with:
+          name: focused-rules-log
+      - name: Print focused Rules failure
+        run: tail -n 220 focused-rules.log
