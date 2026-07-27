@@ -1492,14 +1492,53 @@ service cloud.firestore {
         && order.get('relation_updated_at', null) == request.time;
     }
 
+    function legacyInvoiceCreateFromExistingOrderAllowed(invoiceId) {
+      let orderId = request.resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      let before = get(path).data;
+      let after = getAfter(path).data;
+      return hasPerm('orders.edit')
+        && orderId is string
+        && orderId != ''
+        && exists(path)
+        && existsAfter(path)
+        && orderDataIsActive(before)
+        && orderDataIsActive(after)
+        && (ownsOrderData(before) || hasPerm('orders.view_all') || isAdmin())
+        && invoiceId == 'inv_' + orderId
+        && request.resource.data.get('id', '') == invoiceId
+        && request.resource.data.get('order_code', '') == before.get('order_code', '')
+        && requestMatchesOrderData(before)
+        && request.resource.data.get('created_by', '').lower() == email()
+        && request.resource.data.get('invoice_number', '') == ''
+        && request.resource.data.get('invoice_date', '') == ''
+        && request.resource.data.get('invoice_status', '') == after.get('invoice_status', '')
+        && (
+          before.get('invoice_status', '') == 'Đã xuất'
+            ? request.resource.data.get('invoice_status', '') == 'Đã xuất'
+            : saleInvoiceStatusValue(request.resource.data.get('invoice_status', ''))
+        )
+        && invoiceAmountValid(request.resource.data)
+        && request.resource.data.get('invoice_amount', -1) == after.get('payable_amount', -2)
+        && request.resource.data.get('relation_revision', -1) == after.get('invoice_relation_revision', -2)
+        && request.resource.data.get('last_operation_id', '') == after.get('last_operation_id', '')
+        && request.resource.data.get('status', '') == 'active'
+        && request.resource.data.get('active', false) == true
+        && request.resource.data.get('deleted', true) == false
+        && request.resource.data.get('created_at', null) == request.time
+        && request.resource.data.get('updated_at', null) == request.time
+        && after.get('invoice_record_count', -1) == 1
+        && after.get('relation_lock_version', 0) == 1
+        && relationMetadataMatches(after, 'invoices', 'create', invoiceId)
+        && after.get('relation_updated_at', null) == request.time;
+    }
+
     function invoiceAccountingUpdateValid(orderId) {
   let path = orderPath(orderId);
   return (
       unchanged(['invoice_status'])
       || accountingInvoiceStatusValue(request.resource.data.get('invoice_status', ''))
     )
-    && invoiceAmountValid(request.resource.data)
-    && issuedInvoiceFieldsValid(request.resource.data)
     && request.resource.data.get('id', '') == resource.data.get('id', '')
     && (
       unchanged(['relation_revision'])
@@ -1576,6 +1615,53 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && existsAfter(childPath)
         && get(childPath).data.get('invoice_status', '') == resource.data.get('invoice_status', '')
         && getAfter(childPath).data.get('invoice_status', '') == request.resource.data.get('invoice_status', '');
+    }
+
+    function orderLegacyInvoiceCreateKeepsOtherSystemFields() {
+      return unchanged([
+          'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
+          'payment_count', 'deposit_count', 'collect_count',
+          'warehouse_fulfillment_status', 'warehouse_request_status',
+          'printing_progress_count', 'printing_lock_version', 'printing_last_action',
+          'printing_last_print_order_id', 'printing_lock_updated_by', 'printing_lock_updated_at',
+          'payment_record_count', 'shipment_record_count',
+          'payment_relation_revision', 'shipment_relation_revision',
+          'shipment_status', 'shipping_fee_total', 'cod_amount_total',
+          'deleted', 'active', 'status', 'deleted_at'
+        ]);
+    }
+
+    function orderLegacyInvoiceCreateAllowed(orderId) {
+      let invoiceId = request.resource.data.get('relation_last_document_id', '');
+      let childPath = invoicePath(invoiceId);
+      let currentRevision = resource.data.get('invoice_relation_revision', 0);
+      return hasPerm('orders.edit')
+        && (ownsOrderData(resource.data) || hasPerm('orders.view_all') || isAdmin())
+        && orderIdentityUnchanged()
+        && orderLegacyInvoiceCreateKeepsOtherSystemFields()
+        && fulfillmentStatus() != 'da_xuat_du'
+        && resource.data.get('invoice_record_count', 0) == 0
+        && request.resource.data.get('invoice_record_count', -1) == 1
+        && request.resource.data.get('invoice_relation_revision', -1) == currentRevision + 1
+        && request.resource.data.get('relation_lock_version', 0) == 1
+        && (
+          resource.data.get('invoice_status', '') == 'Đã xuất'
+            ? request.resource.data.get('invoice_status', '') == 'Đã xuất'
+            : saleInvoiceStatusValue(request.resource.data.get('invoice_status', ''))
+        )
+        && request.resource.data.get('revision', -1) == resource.data.get('revision', 0) + 1
+        && validBoundedString(request.resource.data.get('last_operation_id', ''), 1, 200)
+        && invoiceId == 'inv_' + orderId
+        && relationMetadataMatches(request.resource.data, 'invoices', 'create', invoiceId)
+        && request.resource.data.get('relation_updated_at', null) == request.time
+        && request.resource.data.get('updated_at', null) == request.time
+        && !exists(childPath)
+        && existsAfter(childPath)
+        && activeRelationData(getAfter(childPath).data)
+        && getAfter(childPath).data.get('order_id', '') == orderId
+        && getAfter(childPath).data.get('invoice_status', '') == request.resource.data.get('invoice_status', '')
+        && getAfter(childPath).data.get('relation_revision', -1) == request.resource.data.get('invoice_relation_revision', -2)
+        && getAfter(childPath).data.get('last_operation_id', '') == request.resource.data.get('last_operation_id', '');
     }
 
     function invoiceOrderCascadeDeleteAllowed() {
@@ -2251,6 +2337,7 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
                 && (
                   orderInvoiceSummaryUpdateAllowed(docId)
                   || orderSaleInvoiceStatusUpdateAllowed(docId)
+                  || orderLegacyInvoiceCreateAllowed(docId)
                 )
               )
               || (
@@ -2756,6 +2843,7 @@ hasAnyPerm([
         );
 
       allow create: if autoInvoiceCreateFromNewOrderAllowed(docId)
+        || legacyInvoiceCreateFromExistingOrderAllowed(docId)
         || (
           hasPerm('invoices.create')
           && relationCreateBase(request.resource.data.order_id, 'invoices.view_all')

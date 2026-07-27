@@ -790,16 +790,40 @@ async function saveOrder() {
           note: '',
         },
       }
-    } else if (persistedInvoiceStatus !== 'Đã xuất' && invoiceStatusChangeRequested(persistedInvoiceStatus, requestedInvoiceStatus)) {
-      const activeInvoices = (await loadScopedInvoicesForOrders([editing.value], true)).filter(isActiveOrderRelation) as InvoiceDoc[]
-      const currentInvoice = selectCanonicalInvoice(activeInvoices) as InvoiceDoc | null
-      if (!currentInvoice) throw new Error('Không tìm thấy hóa đơn đang hoạt động của đơn. Hãy tải lại dữ liệu.')
-      invoiceMutation = {
-        mode: 'status_update',
-        invoiceId: currentInvoice.id,
-        requestedStatus: requestedInvoiceStatus,
-        expectedStatus: currentInvoice.invoice_status,
-        expectedRelationRevision: toNumber(currentInvoice.relation_revision),
+    } else {
+      const persistedInvoiceCount = toNumber(editing.value.invoice_record_count)
+      const statusChanged = persistedInvoiceStatus !== 'Đã xuất'
+        && invoiceStatusChangeRequested(persistedInvoiceStatus, requestedInvoiceStatus)
+      if (persistedInvoiceCount !== 1 || statusChanged) {
+        const activeInvoices = (await loadScopedInvoicesForOrders([editing.value], true))
+          .filter(isActiveOrderRelation) as InvoiceDoc[]
+        if (activeInvoices.length > 1) {
+          throw new Error('Đơn hàng có nhiều hóa đơn đang hoạt động. Hãy xử lý trùng trước khi lưu.')
+        }
+        const currentInvoice = selectCanonicalInvoice(activeInvoices) as InvoiceDoc | null
+        if (!currentInvoice) {
+          invoiceMutation = {
+            mode: 'legacy_create',
+            invoiceId: buildOrderInvoiceId(form.id),
+            requestedStatus: requestedInvoiceStatus,
+            payload: {
+              tax_code: selectedCustomer?.tax_code || '',
+              company_name: selectedCustomer?.company_name || '',
+              billing_address: selectedCustomer?.billing_address || '',
+              note: '',
+            },
+          }
+        } else if (statusChanged) {
+          invoiceMutation = {
+            mode: 'status_update',
+            invoiceId: currentInvoice.id,
+            requestedStatus: requestedInvoiceStatus,
+            expectedStatus: currentInvoice.invoice_status,
+            expectedRelationRevision: toNumber(currentInvoice.relation_revision),
+          }
+        } else if (persistedInvoiceCount !== 1) {
+          throw new Error('Đơn hàng đã có hóa đơn nhưng dữ liệu liên kết chưa đồng bộ. Hãy chạy đồng bộ hóa đơn legacy trước.')
+        }
       }
     }
 

@@ -27,7 +27,7 @@ import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permiss
 type AtomicOrderMode = 'create' | 'edit'
 
 type AtomicInvoiceMutation = {
-  mode: 'create' | 'status_update'
+  mode: 'create' | 'legacy_create' | 'status_update'
   invoiceId: string
   requestedStatus: string
   expectedStatus?: string
@@ -106,13 +106,16 @@ export function useAtomicOrderSave() {
       }
     } else if (invoiceMutation?.mode === 'create') {
       throw new Error('Không được tạo thêm hóa đơn khi sửa đơn hàng.')
+    } else if (invoiceMutation?.mode === 'legacy_create'
+      && invoiceMutation.invoiceId !== buildOrderInvoiceId(input.orderId)) {
+      throw new Error('ID hóa đơn legacy không khớp đơn hàng.')
     }
 
     const writeCount = assertAtomicOrderWriteLimit({
       mode: input.mode,
       existingItems: input.existingItems,
       nextItems: input.nextItems,
-      updateInvoiceStatus: invoiceMutation?.mode === 'status_update',
+      updateInvoiceStatus: invoiceMutation?.mode === 'status_update' || invoiceMutation?.mode === 'legacy_create',
     })
     const itemPlan = planAtomicOrderItems(input.existingItems, input.nextItems)
     const orderRef = doc(db, 'orders', input.orderId)
@@ -159,8 +162,23 @@ export function useAtomicOrderSave() {
       let requestedInvoiceStatus = ''
       let existingInvoice: Record<string, any> | null = null
       if (invoiceMutation) {
-        requestedInvoiceStatus = assertSaleInvoiceStatus(invoiceMutation.requestedStatus)
-        if (invoiceMutation.mode === 'status_update') {
+        const persistedOrderInvoiceStatus = normalizeInvoiceStatus(existingOrder.invoice_status)
+        if (invoiceMutation.mode === 'legacy_create' && persistedOrderInvoiceStatus === 'Đã xuất') {
+          requestedInvoiceStatus = normalizeInvoiceStatus(invoiceMutation.requestedStatus)
+          if (requestedInvoiceStatus !== 'Đã xuất') {
+            throw new Error('Đơn legacy đã xuất phải giữ nguyên trạng thái Đã xuất khi tạo hóa đơn.')
+          }
+        } else {
+          requestedInvoiceStatus = assertSaleInvoiceStatus(invoiceMutation.requestedStatus)
+        }
+        if (invoiceMutation.mode === 'legacy_create') {
+          if (invoiceSnapshot?.exists()) {
+            throw new Error('Đơn hàng đã có document hóa đơn theo ID tự động. Hãy tải lại dữ liệu.')
+          }
+          if (toNumber(existingOrder.invoice_record_count) > 0) {
+            throw new Error('Đơn hàng đang ghi nhận đã có hóa đơn. Hãy chạy đồng bộ quan hệ trước khi lưu.')
+          }
+        } else if (invoiceMutation.mode === 'status_update') {
           if (!invoiceSnapshot?.exists()) {
             throw new Error('Không tìm thấy hóa đơn đang hoạt động của đơn. Hãy tải lại dữ liệu.')
           }
@@ -213,19 +231,31 @@ export function useAtomicOrderSave() {
             relation_updated_by: actor,
             relation_updated_at: serverTimestamp(),
           }
-        : invoiceMutation?.mode === 'status_update'
+        : invoiceMutation?.mode === 'legacy_create'
           ? {
               invoice_status: requestedInvoiceStatus,
-              invoice_record_count: toNumber(existingOrder.invoice_record_count),
-              invoice_relation_revision: toNumber(existingOrder.invoice_relation_revision) + 1,
+              invoice_record_count: 1,
+              invoice_relation_revision: Math.max(1, toNumber(existingOrder.invoice_relation_revision) + 1),
               relation_lock_version: 1,
               relation_last_module: 'invoices',
-              relation_last_action: 'update',
+              relation_last_action: 'create',
               relation_last_document_id: invoiceMutation.invoiceId,
               relation_updated_by: actor,
               relation_updated_at: serverTimestamp(),
             }
-          : {}
+          : invoiceMutation?.mode === 'status_update'
+            ? {
+                invoice_status: requestedInvoiceStatus,
+                invoice_record_count: toNumber(existingOrder.invoice_record_count),
+                invoice_relation_revision: toNumber(existingOrder.invoice_relation_revision) + 1,
+                relation_lock_version: 1,
+                relation_last_module: 'invoices',
+                relation_last_action: 'update',
+                relation_last_document_id: invoiceMutation.invoiceId,
+                relation_updated_by: actor,
+                relation_updated_at: serverTimestamp(),
+              }
+            : {}
 
       const finalOrderPayload = {
         ...input.orderPayload,
@@ -253,7 +283,7 @@ export function useAtomicOrderSave() {
         transaction.set(orderRef, finalOrderPayload, { merge: true })
       }
 
-      if (invoiceMutation?.mode === 'create' && invoiceRef) {
+      if ((invoiceMutation?.mode === 'create' || invoiceMutation?.mode === 'legacy_create') && invoiceRef) {
         transaction.set(invoiceRef, {
           ...(invoiceMutation.payload || {}),
           id: invoiceMutation.invoiceId,
@@ -267,7 +297,7 @@ export function useAtomicOrderSave() {
           order_owner_email: normalizeEmail(input.ownerEmail),
           order_created_by: normalizeEmail(input.createdBy),
           order_sale_email: normalizeEmail(input.saleEmail),
-          relation_revision: 1,
+          relation_revision: toNumber(invoiceRelationPatch.invoice_relation_revision),
           last_operation_id: operationId,
           status: 'active',
           active: true,

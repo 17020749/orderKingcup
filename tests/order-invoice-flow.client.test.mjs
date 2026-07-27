@@ -40,15 +40,11 @@ test('ID hóa đơn tự động ổn định và an toàn theo order', () => {
   assert.throws(() => buildOrderInvoiceId('///'), /Thiếu ID đơn hàng/)
 })
 
-test('validation kế toán bắt buộc dữ liệu khi chuyển Đã xuất', () => {
-  assert.equal(validateAccountingInvoice({ invoice_status: 'Không xuất', invoice_amount: 0 }), '')
-  assert.equal(validateAccountingInvoice({ invoice_status: 'Yêu cầu xuất', invoice_amount: 100 }), '')
-  assert.match(validateAccountingInvoice({ invoice_status: 'Đã xuất', invoice_amount: 100 }), /số hóa đơn/)
-  assert.match(validateAccountingInvoice({ invoice_status: 'Đã xuất', invoice_amount: 100, invoice_number: 'HD-01' }), /ngày hóa đơn/)
-  assert.equal(validateAccountingInvoice({
-    invoice_status: 'Đã xuất', invoice_amount: 100, invoice_number: 'HD-01', invoice_date: '2026-07-27',
-  }), '')
-  assert.match(validateAccountingInvoice({ invoice_status: 'Yêu cầu xuất', invoice_amount: -1 }), /không được âm/)
+test('validation kế toán chỉ kiểm tra trạng thái hợp lệ', () => {
+  assert.equal(validateAccountingInvoice({ invoice_status: 'Không xuất' }), '')
+  assert.equal(validateAccountingInvoice({ invoice_status: 'Yêu cầu xuất', invoice_amount: -1 }), '')
+  assert.equal(validateAccountingInvoice({ invoice_status: 'Đã xuất', invoice_number: '', invoice_date: '' }), '')
+  assert.match(validateAccountingInvoice({ invoice_status: 'Sai trạng thái' }), /không hợp lệ/)
 })
 
 test('ước lượng write tính thêm invoice nhưng không tăng đường sửa order bình thường', () => {

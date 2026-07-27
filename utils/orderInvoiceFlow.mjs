@@ -54,13 +54,5 @@ export function validateAccountingInvoice(input = {}) {
   if (!ACCOUNTING_INVOICE_STATUSES.includes(status)) {
     return 'Trạng thái hóa đơn không hợp lệ.'
   }
-  const amount = Number(input.invoice_amount)
-  if (!Number.isFinite(amount) || amount < 0) {
-    return 'Giá trị hóa đơn không được âm.'
-  }
-  if (status === 'Đã xuất') {
-    if (!text(input.invoice_number)) return 'Vui lòng nhập số hóa đơn trước khi chuyển sang Đã xuất.'
-    if (!text(input.invoice_date)) return 'Vui lòng nhập ngày hóa đơn trước khi chuyển sang Đã xuất.'
-  }
   return ''
 }
