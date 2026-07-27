@@ -16,7 +16,10 @@ import { isActive } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 import { permissionDebug } from '~/utils/permissionDebug'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
-import { SAFE_RELATION_QUERY_CHUNK_SIZE } from '~/utils/orderItemScope.mjs'
+import {
+  SAFE_NESTED_RELATION_QUERY_CHUNK_SIZE,
+  SAFE_RELATION_QUERY_CHUNK_SIZE,
+} from '~/utils/orderItemScope.mjs'
 
 function uniqueById<T extends { id?: string }>(rows: T[]) {
   const result = new Map<string, T>()
@@ -51,10 +54,15 @@ export function usePrintingScopedQueries() {
     } as T))
   }
 
-  async function fetchByIds<T>(name: string, field: string, ids: string[]) {
+  async function fetchByIds<T>(
+    name: string,
+    field: string,
+    ids: string[],
+    chunkSize = SAFE_RELATION_QUERY_CHUNK_SIZE,
+  ) {
     const cleanIds = Array.from(new Set(ids.map(id => String(id || '').trim()).filter(Boolean)))
     if (!cleanIds.length) return [] as T[]
-    const idGroups = chunks(cleanIds)
+    const idGroups = chunks(cleanIds, chunkSize)
     const groups = idGroups.map(group => (
       fetchRows<T>(name, [where(field, 'in', group)])
     ))
@@ -76,7 +84,7 @@ export function usePrintingScopedQueries() {
         stage: 'query_denied',
         userEmail: currentEmail(),
         error: reason,
-        payload: { field, failed_ids: ids, query_group_index: index },
+        payload: { field, failed_ids: ids, query_group_index: index, query_group_size: ids.length },
         note: 'A printing relation query group failed; successful groups remain visible.',
       }))
       const failedIds = failedGroups.flatMap(group => group.ids)
@@ -144,8 +152,12 @@ export function usePrintingScopedQueries() {
 
   async function loadPrintOrderItems(_force = false) {
     const printOrders = await loadPrintOrders()
-    return (await fetchByIds<PrintOrderItemDoc>('print_order_items', 'print_order_id', printOrders.map(order => order.id)))
-      .filter(isActive)
+    return (await fetchByIds<PrintOrderItemDoc>(
+      'print_order_items',
+      'print_order_id',
+      printOrders.map(order => order.id),
+      SAFE_NESTED_RELATION_QUERY_CHUNK_SIZE,
+    )).filter(isActive)
   }
 
   return {

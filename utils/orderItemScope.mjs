@@ -3,9 +3,15 @@ function text(value) {
 }
 
 // Keep relation queries below Firestore Rules' per-request access-call limit.
-// A query can evaluate both the user's permission document and each parent
-// order, so using five IDs leaves room for those rule lookups.
+// A one-level relation query reads the user's permission document and each
+// parent order, so five IDs remain safe for those rule lookups.
 export const SAFE_RELATION_QUERY_CHUNK_SIZE = 5
+
+// Printing item reads are a nested relation: each item checks its print-order
+// parent, then that parent checks the source order. Four distinct IDs use at
+// most nine distinct rule document reads (1 user + 4 print orders + 4 orders),
+// leaving headroom below Firestore's 10-access-call query limit.
+export const SAFE_NESTED_RELATION_QUERY_CHUNK_SIZE = 4
 
 export function uniqueOrderIds(orders = []) {
   return Array.from(new Set(
