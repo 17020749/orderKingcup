@@ -6,6 +6,12 @@ import {
 } from 'firebase/firestore'
 import type { OrderItemDoc } from '~/types/models'
 import { buildOrderCode, ORDER_SEQUENCE_START } from '~/utils/orderCode'
+import {
+  assertSaleInvoiceStatus,
+  buildOrderInvoiceId,
+  canSaleTransitionInvoiceStatus,
+  normalizeInvoiceStatus,
+} from '~/utils/orderInvoiceFlow.mjs'
 import { normalizeEmail, toNumber } from '~/utils/format'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import {
@@ -19,6 +25,15 @@ import {
 import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
 
 type AtomicOrderMode = 'create' | 'edit'
+
+type AtomicInvoiceMutation = {
+  mode: 'create' | 'status_update'
+  invoiceId: string
+  requestedStatus: string
+  expectedStatus?: string
+  expectedRelationRevision?: number
+  payload?: Record<string, any>
+}
 
 export type AtomicOrderSaveInput = {
   mode: AtomicOrderMode
@@ -34,6 +49,7 @@ export type AtomicOrderSaveInput = {
   orderPayload: Record<string, any>
   nextItems: Record<string, any>[]
   existingItems: OrderItemDoc[]
+  invoiceMutation?: AtomicInvoiceMutation
   activityAction: string
   activityItemName: string
   activityBefore?: Record<string, any> | null
@@ -48,6 +64,8 @@ export type AtomicOrderSaveResult = {
   items: OrderItemDoc[]
   removedItemIds: string[]
   writeCount: number
+  invoiceId?: string
+  invoiceStatus?: string
 }
 
 export function useAtomicOrderSave() {
@@ -60,6 +78,8 @@ export function useAtomicOrderSave() {
     if (!input.nextItems.length) throw new Error('Vui lòng thêm ít nhất một sản phẩm.')
     const actor = normalizeEmail(input.changedBy || appUser.value?.email || '')
     if (!actor) throw new Error('Không xác định được người thao tác.')
+
+    const invoiceMutation = input.invoiceMutation
     if (input.mode === 'create') {
       const ownerEmail = normalizeEmail(input.ownerEmail)
       const createdBy = normalizeEmail(input.createdBy)
@@ -78,29 +98,42 @@ export function useAtomicOrderSave() {
           operation: 'orders.create', record: input.orderId, status: 'new',
         }))
       }
+      if (!invoiceMutation || invoiceMutation.mode !== 'create') {
+        throw new Error('Đơn hàng mới phải tạo kèm một bản ghi hóa đơn trong cùng giao dịch.')
+      }
+      if (invoiceMutation.invoiceId !== buildOrderInvoiceId(input.orderId)) {
+        throw new Error('ID hóa đơn tự động không khớp đơn hàng.')
+      }
+    } else if (invoiceMutation?.mode === 'create') {
+      throw new Error('Không được tạo thêm hóa đơn khi sửa đơn hàng.')
     }
 
     const writeCount = assertAtomicOrderWriteLimit({
       mode: input.mode,
       existingItems: input.existingItems,
       nextItems: input.nextItems,
+      updateInvoiceStatus: invoiceMutation?.mode === 'status_update',
     })
     const itemPlan = planAtomicOrderItems(input.existingItems, input.nextItems)
     const orderRef = doc(db, 'orders', input.orderId)
     const sequenceRef = doc(db, 'order_sequences', input.customerId)
     const activityRef = doc(collection(db, 'activity_logs'))
+    const invoiceRef = invoiceMutation ? doc(db, 'invoices', invoiceMutation.invoiceId) : null
     const operationId = buildOrderOperationId(input.orderId)
     let finalResult: AtomicOrderSaveResult | null = null
 
     await runTransaction(db, async transaction => {
       // Firestore requires every read before the first write in a transaction.
-      // New orders do not read their missing order document because that read is
-      // intentionally not granted by ownership rules until the parent exists.
+      // New orders do not read their missing order or invoice documents because
+      // ownership is established by the after-state of the same transaction.
       const orderSnapshot = input.mode === 'edit'
         ? await transaction.get(orderRef)
         : null
       const sequenceSnapshot = input.mode === 'create'
         ? await transaction.get(sequenceRef)
+        : null
+      const invoiceSnapshot = input.mode === 'edit' && invoiceRef
+        ? await transaction.get(invoiceRef)
         : null
 
       if (input.mode === 'edit' && !orderSnapshot?.exists()) {
@@ -122,6 +155,39 @@ export function useAtomicOrderSave() {
           }))
         }
       }
+
+      let requestedInvoiceStatus = ''
+      let existingInvoice: Record<string, any> | null = null
+      if (invoiceMutation) {
+        requestedInvoiceStatus = assertSaleInvoiceStatus(invoiceMutation.requestedStatus)
+        if (invoiceMutation.mode === 'status_update') {
+          if (!invoiceSnapshot?.exists()) {
+            throw new Error('Không tìm thấy hóa đơn đang hoạt động của đơn. Hãy tải lại dữ liệu.')
+          }
+          existingInvoice = invoiceSnapshot.data()
+          if (existingInvoice.order_id !== input.orderId) {
+            throw new Error('Hóa đơn không thuộc đơn hàng đang sửa.')
+          }
+          const currentInvoiceStatus = normalizeInvoiceStatus(existingInvoice.invoice_status)
+          const expectedStatus = normalizeInvoiceStatus(invoiceMutation.expectedStatus)
+          if (currentInvoiceStatus !== expectedStatus) {
+            throw new Error('Trạng thái hóa đơn đã được cập nhật ở phiên khác. Hãy tải lại dữ liệu.')
+          }
+          if (toNumber(existingInvoice.relation_revision) !== toNumber(invoiceMutation.expectedRelationRevision)) {
+            throw new Error('Phiên bản hóa đơn đã thay đổi. Hãy tải lại dữ liệu trước khi lưu.')
+          }
+          if (normalizeInvoiceStatus(existingOrder.invoice_status) !== currentInvoiceStatus) {
+            throw new Error('Trạng thái hóa đơn và đơn hàng đang lệch nhau. Vui lòng tải lại dữ liệu.')
+          }
+          if (toNumber(existingOrder.invoice_record_count) !== 1) {
+            throw new Error('Đơn hàng phải có đúng một hóa đơn hoạt động để Sale cập nhật trạng thái.')
+          }
+          if (!canSaleTransitionInvoiceStatus(currentInvoiceStatus, requestedInvoiceStatus)) {
+            throw new Error('Hóa đơn đã xuất hoặc trạng thái chuyển đổi không hợp lệ.')
+          }
+        }
+      }
+
       const actualRevision = input.mode === 'edit'
         ? assertExpectedOrderRevision(input.expectedRevision, existingOrder.revision)
         : 0
@@ -135,8 +201,35 @@ export function useAtomicOrderSave() {
         ? buildOrderCode(input.userCode, input.customerCode, orderSequence)
         : String(existingOrder.order_code || input.orderPayload.order_code || '')
 
+      const invoiceRelationPatch = invoiceMutation?.mode === 'create'
+        ? {
+            invoice_status: requestedInvoiceStatus,
+            invoice_record_count: 1,
+            invoice_relation_revision: 1,
+            relation_lock_version: 1,
+            relation_last_module: 'invoices',
+            relation_last_action: 'create',
+            relation_last_document_id: invoiceMutation.invoiceId,
+            relation_updated_by: actor,
+            relation_updated_at: serverTimestamp(),
+          }
+        : invoiceMutation?.mode === 'status_update'
+          ? {
+              invoice_status: requestedInvoiceStatus,
+              invoice_record_count: toNumber(existingOrder.invoice_record_count),
+              invoice_relation_revision: toNumber(existingOrder.invoice_relation_revision) + 1,
+              relation_lock_version: 1,
+              relation_last_module: 'invoices',
+              relation_last_action: 'update',
+              relation_last_document_id: invoiceMutation.invoiceId,
+              relation_updated_by: actor,
+              relation_updated_at: serverTimestamp(),
+            }
+          : {}
+
       const finalOrderPayload = {
         ...input.orderPayload,
+        ...invoiceRelationPatch,
         order_code: orderCode,
         order_sequence: orderSequence,
         user_code: input.userCode,
@@ -158,6 +251,37 @@ export function useAtomicOrderSave() {
         transaction.set(orderRef, finalOrderPayload)
       } else {
         transaction.set(orderRef, finalOrderPayload, { merge: true })
+      }
+
+      if (invoiceMutation?.mode === 'create' && invoiceRef) {
+        transaction.set(invoiceRef, {
+          ...(invoiceMutation.payload || {}),
+          id: invoiceMutation.invoiceId,
+          order_id: input.orderId,
+          order_code: orderCode,
+          invoice_number: '',
+          invoice_date: '',
+          invoice_amount: Math.max(0, toNumber(finalOrderPayload.payable_amount)),
+          invoice_status: requestedInvoiceStatus,
+          created_by: actor,
+          order_owner_email: normalizeEmail(input.ownerEmail),
+          order_created_by: normalizeEmail(input.createdBy),
+          order_sale_email: normalizeEmail(input.saleEmail),
+          relation_revision: 1,
+          last_operation_id: operationId,
+          status: 'active',
+          active: true,
+          deleted: false,
+          created_at: serverTimestamp(),
+          updated_at: serverTimestamp(),
+        })
+      } else if (invoiceMutation?.mode === 'status_update' && invoiceRef && existingInvoice) {
+        transaction.update(invoiceRef, {
+          invoice_status: requestedInvoiceStatus,
+          relation_revision: toNumber(existingInvoice.relation_revision) + 1,
+          last_operation_id: operationId,
+          updated_at: serverTimestamp(),
+        })
       }
 
       const localItems = itemPlan.upsertItems.map(item => {
@@ -205,6 +329,7 @@ export function useAtomicOrderSave() {
         before_json: JSON.stringify(input.activityBefore || {}),
         after_json: JSON.stringify({
           ...input.orderPayload,
+          ...invoiceRelationPatch,
           order_code: orderCode,
           order_sequence: orderSequence,
           user_code: input.userCode,
@@ -230,6 +355,10 @@ export function useAtomicOrderSave() {
         items: localItems,
         removedItemIds: itemPlan.removedItems.map(item => String(item.id || item.firestore_id || '')),
         writeCount,
+        ...(invoiceMutation ? {
+          invoiceId: invoiceMutation.invoiceId,
+          invoiceStatus: requestedInvoiceStatus,
+        } : {}),
       }
     })
 
