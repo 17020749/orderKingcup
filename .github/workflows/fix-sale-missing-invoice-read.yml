@@ -4,13 +4,16 @@ on:
   push:
     branches:
       - agent/fix-sale-edit-legacy-orders-v2
+  pull_request:
+    branches:
+      - dev
 
 permissions:
   contents: write
 
 jobs:
   patch-test-commit:
-    if: ${{ !contains(github.event.head_commit.message, '[skip-legacy-invoice-read-fix]') }}
+    if: ${{ github.event_name == 'pull_request' || !contains(github.event.head_commit.message, '[skip-legacy-invoice-read-fix]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
