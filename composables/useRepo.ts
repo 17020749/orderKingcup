@@ -140,9 +140,10 @@ export function useRepo() {
       return snap.docs.map(d => ({ ...d.data(), id: d.id, firestore_id: d.id })) as AnyDoc[]
     }
 
-    // QueryConstraint không có biểu diễn JSON ổn định. Các query có constraint
-    // chỉ được cache khi caller cung cấp cacheKey mô tả đầy đủ filter/order/limit.
-    const cacheKey = options.cacheKey || (constraints.length === 0 ? 'all' : '')
+    // List cache là opt-in để không thay đổi hành vi các màn hình đang có nút
+    // refresh nhưng chưa truyền force xuống repository. cacheKey phải mô tả đầy
+    // đủ filter/order/limit để tránh hai query khác nhau dùng chung dữ liệu.
+    const cacheKey = String(options.cacheKey || '').trim()
     if (!cacheKey) return fetcher()
 
     return cachedQuery<AnyDoc[]>({
