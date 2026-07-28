@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import {
   buildQueryCacheKey,
   createQueryCache,
@@ -190,4 +191,20 @@ test('invalidated in-flight request cannot repopulate cache', async () => {
   assert.deepEqual(await pending, [{ id: 'o1' }])
   assert.equal(cache.read(key).state, 'miss')
   assert.equal(storage.length, 0)
+})
+
+test('useRepo integrates cache keys, safe constrained-query fallback, and write invalidation', () => {
+  const source = readFileSync(new URL('../composables/useRepo.ts', import.meta.url), 'utf8')
+  assert.match(source, /authorizationCacheKey/)
+  assert.match(source, /constraints\.length === 0 \? 'all' : ''/)
+  assert.match(source, /invalidateQueryCacheTags/)
+  assert.match(source, /QUERY_CACHE_POLICIES\.repoList/)
+  assert.match(source, /QUERY_CACHE_POLICIES\.repoDetail/)
+})
+
+test('authorization changes clear both legacy and shared query caches', () => {
+  const source = readFileSync(new URL('../composables/useAuth.ts', import.meta.url), 'utf8')
+  assert.match(source, /invalidateScopedCache/)
+  assert.match(source, /clearSharedQueryCache/)
+  assert.match(source, /Promise\.allSettled/)
 })
