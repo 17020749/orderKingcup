@@ -169,3 +169,25 @@ test('clear can target one authorization scope', async () => {
   assert.equal(cache.read(adminKey).state, 'miss')
   assert.equal(cache.read(saleKey).state, 'fresh')
 })
+
+test('invalidated in-flight request cannot repopulate cache', async () => {
+  let release
+  const storage = fakeStorage()
+  const cache = createQueryCache({ storage })
+  const key = '3:user:orders:{}'
+  const pending = cache.getOrFetch({
+    key,
+    tags: ['collection:orders'],
+    policy: { freshMs: 1_000, staleMs: 5_000 },
+    fetcher: () => new Promise(resolve => {
+      release = () => resolve([{ id: 'o1' }])
+    }),
+  })
+
+  await new Promise(resolve => setImmediate(resolve))
+  cache.removeKey(key)
+  release()
+  assert.deepEqual(await pending, [{ id: 'o1' }])
+  assert.equal(cache.read(key).state, 'miss')
+  assert.equal(storage.length, 0)
+})
