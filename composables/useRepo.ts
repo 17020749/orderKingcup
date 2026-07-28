@@ -18,12 +18,23 @@ import {
   type Unsubscribe
 } from 'firebase/firestore'
 import type { AnyDoc } from '~/types/models'
+import { QUERY_CACHE_POLICIES, type QueryCachePolicy } from '~/constants/cachePolicies'
 import { isActive, makeId, normalizeText } from '~/utils/format'
 import { invalidateScopedCache } from '~/composables/useScopedQueries'
+import {
+  cachedQuery,
+  invalidateQueryCacheTags,
+} from '~/composables/useQueryCache'
 
 type SaveOptions = {
   isCreate?: boolean
   log?: boolean
+}
+
+type ReadCacheOptions = {
+  cacheKey?: string
+  cachePolicy?: QueryCachePolicy
+  force?: boolean
 }
 
 const MAX_ACTIVITY_JSON_LENGTH = 100_000
@@ -43,7 +54,7 @@ function serializeActivityJson(value: any) {
 
 export function useRepo() {
   const { db } = useFirebaseServices()
-  const { appUser } = useAuth()
+  const { appUser, authorizationCacheKey } = useAuth()
 
   function collectionRef(name: string) {
     return collection(db, name)
@@ -55,6 +66,26 @@ export function useRepo() {
 
   function currentEmail() {
     return String(appUser.value?.email || '').trim().toLowerCase()
+  }
+
+  function currentAuthorizationCacheKey() {
+    return String(authorizationCacheKey.value || 'anonymous')
+  }
+
+  function collectionTags(name: string) {
+    return [`collection:${name}`, `collection:${name}:list`]
+  }
+
+  function documentTags(name: string, id: string) {
+    return [`collection:${name}`, `document:${name}:${id}`]
+  }
+
+  function invalidateCollectionCaches(name: string, id?: string) {
+    invalidateScopedCache(name)
+    invalidateQueryCacheTags([
+      ...collectionTags(name),
+      ...(id ? [`document:${name}:${id}`] : []),
+    ])
   }
 
   function enrichForWrite(data: AnyDoc, isCreate = false) {
@@ -99,9 +130,33 @@ export function useRepo() {
     }
   }
 
-  async function listDocs(name: string, constraints: QueryConstraint[] = []) {
-    const snap = await getDocs(query(collectionRef(name), ...constraints))
-    return snap.docs.map(d => ({ ...d.data(), id: d.id, firestore_id: d.id })) as AnyDoc[]
+  async function listDocs(
+    name: string,
+    constraints: QueryConstraint[] = [],
+    options: ReadCacheOptions = {},
+  ) {
+    const fetcher = async () => {
+      const snap = await getDocs(query(collectionRef(name), ...constraints))
+      return snap.docs.map(d => ({ ...d.data(), id: d.id, firestore_id: d.id })) as AnyDoc[]
+    }
+
+    // QueryConstraint không có biểu diễn JSON ổn định. Các query có constraint
+    // chỉ được cache khi caller cung cấp cacheKey mô tả đầy đủ filter/order/limit.
+    const cacheKey = options.cacheKey || (constraints.length === 0 ? 'all' : '')
+    if (!cacheKey) return fetcher()
+
+    return cachedQuery<AnyDoc[]>({
+      authKey: currentAuthorizationCacheKey(),
+      namespace: `repo:${name}:list`,
+      params: { cacheKey },
+      tags: collectionTags(name),
+      policy: options.cachePolicy || QUERY_CACHE_POLICIES.repoList,
+      force: options.force,
+      fetcher,
+      onBackgroundError: error => {
+        console.warn(`[KINGCUP_CACHE] Không thể làm mới ${name} trong nền.`, error)
+      },
+    })
   }
 
   function listenDocs(name: string, constraints: QueryConstraint[], callback: (rows: AnyDoc[]) => void): Unsubscribe {
@@ -110,9 +165,24 @@ export function useRepo() {
     })
   }
 
-  async function getOne(name: string, id: string) {
-    const snap = await getDoc(docRef(name, id))
-    return snap.exists() ? ({ ...snap.data(), id: snap.id, firestore_id: snap.id } as AnyDoc) : null
+  async function getOne(name: string, id: string, options: ReadCacheOptions = {}) {
+    const fetcher = async () => {
+      const snap = await getDoc(docRef(name, id))
+      return snap.exists() ? ({ ...snap.data(), id: snap.id, firestore_id: snap.id } as AnyDoc) : null
+    }
+
+    return cachedQuery<AnyDoc | null>({
+      authKey: currentAuthorizationCacheKey(),
+      namespace: `repo:${name}:detail`,
+      params: { id, cacheKey: options.cacheKey || id },
+      tags: documentTags(name, id),
+      policy: options.cachePolicy || QUERY_CACHE_POLICIES.repoDetail,
+      force: options.force,
+      fetcher,
+      onBackgroundError: error => {
+        console.warn(`[KINGCUP_CACHE] Không thể làm mới ${name}/${id} trong nền.`, error)
+      },
+    })
   }
 
   async function saveDoc(name: string, data: AnyDoc, id?: string, options: SaveOptions = {}) {
@@ -128,8 +198,8 @@ export function useRepo() {
     }
 
     await batch.commit()
-    invalidateScopedCache(name)
-    invalidateScopedCache('activity_logs')
+    invalidateCollectionCaches(name, docId)
+    invalidateCollectionCaches('activity_logs')
 
     const now = new Date().toISOString()
     return {
@@ -151,8 +221,8 @@ export function useRepo() {
       batch.set(doc(collectionRef('activity_logs')), activityPayload(name, 'update', id, patch))
     }
     await batch.commit()
-    invalidateScopedCache(name)
-    if (log) invalidateScopedCache('activity_logs')
+    invalidateCollectionCaches(name, id)
+    if (log) invalidateCollectionCaches('activity_logs')
   }
 
   async function softDeleteDoc(name: string, id: string, itemName = id) {
@@ -167,18 +237,18 @@ export function useRepo() {
     })
     batch.set(doc(collectionRef('activity_logs')), activityPayload(name, 'delete', id, { name: itemName }))
     await batch.commit()
-    invalidateScopedCache(name)
-    invalidateScopedCache('activity_logs')
+    invalidateCollectionCaches(name, id)
+    invalidateCollectionCaches('activity_logs')
   }
 
   async function hardDeleteDoc(name: string, id: string) {
     await deleteDoc(docRef(name, id))
-    invalidateScopedCache(name)
+    invalidateCollectionCaches(name, id)
   }
 
   async function logActivity(module: string, action: string, itemCode: string, after: any) {
     await addDoc(collectionRef('activity_logs'), activityPayload(module, action, itemCode, after))
-    invalidateScopedCache('activity_logs')
+    invalidateCollectionCaches('activity_logs')
   }
 
   function activeRows(rows: AnyDoc[]) {
