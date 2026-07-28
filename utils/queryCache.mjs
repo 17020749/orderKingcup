@@ -57,6 +57,7 @@ function resolveStorage(storage) {
 export function createQueryCache(options = {}) {
   const memory = new Map()
   const inFlight = new Map()
+  const keyVersions = new Map()
   const storage = resolveStorage(options.storage)
   const storagePrefix = String(options.storagePrefix || QUERY_CACHE_STORAGE_PREFIX)
   const now = typeof options.now === 'function' ? options.now : Date.now
@@ -160,10 +161,14 @@ export function createQueryCache(options = {}) {
   function refresh({ key, fetcher, policy, tags }) {
     const pending = inFlight.get(key)
     if (pending) return pending
+    const version = keyVersions.get(key) || 0
 
     const task = Promise.resolve()
       .then(fetcher)
-      .then(data => write(key, data, policy, tags))
+      .then(data => {
+        if ((keyVersions.get(key) || 0) !== version) return data
+        return write(key, data, policy, tags)
+      })
       .finally(() => {
         if (inFlight.get(key) === task) inFlight.delete(key)
       })
@@ -194,6 +199,7 @@ export function createQueryCache(options = {}) {
   }
 
   function removeKey(key) {
+    keyVersions.set(key, (keyVersions.get(key) || 0) + 1)
     memory.delete(key)
     inFlight.delete(key)
     removePersisted(key)
