@@ -50,13 +50,13 @@ export function useAuth() {
 
   async function clearAuthorizationCaches() {
     if (import.meta.server) return
-    try {
-      const { invalidateScopedCache } = await import('~/composables/useScopedQueries')
-      invalidateScopedCache()
-    } catch {
-      // Cache cleanup is defensive. The authorization cache token also ensures
-      // old scoped entries are never reused after permissions change.
-    }
+    const cleanups = [
+      import('~/composables/useScopedQueries')
+        .then(({ invalidateScopedCache }) => invalidateScopedCache()),
+      import('~/composables/useQueryCache')
+        .then(({ clearSharedQueryCache }) => clearSharedQueryCache()),
+    ]
+    await Promise.allSettled(cleanups)
   }
 
   async function applyProfileData(email: string, rawData: any | null, source: string) {
