@@ -3,6 +3,7 @@ import type { CustomerDoc } from '~/types/models'
 import { generateCustomerCode, isValidCustomerCode } from '~/utils/customerCode'
 import { normalizeEmail, normalizeText } from '~/utils/format'
 import { invalidateScopedCache } from '~/composables/useScopedQueries'
+import { invalidateQueryCacheTags } from '~/composables/useQueryCache'
 
 type CustomerInput = Partial<CustomerDoc> & Record<string, any>
 
@@ -115,6 +116,11 @@ export function useCustomerManagement() {
         invalidateScopedCache('customers')
         invalidateScopedCache('customer_codes')
         invalidateScopedCache('activity_logs')
+        invalidateQueryCacheTags([
+          'collection:customers',
+          'collection:customers:list',
+          `document:customers:${customerId}`,
+        ])
         return localCustomer(data, customerId, customerCode, isCreate)
       } catch (error: any) {
         if (error?.message === 'CUSTOMER_CODE_COLLISION' && attempt + 1 < maxAttempts) {
