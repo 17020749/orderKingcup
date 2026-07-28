@@ -9,8 +9,8 @@ export const QUERY_CACHE_POLICIES = {
     staleMs: 2 * 60_000,
   },
   repoDetail: {
-    freshMs: 30_000,
-    staleMs: 5 * 60_000,
+    freshMs: 15_000,
+    staleMs: 60_000,
   },
   referenceList: {
     freshMs: 15 * 60_000,
