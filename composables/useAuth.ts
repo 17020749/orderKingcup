@@ -55,6 +55,8 @@ export function useAuth() {
         .then(({ invalidateScopedCache }) => invalidateScopedCache()),
       import('~/composables/useQueryCache')
         .then(({ clearSharedQueryCache }) => clearSharedQueryCache()),
+      import('~/composables/useReferenceDataCache')
+        .then(({ resetReferenceDataCacheSync }) => resetReferenceDataCacheSync()),
     ]
     await Promise.allSettled(cleanups)
   }
