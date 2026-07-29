@@ -1,8 +1,16 @@
+import { fileURLToPath } from 'node:url'
+
 export default defineNuxtConfig({
   ssr: false,
 
   devtools: {
     enabled: true
+  },
+
+  alias: {
+    '~/composables/useScopedQueries': fileURLToPath(
+      new URL('./runtime/useScopedQueriesBridge.ts', import.meta.url)
+    )
   },
 
   modules: [
