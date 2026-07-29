@@ -208,3 +208,10 @@ test('authorization changes clear both legacy and shared query caches', () => {
   assert.match(source, /clearSharedQueryCache/)
   assert.match(source, /Promise\.allSettled/)
 })
+
+test('customer transaction invalidates cached customer detail', () => {
+  const source = readFileSync(new URL('../composables/useCustomerManagement.ts', import.meta.url), 'utf8')
+  assert.match(source, /invalidateQueryCacheTags/)
+  assert.match(source, /`document:customers:\$\{customerId\}`/)
+  assert.match(source, /collection:customers/)
+})
