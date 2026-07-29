@@ -10,6 +10,7 @@ const busTransportPage = readFileSync('pages/bus-transport.vue', 'utf8')
 const labelModal = readFileSync('components/ParcelLabelPrintModal.vue', 'utf8')
 const multiSelect = readFileSync('components/SearchableMultiSelect.vue', 'utf8')
 const provinceData = readFileSync('data/vietnamProvincesV1.ts', 'utf8')
+const districtData = readFileSync('data/vietnamDistrictsV1.ts', 'utf8')
 const provinceComposable = readFileSync('composables/useVietnamProvinces.ts', 'utf8')
 const accessMatrix = readFileSync('constants/accessMatrix.mjs', 'utf8')
 const permissions = readFileSync('constants/permissions.ts', 'utf8')
@@ -35,15 +36,20 @@ test('ba page chỉ được gom trong nhóm Thông tin vận chuyển', () => {
   }
 })
 
-test('dữ liệu tỉnh thành v1 có fallback nội bộ và multi select tìm kiếm', () => {
+test('dữ liệu tỉnh thành, huyện v1 có fallback nội bộ và multi select tìm kiếm', () => {
   assert.match(provinceData, /provinces\.open-api\.vn\/api\/v1\/\?depth=1/)
   assert.ok((provinceData.match(/\{ code:/g) || []).length >= 63)
   assert.match(provinceComposable, /VIETNAM_PROVINCES_V1/)
   assert.match(provinceComposable, /\$fetch<unknown>\(VIETNAM_PROVINCES_V1_API_URL\)/)
+  assert.match(districtData, /VIETNAM_DISTRICTS_V1_GZIP_BASE64/)
+  assert.match(provinceComposable, /VIETNAM_PROVINCES_V1_DISTRICTS_API_URL/)
+  assert.match(provinceComposable, /fallbackDistricts/)
+  assert.match(provinceComposable, /districtOptionsForProvinceCodes/)
   assert.match(multiSelect, /defineEmits/)
   assert.match(multiSelect, /selectedOptions/)
   assert.match(multiSelect, /Gõ để tìm/)
   assert.match(carrierPage, /SearchableMultiSelect v-model="form\.service_province_codes"/)
+  assert.match(carrierPage, /SearchableMultiSelect v-model="form\.service_district_codes"/)
 })
 
 test('chỉ vận chuyển nhà xe dùng danh mục và lưu ID cùng snapshot địa chỉ, tỉnh thành', () => {
@@ -55,14 +61,20 @@ test('chỉ vận chuyển nhà xe dùng danh mục và lưu ID cùng snapshot �
   assert.match(busTransportPage, /carrier_phone: carrier\.carrier_phone/)
   assert.match(busTransportPage, /carrier_address: carrier\.carrier_address/)
   assert.match(busTransportPage, /carrier_province_codes:/)
-  assert.match(busTransportPage, /selected_province_code:/)
+  assert.match(busTransportPage, /carrier_district_codes:/)
+  assert.match(busTransportPage, /selected_province_codes:/)
+  assert.match(busTransportPage, /selected_district_codes:/)
   assert.match(busTransportPage, /driver_name: carrier\.driver_name/)
 })
 
-test('page bus transport lọc nhà xe theo tỉnh và hiển thị card để chọn', () => {
+test('page bus transport lọc nhà xe theo tỉnh, huyện và hiển thị card để chọn', () => {
   assert.match(busTransportPage, /carrierProvinceFilter/)
+  assert.match(busTransportPage, /carrierDistrictFilter/)
   assert.match(busTransportPage, /provinceFilterOptions/)
+  assert.match(busTransportPage, /districtFilterOptions/)
+  assert.match(busTransportPage, /carrierMatchesLocationFilters/)
   assert.match(busTransportPage, /service_province_codes/)
+  assert.match(busTransportPage, /service_district_codes/)
   assert.match(busTransportPage, /class="carrier-card"/)
   assert.match(busTransportPage, /Không có nhà xe phục vụ tỉnh thành hoặc từ khóa này/)
 })

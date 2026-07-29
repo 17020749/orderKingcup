@@ -281,6 +281,8 @@ export interface TransportCarrierDoc {
   carrier_address?: string
   service_province_codes?: number[]
   service_province_names?: string[]
+  service_district_codes?: number[]
+  service_district_names?: string[]
   driver_name?: string
   note?: string
   status?: string
@@ -346,6 +348,12 @@ export interface BusTransportDoc {
   carrier_address?: string
   carrier_province_codes?: number[]
   carrier_province_names?: string[]
+  carrier_district_codes?: number[]
+  carrier_district_names?: string[]
+  selected_province_codes?: number[]
+  selected_province_names?: string[]
+  selected_district_codes?: number[]
+  selected_district_names?: string[]
   selected_province_code?: number | null
   selected_province_name?: string
   driver_name?: string
