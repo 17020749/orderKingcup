@@ -129,23 +129,27 @@ test('repository writes invalidate every dashboard collection tag they touch', (
   assert.match(source, /invalidateCollectionCaches\(name, docId\)/)
 })
 
-test('public scoped invalidation clears legacy v2 and shared v3 cache generations', () => {
-  const bridge = read('composables/useScopedQueries.ts')
-  const legacy = read('runtime/useScopedQueriesLegacy.ts')
+test('runtime alias routes public scoped invalidation through both cache generations', () => {
+  const bridge = read('runtime/useScopedQueriesBridge.ts')
+  const legacy = read('composables/useScopedQueries.ts')
+  const nuxtConfig = read('nuxt.config.ts')
+
+  assert.match(nuxtConfig, /['"]~\/composables\/useScopedQueries['"]/)
+  assert.match(nuxtConfig, /runtime\/useScopedQueriesBridge\.ts/)
 
   assert.match(bridge, /invalidateLegacyScopedCache\(collectionName\)/)
   assert.match(bridge, /invalidateQueryCacheTags\(\[/)
   assert.match(bridge, /`collection:\$\{collectionName\}`/)
   assert.match(bridge, /`collection:\$\{collectionName\}:list`/)
   assert.match(bridge, /if \(!collectionName\)[\s\S]*clearSharedQueryCache\(\)/)
-  assert.match(bridge, /export \* from '~\/runtime\/useScopedQueriesLegacy'/)
+  assert.match(bridge, /export \* from '\.\.\/composables\/useScopedQueries'/)
 
   assert.match(legacy, /kingcup\.query-cache\.v2\./)
   assert.match(legacy, /memoryCache\.delete\(key\)/)
   assert.match(legacy, /sessionStorage\.removeItem\(key\)/)
 })
 
-test('atomic Order, Payment and Export Request writes route through the unified bridge', () => {
+test('atomic Order, Payment and Export Request writes use the aliased public invalidator', () => {
   const ordersPage = read('pages/orders.vue')
   const relations = read('composables/useAtomicOrderRelations.ts')
   const warehouseRequests = read('pages/warehouse-export-requests.vue')
@@ -161,7 +165,7 @@ test('atomic Order, Payment and Export Request writes route through the unified 
 })
 
 test('cache invalidation bridge adds no polling, listener or Firestore read', () => {
-  const bridge = read('composables/useScopedQueries.ts')
+  const bridge = read('runtime/useScopedQueriesBridge.ts')
 
   assert.doesNotMatch(bridge, /firebase\/firestore/)
   assert.doesNotMatch(bridge, /onSnapshot/)
