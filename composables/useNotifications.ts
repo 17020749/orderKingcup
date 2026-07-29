@@ -1,7 +1,9 @@
 import {
   collection,
   doc,
+  limit as queryLimit,
   onSnapshot,
+  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -12,6 +14,12 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { normalizeEmail } from '~/utils/format'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import {
+  buildNotificationWindow,
+  NOTIFICATION_READ_STATE_LIMIT,
+  NOTIFICATION_SOURCE_LIMIT,
+} from '~/utils/notificationWindow.mjs'
 
 export const WAREHOUSE_NOTIFICATION_PERMISSIONS = [
   'export_requests.accept',
@@ -156,14 +164,6 @@ export function buildNotificationPayload(input: NotificationPayloadInput) {
   }
 }
 
-function timestampValue(value: any) {
-  if (!value) return 0
-  if (typeof value?.toMillis === 'function') return value.toMillis()
-  if (typeof value?.seconds === 'number') return value.seconds * 1000
-  const parsed = Date.parse(String(value))
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
 function mapSnapshot(snapshot: QuerySnapshot<DocumentData>) {
   return snapshot.docs.map(item => ({ id: item.id, ...item.data() }))
 }
@@ -221,28 +221,14 @@ export function useNotifications() {
     return WAREHOUSE_NOTIFICATION_PERMISSIONS.filter(permission => stored.includes(permission))
   })
 
-  const items = computed(() => {
-    const activeEmail = email.value
-    const merged = new Map<string, any>()
-    ;[...directRows.value, ...audienceRows.value].forEach(row => {
-      if (!row?.id || row.deleted === true || row.active === false) return
-      if (normalizeEmail(row.created_by || '') === activeEmail && !normalizeEmail(row.to_email || '')) return
-      merged.set(row.id, row)
-    })
-    return Array.from(merged.values())
-      .map(row => ({
-        ...row,
-        is_read:
-          readIds.value.includes(row.id)
-          || row.read === true
-          || row.is_read === true
-          || ['read', 'seen'].includes(String(row.status || '').toLowerCase()),
-      }))
-      .sort((a, b) => timestampValue(b.created_at) - timestampValue(a.created_at))
-      .slice(0, 100)
-  })
+  const items = computed(() => buildNotificationWindow({
+    directRows: directRows.value,
+    audienceRows: audienceRows.value,
+    readIds: readIds.value,
+    activeEmail: email.value,
+  }))
 
-  const unreadCount = computed(() => items.value.filter(item => !item.is_read).length)
+  const unreadCount = computed(() => items.value.filter((item: any) => !item.is_read).length)
   const loading = computed(() => Object.values(streamLoading.value).some(Boolean))
   const error = computed(() => Object.values(streamErrors.value).filter(Boolean).join(' · '))
 
@@ -346,7 +332,12 @@ export function useNotifications() {
     }
 
     directUnsubscribe = onSnapshot(
-      query(collection(db, 'notifications'), where('to_email', '==', nextEmail)),
+      query(
+        collection(db, 'notifications'),
+        where('to_email', '==', nextEmail),
+        orderBy('created_at', 'desc'),
+        queryLimit(NOTIFICATION_SOURCE_LIMIT),
+      ),
       snapshot => {
         if (generation !== subscriptionGeneration) return
         directRows.value = mapSnapshot(snapshot)
@@ -364,6 +355,8 @@ export function useNotifications() {
         query(
           collection(db, 'notifications'),
           where('audience', '==', 'warehouse_export'),
+          orderBy('created_at', 'desc'),
+          queryLimit(NOTIFICATION_SOURCE_LIMIT),
         ),
         snapshot => {
           if (generation !== subscriptionGeneration) return
@@ -382,7 +375,12 @@ export function useNotifications() {
     }
 
     readsUnsubscribe = onSnapshot(
-      query(collection(db, 'notification_reads'), where('user_email', '==', nextEmail)),
+      query(
+        collection(db, 'notification_reads'),
+        where('user_email', '==', nextEmail),
+        orderBy('read_at', 'desc'),
+        queryLimit(NOTIFICATION_READ_STATE_LIMIT),
+      ),
       snapshot => {
         if (generation !== subscriptionGeneration) return
         readIds.value = snapshot.docs
@@ -419,10 +417,10 @@ export function useNotifications() {
   }
 
   async function markAllRead() {
-    const unread = items.value.filter(item => !item.is_read)
+    const unread = items.value.filter((item: any) => !item.is_read)
     if (!unread.length || !email.value) return
     const batch = writeBatch(db)
-    unread.slice(0, 450).forEach(item => {
+    unread.slice(0, 450).forEach((item: any) => {
       const readId = `${item.id}__${email.value}`
       batch.set(
         doc(db, 'notification_reads', readId),
