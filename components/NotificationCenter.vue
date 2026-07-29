@@ -1,19 +1,11 @@
 <script setup lang="ts">
 import { formatDateTime } from '~/utils/format'
+import { useNotifications } from '~/runtime/useNotificationsSingleton'
 
 const open = ref(false)
 const busy = ref(false)
 const panel = ref<HTMLElement | null>(null)
-const { appUser } = useAuth()
-const { items, unreadCount, loading, error, start, stop, markRead, markAllRead, rulePermissions } = useNotifications()
-
-watch(
-  () => [appUser.value?.email, rulePermissions.value.slice().sort().join(',')],
-  () => start(),
-  { immediate: true },
-)
-
-onBeforeUnmount(stop)
+const { items, unreadCount, loading, error, markRead, markAllRead } = useNotifications()
 
 async function openNotification(item: any) {
   try {

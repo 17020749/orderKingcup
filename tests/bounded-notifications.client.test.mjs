@@ -100,3 +100,42 @@ test('all required bounded notification composite indexes are declared', () => {
   assert.ok(signatures.has('notifications|audience:ASCENDING|created_at:DESCENDING'))
   assert.ok(signatures.has('notification_reads|user_email:ASCENDING|read_at:DESCENDING'))
 })
+
+test('notification runtime creates one shared composable instance without new Firestore work', () => {
+  const source = readFileSync(new URL('../runtime/useNotificationsSingleton.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /let notificationRuntime:[^=]+\| null = null/)
+  assert.match(source, /if \(!notificationRuntime\)[\s\S]*notificationRuntime = createNotificationsRuntime\(\)/)
+  assert.match(source, /return notificationRuntime/)
+  assert.match(source, /export \* from '\.\.\/composables\/useNotifications'/)
+  assert.doesNotMatch(source, /firebase\/firestore|onSnapshot|getDocs|setInterval|setTimeout/)
+})
+
+test('app root owns notification start and stop across route transitions', () => {
+  const app = readFileSync(new URL('../app.vue', import.meta.url), 'utf8')
+  const bridge = readFileSync(new URL('../components/NotificationRealtimeBridge.vue', import.meta.url), 'utf8')
+
+  assert.ok(app.indexOf('<NotificationRealtimeBridge />') >= 0)
+  assert.ok(app.indexOf('<NotificationRealtimeBridge />') < app.indexOf('<NuxtPage />'))
+  assert.match(bridge, /useNotificationsSingleton/)
+  assert.match(bridge, /watch\([\s\S]*subscriptionKey[\s\S]*\(\) => start\(\)[\s\S]*immediate: true/)
+  assert.match(bridge, /onBeforeUnmount\(stop\)/)
+  assert.doesNotMatch(bridge, /firebase\/firestore|onSnapshot|getDocs|setInterval/)
+})
+
+test('notification center only consumes shared state and never owns subscriptions', () => {
+  const source = readFileSync(new URL('../components/NotificationCenter.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /useNotificationsSingleton/)
+  assert.match(source, /items, unreadCount, loading, error, markRead, markAllRead/)
+  assert.doesNotMatch(source, /rulePermissions/)
+  assert.doesNotMatch(source, /\bstart\(\)/)
+  assert.doesNotMatch(source, /onBeforeUnmount\(stop\)/)
+  assert.doesNotMatch(source, /const \{ appUser \} = useAuth\(\)/)
+})
+
+test('app shell keeps one visual notification center while runtime lives above pages', () => {
+  const source = readFileSync(new URL('../components/AppShell.vue', import.meta.url), 'utf8')
+  assert.equal((source.match(/<NotificationCenter\s*\/>/g) || []).length, 1)
+  assert.doesNotMatch(source, /NotificationRealtimeBridge/)
+})
