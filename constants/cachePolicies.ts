@@ -20,4 +20,8 @@ export const QUERY_CACHE_POLICIES = {
     freshMs: 30 * 60_000,
     staleMs: 24 * 60 * 60_000,
   },
+  dashboardSnapshot: {
+    freshMs: 60_000,
+    staleMs: 5 * 60_000,
+  },
 } as const satisfies Record<string, QueryCachePolicy>
