@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { formatDateTime, isActive, money, toNumber } from '~/utils/format'
+import { formatDateTime, money } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
-const { loadScopedOrders, loadScopedOrderItems, loadScopedPayments, loadScopedExportRequests, loadScopedCustomers, loadProducts } = useScopedQueries()
-const { hasPermission } = useAuth()
+const { loadDashboardSnapshot } = useDashboardSnapshot()
 const { showToast } = useUi()
-const { computePaymentStatus } = useOrderLogic()
 const loading = ref(true)
 const stats = ref({ orders: 0, customers: 0, products: 0, revenue: 0, paid: 0, debt: 0, profit: 0, exportRequests: 0 })
 const recentOrders = ref<any[]>([])
@@ -14,40 +12,10 @@ const recentPayments = ref<any[]>([])
 async function loadDashboard(force = false) {
   loading.value = true
   try {
-    const ordersSnap = await loadScopedOrders(force)
-    const orders = ordersSnap.filter(isActive)
-    const [customersSnap, productsSnap, requestsSnap, paymentsSnap, itemsSnap] = await Promise.all([
-      hasPermission('customers.view') ? loadScopedCustomers(force) : [],
-      hasPermission('products.view') ? loadProducts(force) : [],
-      loadScopedExportRequests(orders, force),
-      loadScopedPayments(orders, force),
-      loadScopedOrderItems(orders, force)
-    ])
-    const payments = paymentsSnap.filter(isActive)
-    const receivedPayments = payments.filter((p: any) => String(p.payment_status || '').trim() === 'Đã nhận')
-    const paymentMap = payments.reduce((map: Record<string, any[]>, payment: any) => {
-      if (!map[payment.order_id]) map[payment.order_id] = []
-      map[payment.order_id].push(payment)
-      return map
-    }, {})
-    const ordersWithPayment = orders.map((order: any) => ({
-      ...order,
-      ...computePaymentStatus(order, paymentMap[order.id] || [])
-    }))
-    const activeOrderIds = new Set(ordersWithPayment.map((order: any) => order.id).filter(Boolean))
-    const validItems = itemsSnap.filter((item: any) => isActive(item) && activeOrderIds.has(item.order_id))
-    stats.value = {
-      orders: ordersWithPayment.length,
-      customers: customersSnap.filter(isActive).length,
-      products: productsSnap.filter(isActive).length,
-      revenue: ordersWithPayment.reduce((s: number, o: any) => s + toNumber(o.actual_revenue || o.total_vat), 0),
-      paid: receivedPayments.reduce((s: number, p: any) => s + toNumber(p.amount), 0),
-      debt: ordersWithPayment.reduce((s: number, o: any) => s + toNumber(o.debt_amount), 0),
-      profit: validItems.reduce((s: number, item: any) => s + toNumber(item.line_profit), 0),
-      exportRequests: requestsSnap.filter(isActive).length
-    }
-    recentOrders.value = ordersWithPayment.sort((a: any, b: any) => String(b.created_at || b.order_date || '').localeCompare(String(a.created_at || a.order_date || ''))).slice(0, 8)
-    recentPayments.value = payments.sort((a: any, b: any) => String(b.payment_date || b.created_at || '').localeCompare(String(a.payment_date || a.created_at || ''))).slice(0, 8)
+    const snapshot = await loadDashboardSnapshot(force)
+    stats.value = snapshot.stats
+    recentOrders.value = snapshot.recentOrders
+    recentPayments.value = snapshot.recentPayments
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được dữ liệu dashboard.'), 'error')
   } finally {
