@@ -128,3 +128,47 @@ test('repository writes invalidate every dashboard collection tag they touch', (
   assert.match(source, /invalidateQueryCacheTags\(/)
   assert.match(source, /invalidateCollectionCaches\(name, docId\)/)
 })
+
+test('runtime alias routes public scoped invalidation through both cache generations', () => {
+  const bridge = read('runtime/useScopedQueriesBridge.ts')
+  const legacy = read('composables/useScopedQueries.ts')
+  const nuxtConfig = read('nuxt.config.ts')
+
+  assert.match(nuxtConfig, /['"]~\/composables\/useScopedQueries['"]/)
+  assert.match(nuxtConfig, /runtime\/useScopedQueriesBridge\.ts/)
+
+  assert.match(bridge, /invalidateLegacyScopedCache\(collectionName\)/)
+  assert.match(bridge, /invalidateQueryCacheTags\(\[/)
+  assert.match(bridge, /`collection:\$\{collectionName\}`/)
+  assert.match(bridge, /`collection:\$\{collectionName\}:list`/)
+  assert.match(bridge, /if \(!collectionName\)[\s\S]*clearSharedQueryCache\(\)/)
+  assert.match(bridge, /export \* from '\.\.\/composables\/useScopedQueries'/)
+
+  assert.match(legacy, /kingcup\.query-cache\.v2\./)
+  assert.match(legacy, /memoryCache\.delete\(key\)/)
+  assert.match(legacy, /sessionStorage\.removeItem\(key\)/)
+})
+
+test('atomic Order, Payment and Export Request writes use the aliased public invalidator', () => {
+  const ordersPage = read('pages/orders.vue')
+  const relations = read('composables/useAtomicOrderRelations.ts')
+  const warehouseRequests = read('pages/warehouse-export-requests.vue')
+
+  assert.match(ordersPage, /invalidateScopedCache\('orders'\)/)
+  assert.match(ordersPage, /invalidateScopedCache\('order_items'\)/)
+
+  assert.match(relations, /invalidateScopedCache\(module\)/)
+  assert.match(relations, /invalidateScopedCache\('orders'\)/)
+
+  assert.match(warehouseRequests, /invalidateScopedCache\('order_export_requests'\)/)
+  assert.match(warehouseRequests, /invalidateScopedCache\('orders'\)/)
+})
+
+test('cache invalidation bridge adds no polling, listener or Firestore read', () => {
+  const bridge = read('runtime/useScopedQueriesBridge.ts')
+
+  assert.doesNotMatch(bridge, /firebase\/firestore/)
+  assert.doesNotMatch(bridge, /onSnapshot/)
+  assert.doesNotMatch(bridge, /setInterval|setTimeout/)
+  assert.doesNotMatch(bridge, /getDoc|getDocs|query\(/)
+})
