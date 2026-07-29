@@ -4,7 +4,16 @@ import {
   query,
   where,
 } from 'firebase/firestore'
-import type { OrderDoc, OrderItemDoc } from '~/types/models'
+import type {
+  OrderDoc,
+  OrderItemDoc,
+  ProductDoc,
+  SupplierDoc,
+  UnitDoc,
+  WarehouseDoc,
+} from '~/types/models'
+import { QUERY_CACHE_POLICIES } from '~/constants/cachePolicies'
+import { isActive } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 import { permissionDebug } from '~/utils/permissionDebug'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
@@ -32,6 +41,111 @@ export function useScopedQueriesClient() {
   const { db } = useFirebaseServices()
   const { appUser, hasPermission } = useAuth()
   const { showToast } = useUi()
+  const { loadReferenceList } = useReferenceDataCache()
+
+  function hasAnyPermission(keys: string[]) {
+    return hasPermission('*') || keys.some(key => hasPermission(key))
+  }
+
+  async function fetchCollection<T>(name: string) {
+    const snapshot = await getDocs(query(collection(db, name)))
+    return snapshot.docs.map(item => ({
+      ...item.data(),
+      id: item.id,
+      firestore_id: item.id,
+    } as T))
+  }
+
+  function sortCatalogRows<T extends Record<string, any>>(rows: T[]) {
+    return [...rows]
+      .filter(row => row.deleted !== true)
+      .sort((a, b) => String(
+        a.name || a.warehouse_name || a.supplier_name || '',
+      ).localeCompare(String(
+        b.name || b.warehouse_name || b.supplier_name || '',
+      ), 'vi'))
+  }
+
+  async function loadProducts(force = false, includeInactive = false) {
+    if (!hasAnyPermission(['products.view', 'inventory.view', 'printing.view'])) return [] as ProductDoc[]
+    try {
+      return await loadReferenceList<ProductDoc>({
+        collectionName: 'products',
+        params: { view: 'all', includeInactive },
+        policy: QUERY_CACHE_POLICIES.referenceList,
+        force,
+        fetcher: async () => {
+          const rows = await fetchCollection<ProductDoc>('products')
+          const visibleRows = includeInactive
+            ? rows.filter(row => row.deleted !== true && !['deleted', 'da xoa'].includes(String(row.status || '').trim().toLowerCase()))
+            : rows.filter(isActive)
+          return visibleRows.sort((a, b) =>
+            String(a.product_name || '').localeCompare(String(b.product_name || ''), 'vi')
+          )
+        },
+      })
+    } catch (error) {
+      showToast(reportFirebaseError(error, 'Không tải được dữ liệu products.'), 'error')
+      return [] as ProductDoc[]
+    }
+  }
+
+  async function loadWarehouses(force = false) {
+    if (!hasAnyPermission([
+      'warehouses.view', 'warehouses.manage', 'import.view', 'export.view',
+      'inventory.view', 'page.warehouse_export_requests', 'export_requests.accept',
+      'export_requests.release', 'export_requests.process',
+    ])) return [] as WarehouseDoc[]
+    try {
+      return await loadReferenceList<WarehouseDoc>({
+        collectionName: 'warehouses',
+        params: { view: 'all' },
+        policy: QUERY_CACHE_POLICIES.referenceCatalog,
+        force,
+        fetcher: async () => sortCatalogRows(await fetchCollection<WarehouseDoc>('warehouses')),
+      })
+    } catch (error) {
+      showToast(reportFirebaseError(error, 'Không tải được dữ liệu warehouses.'), 'error')
+      return [] as WarehouseDoc[]
+    }
+  }
+
+  async function loadSuppliers(force = false) {
+    if (!hasAnyPermission(['suppliers.view', 'suppliers.manage', 'import.view', 'printing.view'])) {
+      return [] as SupplierDoc[]
+    }
+    try {
+      return await loadReferenceList<SupplierDoc>({
+        collectionName: 'suppliers',
+        params: { view: 'all' },
+        policy: QUERY_CACHE_POLICIES.referenceCatalog,
+        force,
+        fetcher: async () => sortCatalogRows(await fetchCollection<SupplierDoc>('suppliers')),
+      })
+    } catch (error) {
+      showToast(reportFirebaseError(error, 'Không tải được dữ liệu suppliers.'), 'error')
+      return [] as SupplierDoc[]
+    }
+  }
+
+  async function loadUnits(force = false) {
+    if (!hasAnyPermission([
+      'units.view', 'units.manage', 'products.view', 'import.view',
+      'export.view', 'inventory.view',
+    ])) return [] as UnitDoc[]
+    try {
+      return await loadReferenceList<UnitDoc>({
+        collectionName: 'units',
+        params: { view: 'all' },
+        policy: QUERY_CACHE_POLICIES.referenceCatalog,
+        force,
+        fetcher: async () => sortCatalogRows(await fetchCollection<UnitDoc>('units')),
+      })
+    } catch (error) {
+      showToast(reportFirebaseError(error, 'Không tải được dữ liệu units.'), 'error')
+      return [] as UnitDoc[]
+    }
+  }
 
   async function loadScopedOrderItems(orders: OrderDoc[], force = false) {
     if (hasPermission('*') || hasPermission('orders.view_all')) {
@@ -152,6 +266,10 @@ export function useScopedQueriesClient() {
 
   return {
     ...base,
+    loadProducts,
+    loadWarehouses,
+    loadSuppliers,
+    loadUnits,
     loadScopedOrderItems,
     invalidateScopedCache,
   }
