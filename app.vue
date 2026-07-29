@@ -1,4 +1,5 @@
 <template>
+  <NotificationRealtimeBridge />
   <NuxtPage />
   <ExportRequestPrintActionsBridge />
   <GlobalLoading />

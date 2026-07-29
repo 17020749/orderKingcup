@@ -88,14 +88,19 @@ test('màn hình đơn và yêu cầu xuất của Sale cùng dùng auto-import 
   assert.match(requestsPage, /loadScopedOrderItems\(orders\.value, force\)/)
 })
 
-test('các page quan hệ cần xem đơn dùng shared order_items loader', () => {
+test('các luồng quan hệ cần xem đơn dùng shared order_items loader', () => {
   for (const page of [
-    'pages/dashboard.vue',
     'pages/shipments.vue',
     'pages/export-requests.vue',
   ]) {
     assert.match(readFileSync(page, 'utf8'), /loadScopedOrderItems/)
   }
+
+  const dashboardPage = readFileSync('pages/dashboard.vue', 'utf8')
+  const dashboardSnapshot = readFileSync('composables/useDashboardSnapshot.ts', 'utf8')
+  assert.match(dashboardPage, /useDashboardSnapshot\(\)/)
+  assert.match(dashboardSnapshot, /loadScopedOrderItems\(orders, true\)/)
+  assert.match(dashboardSnapshot, /useScopedQueriesClient\(\)/)
 })
 
 test('page Kho dùng snapshot yêu cầu và không đọc order_items', () => {
