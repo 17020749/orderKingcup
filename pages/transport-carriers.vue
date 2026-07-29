@@ -9,7 +9,15 @@ const { appUser, hasPermission } = useAuth()
 const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const { invalidateScopedCache } = useRepo()
-const { options: provinceOptions, loadProvinces, provinceNames } = useVietnamProvinces()
+const {
+  options: provinceOptions,
+  loadProvinces,
+  provinceNames,
+  districtNames,
+  districtOptionsForProvinceCodes,
+  loadDistricts,
+  districtsLoading,
+} = useVietnamProvinces()
 
 const rows = ref<TransportCarrierDoc[]>([])
 const loading = ref(false)
@@ -34,11 +42,23 @@ function normalizeProvinceCodes(value: unknown) {
     .sort((left, right) => left - right)
 }
 
+function normalizeDistrictCodes(value: unknown) {
+  return normalizeProvinceCodes(value)
+}
+
 function carrierProvinceNames(row: Partial<TransportCarrierDoc> | null | undefined) {
   const namesByCode = provinceNames(normalizeProvinceCodes(row?.service_province_codes))
   if (namesByCode.length) return namesByCode
   return Array.isArray(row?.service_province_names)
     ? Array.from(new Set(row.service_province_names.map(name => String(name || '').trim()).filter(Boolean)))
+    : []
+}
+
+function carrierDistrictNames(row: Partial<TransportCarrierDoc> | null | undefined) {
+  const namesByCode = districtNames(normalizeDistrictCodes(row?.service_district_codes))
+  if (namesByCode.length) return namesByCode
+  return Array.isArray(row?.service_district_names)
+    ? Array.from(new Set(row.service_district_names.map(name => String(name || '').trim()).filter(Boolean)))
     : []
 }
 
@@ -51,8 +71,14 @@ function normalizedCarrier(id: string, data: Record<string, any>) {
     service_province_names: Array.isArray(data.service_province_names)
       ? data.service_province_names.map((name: any) => String(name || '').trim()).filter(Boolean)
       : [],
+    service_district_codes: normalizeDistrictCodes(data.service_district_codes),
+    service_district_names: Array.isArray(data.service_district_names)
+      ? data.service_district_names.map((name: any) => String(name || '').trim()).filter(Boolean)
+      : [],
   } as TransportCarrierDoc
 }
+
+const carrierDistrictOptions = computed(() => districtOptionsForProvinceCodes(form.service_province_codes))
 
 const filtered = computed(() => {
   const keyword = normalizeText(search.value)
@@ -64,6 +90,7 @@ const filtered = computed(() => {
     row.carrier_address,
     row.driver_name,
     carrierProvinceNames(row).join(' '),
+    carrierDistrictNames(row).join(' '),
     row.note,
   ].join(' ')).includes(keyword))
 })
@@ -75,10 +102,25 @@ function resetForm(row?: TransportCarrierDoc) {
     carrier_phone: row?.carrier_phone || '',
     carrier_address: row?.carrier_address || '',
     service_province_codes: normalizeProvinceCodes(row?.service_province_codes),
+    service_district_codes: normalizeDistrictCodes(row?.service_district_codes),
     driver_name: row?.driver_name || '',
     note: row?.note || '',
   })
 }
+
+watch(
+  () => normalizeProvinceCodes(form.service_province_codes).join(','),
+  async () => {
+    const provinceCodes = normalizeProvinceCodes(form.service_province_codes)
+    if (!provinceCodes.length) {
+      form.service_district_codes = []
+      return
+    }
+    await loadDistricts()
+    const allowedCodes = new Set(districtOptionsForProvinceCodes(normalizeProvinceCodes(form.service_province_codes)).map(option => Number(option.value)))
+    form.service_district_codes = normalizeDistrictCodes(form.service_district_codes).filter(code => allowedCodes.has(code))
+  },
+)
 
 function openModal(row?: TransportCarrierDoc) {
   if (row && !canEdit.value) return showToast('Bạn không có quyền sửa nhà xe.', 'error')
@@ -100,12 +142,19 @@ async function save() {
   const driver = String(form.driver_name || '').trim()
   const serviceProvinceCodes = normalizeProvinceCodes(form.service_province_codes)
   const serviceProvinceNames = provinceNames(serviceProvinceCodes)
+  const serviceDistrictCodes = normalizeDistrictCodes(form.service_district_codes)
+  if (serviceDistrictCodes.length) await loadDistricts()
+  const allowedDistrictCodes = new Set(districtOptionsForProvinceCodes(serviceProvinceCodes).map(option => Number(option.value)))
+  const serviceDistrictNames = districtNames(serviceDistrictCodes)
 
   if (!name) return showToast('Vui lòng nhập tên nhà xe.', 'error')
   if (!address) return showToast('Vui lòng nhập địa chỉ nhà xe.', 'error')
   if (!serviceProvinceCodes.length) return showToast('Vui lòng chọn ít nhất một tỉnh thành nhà xe phục vụ.', 'error')
   if (serviceProvinceNames.length !== serviceProvinceCodes.length) {
     return showToast('Danh sách tỉnh thành chưa sẵn sàng. Vui lòng tải lại trang.', 'error')
+  }
+  if (serviceDistrictCodes.some(code => !allowedDistrictCodes.has(code)) || serviceDistrictNames.length !== serviceDistrictCodes.length) {
+    return showToast('Danh sách huyện chưa sẵn sàng hoặc không thuộc tỉnh thành đã chọn.', 'error')
   }
 
   saving.value = true
@@ -117,6 +166,8 @@ async function save() {
       carrier_address: address,
       service_province_codes: serviceProvinceCodes,
       service_province_names: serviceProvinceNames,
+      service_district_codes: serviceDistrictCodes,
+      service_district_names: serviceDistrictNames,
       driver_name: driver,
       note: String(form.note || '').trim(),
       updated_by: actor,
@@ -213,7 +264,7 @@ onMounted(() => {
       <div v-else-if="!canView" class="empty">Bạn không có quyền xem danh sách nhà xe.</div>
       <div v-else class="table-wrap">
         <table style="min-width:1320px">
-          <thead><tr><th>Mã</th><th>Tên nhà xe</th><th>Số điện thoại</th><th>Địa chỉ nhà xe</th><th>Tỉnh thành phục vụ</th><th>Chủ xe/Tài xế</th><th>Cập nhật</th><th>Thao tác</th></tr></thead>
+          <thead><tr><th>Mã</th><th>Tên nhà xe</th><th>Số điện thoại</th><th>Địa chỉ nhà xe</th><th>Khu vực phục vụ</th><th>Chủ xe/Tài xế</th><th>Cập nhật</th><th>Thao tác</th></tr></thead>
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
               <td><b>{{ row.carrier_code || '-' }}</b></td>
@@ -226,6 +277,10 @@ onMounted(() => {
                   <span v-if="carrierProvinceNames(row).length > 3" class="province-chip more">+{{ carrierProvinceNames(row).length - 3 }}</span>
                 </div>
                 <span v-else class="small subtle">Chưa thiết lập</span>
+                <div v-if="carrierDistrictNames(row).length" class="province-chips table-districts">
+                  <span v-for="name in carrierDistrictNames(row).slice(0, 3)" :key="name" class="province-chip district-chip">{{ name }}</span>
+                  <span v-if="carrierDistrictNames(row).length > 3" class="province-chip more">+{{ carrierDistrictNames(row).length - 3 }}</span>
+                </div>
               </td>
               <td>{{ row.driver_name || '-' }}</td>
               <td>{{ row.updated_at ? formatDateTime(row.updated_at) : '-' }}</td>
@@ -244,6 +299,7 @@ onMounted(() => {
         <div class="form-group"><label>Tên chủ xe/Tài xế</label><input v-model="form.driver_name" class="input" /></div>
         <div class="form-group full"><label>Địa chỉ nhà xe <span class="required">*</span></label><input v-model="form.carrier_address" class="input" placeholder="Nhập địa chỉ văn phòng, bến hoặc điểm nhận hàng" /></div>
         <div class="form-group full"><label>Tỉnh thành phục vụ <span class="required">*</span></label><SearchableMultiSelect v-model="form.service_province_codes" :options="provinceOptions" placeholder="Tìm và chọn nhiều tỉnh thành..." search-placeholder="Tìm tỉnh thành không dấu..." /></div>
+        <div class="form-group full"><label>Huyện phục vụ</label><SearchableMultiSelect v-model="form.service_district_codes" :options="carrierDistrictOptions" :disabled="!form.service_province_codes?.length || districtsLoading" placeholder="Chọn huyện (không bắt buộc)..." search-placeholder="Tìm huyện không dấu..." /><p class="small subtle district-hint">{{ !form.service_province_codes?.length ? 'Chọn tỉnh thành trước để chọn huyện.' : districtsLoading ? 'Đang tải danh sách huyện...' : 'Không chọn huyện nghĩa là nhà xe phục vụ toàn bộ tỉnh thành đã chọn.' }}</p></div>
         <div class="form-group full"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
       </div>
     </BaseModal>
@@ -256,6 +312,7 @@ onMounted(() => {
         <div class="detail-item"><label>Chủ xe/Tài xế</label><strong>{{ selectedDetail.driver_name || '-' }}</strong></div>
         <div class="detail-item full-detail"><label>Địa chỉ nhà xe</label><strong>{{ selectedDetail.carrier_address || '-' }}</strong></div>
         <div class="detail-item full-detail"><label>Tỉnh thành phục vụ</label><div v-if="carrierProvinceNames(selectedDetail).length" class="province-chips"><span v-for="name in carrierProvinceNames(selectedDetail)" :key="name" class="province-chip">{{ name }}</span></div><strong v-else>-</strong></div>
+        <div class="detail-item full-detail"><label>Huyện phục vụ</label><div v-if="carrierDistrictNames(selectedDetail).length" class="province-chips"><span v-for="name in carrierDistrictNames(selectedDetail)" :key="name" class="province-chip district-chip">{{ name }}</span></div><strong v-else>Phục vụ toàn bộ tỉnh thành đã chọn</strong></div>
         <div class="detail-item full-detail"><label>Ghi chú</label><strong>{{ selectedDetail.note || '-' }}</strong></div>
       </div>
     </BaseModal>
@@ -274,6 +331,9 @@ onMounted(() => {
 .province-chip { display:inline-flex; align-items:center; padding:4px 8px; border:1px solid #bfdbfe; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:12px; line-height:1.25; }
 .province-chip.more { border-color:#cbd5e1; background:#f8fafc; color:#475569; }
 .table-provinces { min-width:260px; max-width:380px; }
+.table-districts { min-width:260px; max-width:380px; margin-top:6px; }
+.district-chip { border-color:#bbf7d0; background:#f0fdf4; color:#15803d; }
+.district-hint { margin:8px 0 0; }
 .full-detail { grid-column:1 / -1; }
 @media (max-width:700px) { .filter-bar { align-items:stretch; flex-direction:column; } .filter-bar .input { max-width:none; } }
 </style>
