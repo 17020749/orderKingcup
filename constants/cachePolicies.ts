@@ -16,4 +16,8 @@ export const QUERY_CACHE_POLICIES = {
     freshMs: 15 * 60_000,
     staleMs: 24 * 60 * 60_000,
   },
+  referenceCatalog: {
+    freshMs: 30 * 60_000,
+    staleMs: 24 * 60 * 60_000,
+  },
 } as const satisfies Record<string, QueryCachePolicy>
