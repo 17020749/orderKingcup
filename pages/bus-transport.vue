@@ -12,7 +12,15 @@ const { showToast, withLoading } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 const { invalidateScopedCache } = useRepo()
 const { requestLineProgress } = useWarehouseLogic()
-const { selectOptions: provinceSelectOptions, loadProvinces, provinceName, provinceNames } = useVietnamProvinces()
+const {
+  options: provinceOptions,
+  loadProvinces,
+  provinceNames,
+  districtNames,
+  districtOptionsForProvinceCodes,
+  loadDistricts,
+  districtsLoading,
+} = useVietnamProvinces()
 
 const rows = ref<BusTransportDoc[]>([])
 const requests = ref<ExportRequestDoc[]>([])
@@ -21,7 +29,8 @@ const loading = ref(false)
 const saving = ref(false)
 const search = ref('')
 const statusFilter = ref('')
-const carrierProvinceFilter = ref('')
+const carrierProvinceFilter = ref<number[]>([])
+const carrierDistrictFilter = ref<number[]>([])
 const carrierKeyword = ref('')
 const showModal = ref(false)
 const showDetailModal = ref(false)
@@ -45,6 +54,10 @@ function normalizeProvinceCodes(value: unknown) {
     .sort((left, right) => left - right)
 }
 
+function normalizeDistrictCodes(value: unknown) {
+  return normalizeProvinceCodes(value)
+}
+
 function carrierServiceProvinceNames(row: Partial<TransportCarrierDoc> | null | undefined) {
   const namesByCode = provinceNames(normalizeProvinceCodes(row?.service_province_codes))
   if (namesByCode.length) return namesByCode
@@ -53,11 +66,47 @@ function carrierServiceProvinceNames(row: Partial<TransportCarrierDoc> | null | 
     : []
 }
 
+function carrierServiceDistrictNames(row: Partial<TransportCarrierDoc> | null | undefined) {
+  const namesByCode = districtNames(normalizeDistrictCodes(row?.service_district_codes))
+  if (namesByCode.length) return namesByCode
+  return Array.isArray(row?.service_district_names)
+    ? Array.from(new Set(row.service_district_names.map(name => String(name || '').trim()).filter(Boolean)))
+    : []
+}
+
 function transportCarrierProvinceNames(row: Partial<BusTransportDoc> | null | undefined) {
   const namesByCode = provinceNames(normalizeProvinceCodes(row?.carrier_province_codes))
   if (namesByCode.length) return namesByCode
   return Array.isArray(row?.carrier_province_names)
     ? Array.from(new Set(row.carrier_province_names.map(name => String(name || '').trim()).filter(Boolean)))
+    : []
+}
+
+function transportCarrierDistrictNames(row: Partial<BusTransportDoc> | null | undefined) {
+  const namesByCode = districtNames(normalizeDistrictCodes(row?.carrier_district_codes))
+  if (namesByCode.length) return namesByCode
+  return Array.isArray(row?.carrier_district_names)
+    ? Array.from(new Set(row.carrier_district_names.map(name => String(name || '').trim()).filter(Boolean)))
+    : []
+}
+
+function selectedTransportProvinceCodes(row: Partial<BusTransportDoc> | null | undefined) {
+  const codes = normalizeProvinceCodes(row?.selected_province_codes)
+  if (codes.length) return codes
+  return row?.selected_province_code ? normalizeProvinceCodes([row.selected_province_code]) : []
+}
+
+function selectedTransportProvinceNames(row: Partial<BusTransportDoc> | null | undefined) {
+  const namesByCode = provinceNames(selectedTransportProvinceCodes(row))
+  if (namesByCode.length) return namesByCode
+  return String(row?.selected_province_name || '').trim() ? [String(row?.selected_province_name).trim()] : []
+}
+
+function selectedTransportDistrictNames(row: Partial<BusTransportDoc> | null | undefined) {
+  const namesByCode = districtNames(normalizeDistrictCodes(row?.selected_district_codes))
+  if (namesByCode.length) return namesByCode
+  return Array.isArray(row?.selected_district_names)
+    ? Array.from(new Set(row.selected_district_names.map(name => String(name || '').trim()).filter(Boolean)))
     : []
 }
 
@@ -70,6 +119,10 @@ function normalizedCarrier(id: string, data: Record<string, any>) {
     service_province_names: Array.isArray(data.service_province_names)
       ? data.service_province_names.map((name: any) => String(name || '').trim()).filter(Boolean)
       : [],
+    service_district_codes: normalizeDistrictCodes(data.service_district_codes),
+    service_district_names: Array.isArray(data.service_district_names)
+      ? data.service_district_names.map((name: any) => String(name || '').trim()).filter(Boolean)
+      : [],
   } as TransportCarrierDoc
 }
 
@@ -81,6 +134,18 @@ function normalizedTransport(id: string, data: Record<string, any>) {
     carrier_province_codes: normalizeProvinceCodes(data.carrier_province_codes),
     carrier_province_names: Array.isArray(data.carrier_province_names)
       ? data.carrier_province_names.map((name: any) => String(name || '').trim()).filter(Boolean)
+      : [],
+    carrier_district_codes: normalizeDistrictCodes(data.carrier_district_codes),
+    carrier_district_names: Array.isArray(data.carrier_district_names)
+      ? data.carrier_district_names.map((name: any) => String(name || '').trim()).filter(Boolean)
+      : [],
+    selected_province_codes: normalizeProvinceCodes(data.selected_province_codes),
+    selected_province_names: Array.isArray(data.selected_province_names)
+      ? data.selected_province_names.map((name: any) => String(name || '').trim()).filter(Boolean)
+      : [],
+    selected_district_codes: normalizeDistrictCodes(data.selected_district_codes),
+    selected_district_names: Array.isArray(data.selected_district_names)
+      ? data.selected_district_names.map((name: any) => String(name || '').trim()).filter(Boolean)
       : [],
     selected_province_code: data.selected_province_code ? Number(data.selected_province_code) : null,
     selected_province_name: String(data.selected_province_name || ''),
@@ -131,10 +196,8 @@ const requestOptions = computed(() => activeRequests.value
     search: `${requestCode(row)} ${row.order_code || ''} ${row.customer_name || ''} ${requestStatusLabel(row.status)}`,
   })))
 
-const provinceFilterOptions = computed(() => [
-  { value: '', label: 'Tất cả tỉnh thành', search: 'tat ca tinh thanh' },
-  ...provinceSelectOptions.value,
-])
+const provinceFilterOptions = computed(() => provinceOptions.value)
+const districtFilterOptions = computed(() => districtOptionsForProvinceCodes(carrierProvinceFilter.value))
 
 const selectedCarrier = computed(() => carriers.value.find(row => row.id === form.transport_carrier_id) || null)
 const selectedRequest = computed(() => requests.value.find(row => row.id === form.source_request_id) || null)
@@ -153,12 +216,21 @@ const selectedRequestItems = computed(() => selectedRequest.value
     })).filter((item: any) => item.quantity > 0)
   : [])
 
+function carrierMatchesLocationFilters(row: Partial<TransportCarrierDoc> | null | undefined) {
+  if (!row) return false
+  const provinceCodes = normalizeProvinceCodes(carrierProvinceFilter.value)
+  const districtCodes = normalizeDistrictCodes(carrierDistrictFilter.value)
+  const carrierProvinceCodes = normalizeProvinceCodes(row.service_province_codes)
+  const carrierDistrictCodes = normalizeDistrictCodes(row.service_district_codes)
+  if (provinceCodes.length && !provinceCodes.some(code => carrierProvinceCodes.includes(code))) return false
+  if (districtCodes.length && !districtCodes.some(code => carrierDistrictCodes.includes(code))) return false
+  return true
+}
+
 const filteredCarrierCards = computed(() => {
-  const provinceCode = Number(carrierProvinceFilter.value || 0)
   const keyword = normalizeText(carrierKeyword.value)
   return carriers.value.filter(row => {
-    const codes = normalizeProvinceCodes(row.service_province_codes)
-    if (provinceCode && !codes.includes(provinceCode)) return false
+    if (!carrierMatchesLocationFilters(row)) return false
     if (!keyword) return true
     return normalizeText([
       row.carrier_code,
@@ -167,6 +239,7 @@ const filteredCarrierCards = computed(() => {
       row.carrier_address,
       row.driver_name,
       carrierServiceProvinceNames(row).join(' '),
+      carrierServiceDistrictNames(row).join(' '),
     ].join(' ')).includes(keyword)
   })
 })
@@ -175,6 +248,13 @@ const selectedCarrierProvinceText = computed(() => {
   const names = Array.isArray(form.carrier_province_names)
     ? form.carrier_province_names.map((name: any) => String(name || '').trim()).filter(Boolean)
     : provinceNames(normalizeProvinceCodes(form.carrier_province_codes))
+  return names.join(', ')
+})
+
+const selectedCarrierDistrictText = computed(() => {
+  const names = Array.isArray(form.carrier_district_names)
+    ? form.carrier_district_names.map((name: any) => String(name || '').trim()).filter(Boolean)
+    : districtNames(normalizeDistrictCodes(form.carrier_district_codes))
   return names.join(', ')
 })
 
@@ -194,8 +274,10 @@ const filtered = computed(() => {
       row.carrier_phone,
       row.carrier_address,
       row.driver_name,
-      row.selected_province_name,
+      selectedTransportProvinceNames(row).join(' '),
+      selectedTransportDistrictNames(row).join(' '),
       transportCarrierProvinceNames(row).join(' '),
+      transportCarrierDistrictNames(row).join(' '),
       row.transport_status,
     ].join(' '))
     return (!keyword || text.includes(keyword))
@@ -243,6 +325,8 @@ function clearCarrierSelection() {
     carrier_address: '',
     carrier_province_codes: [],
     carrier_province_names: [],
+    carrier_district_codes: [],
+    carrier_district_names: [],
     driver_name: '',
   })
 }
@@ -250,6 +334,8 @@ function clearCarrierSelection() {
 function selectCarrier(carrier: TransportCarrierDoc) {
   const codes = normalizeProvinceCodes(carrier.service_province_codes)
   const names = carrierServiceProvinceNames(carrier)
+  const districtCodes = normalizeDistrictCodes(carrier.service_district_codes)
+  const districtNames = carrierServiceDistrictNames(carrier)
   Object.assign(form, {
     transport_carrier_id: carrier.id,
     carrier_name: carrier.carrier_name || '',
@@ -257,17 +343,33 @@ function selectCarrier(carrier: TransportCarrierDoc) {
     carrier_address: carrier.carrier_address || '',
     carrier_province_codes: codes,
     carrier_province_names: names,
+    carrier_district_codes: districtCodes,
+    carrier_district_names: districtNames,
     driver_name: carrier.driver_name || '',
   })
 }
 
-function onCarrierProvinceFilterChange(value: string) {
-  const provinceCode = Number(value || 0)
+async function onCarrierProvinceFilterChange() {
+  const provinceCodes = normalizeProvinceCodes(carrierProvinceFilter.value)
+  if (!provinceCodes.length) {
+    carrierDistrictFilter.value = []
+  } else {
+    await loadDistricts()
+    const allowedDistrictCodes = new Set(districtOptionsForProvinceCodes(carrierProvinceFilter.value).map(option => Number(option.value)))
+    carrierDistrictFilter.value = normalizeDistrictCodes(carrierDistrictFilter.value).filter(code => allowedDistrictCodes.has(code))
+  }
   const current = selectedCarrier.value
-  if (!provinceCode || !current) return
-  if (!normalizeProvinceCodes(current.service_province_codes).includes(provinceCode)) {
+  if (current && !carrierMatchesLocationFilters(current)) {
     clearCarrierSelection()
-    showToast('Nhà xe đã chọn không phục vụ tỉnh thành mới.', 'info')
+    showToast('Nhà xe đã chọn không phù hợp khu vực đang lọc.', 'info')
+  }
+}
+
+function onCarrierDistrictFilterChange() {
+  const current = selectedCarrier.value
+  if (current && !carrierMatchesLocationFilters(current)) {
+    clearCarrierSelection()
+    showToast('Nhà xe đã chọn không phục vụ huyện đang lọc.', 'info')
   }
 }
 
@@ -299,7 +401,9 @@ async function openModal(row?: BusTransportDoc) {
   resetForm()
   if (row) {
     const matchedCarrier = findCarrierSnapshot(row)
-    carrierProvinceFilter.value = row.selected_province_code ? String(row.selected_province_code) : ''
+    carrierProvinceFilter.value = selectedTransportProvinceCodes(row)
+    carrierDistrictFilter.value = normalizeDistrictCodes(row.selected_district_codes)
+    if (carrierProvinceFilter.value.length) await loadDistricts()
     Object.assign(form, {
       ...row,
       source_request_id: row.source_request_id || '',
@@ -311,6 +415,8 @@ async function openModal(row?: BusTransportDoc) {
       carrier_address: row.carrier_address || '',
       carrier_province_codes: normalizeProvinceCodes(row.carrier_province_codes),
       carrier_province_names: transportCarrierProvinceNames(row),
+      carrier_district_codes: normalizeDistrictCodes(row.carrier_district_codes),
+      carrier_district_names: transportCarrierDistrictNames(row),
       driver_name: row.driver_name || '',
       departure_at: row.departure_at || '',
       transport_status: row.transport_status || 'Chờ xuất phát',
@@ -318,13 +424,14 @@ async function openModal(row?: BusTransportDoc) {
     })
     if (row.source_request_id) await chooseRequest()
   } else {
-    carrierProvinceFilter.value = ''
+    carrierProvinceFilter.value = []
+    carrierDistrictFilter.value = []
     Object.assign(form, {
       source_request_id: '', request_code: '', request_status: '',
       export_order_id: '', export_order_code: '', order_id: '', order_code: '',
       customer_id: '', customer_name: '', receiver_name: '', receiver_phone: '', receiver_address: '',
       transport_carrier_id: '', carrier_name: '', carrier_phone: '', carrier_address: '',
-      carrier_province_codes: [], carrier_province_names: [], driver_name: '', departure_at: '',
+      carrier_province_codes: [], carrier_province_names: [], carrier_district_codes: [], carrier_district_names: [], driver_name: '', departure_at: '',
       transport_status: 'Chờ xuất phát', note: '',
     })
   }
@@ -360,12 +467,21 @@ async function save() {
 
   const currentCarrier = selectedCarrier.value
   if (currentCarrier) selectCarrier(currentCarrier)
-  const selectedProvinceCode = carrierProvinceFilter.value ? Number(carrierProvinceFilter.value) : null
-  const selectedProvinceName = selectedProvinceCode ? provinceName(selectedProvinceCode) : ''
+  const selectedProvinceCodes = normalizeProvinceCodes(carrierProvinceFilter.value)
+  const selectedProvinceNames = provinceNames(selectedProvinceCodes)
+  const selectedDistrictCodes = normalizeDistrictCodes(carrierDistrictFilter.value)
+  if (selectedDistrictCodes.length) await loadDistricts()
+  const allowedDistrictCodes = new Set(districtOptionsForProvinceCodes(selectedProvinceCodes).map(option => Number(option.value)))
+  const selectedDistrictNames = districtNames(selectedDistrictCodes)
   const carrierProvinceCodes = normalizeProvinceCodes(form.carrier_province_codes)
   const carrierProvinceNames = provinceNames(carrierProvinceCodes)
-  if (selectedProvinceCode && !carrierProvinceCodes.includes(selectedProvinceCode)) {
-    return showToast('Nhà xe đã chọn không phục vụ tỉnh thành đang lọc.', 'error')
+  const carrierDistrictCodes = normalizeDistrictCodes(form.carrier_district_codes)
+  const carrierDistrictNames = districtNames(carrierDistrictCodes)
+  if (selectedDistrictCodes.some(code => !allowedDistrictCodes.has(code)) || selectedDistrictNames.length !== selectedDistrictCodes.length) {
+    return showToast('Danh sách huyện chưa sẵn sàng hoặc không thuộc tỉnh thành đang lọc.', 'error')
+  }
+  if (currentCarrier && !carrierMatchesLocationFilters(currentCarrier)) {
+    return showToast('Nhà xe đã chọn không phục vụ khu vực đang lọc.', 'error')
   }
 
   saving.value = true
@@ -378,10 +494,14 @@ async function save() {
       carrier_name: String(form.carrier_name || '').trim(),
       carrier_phone: String(form.carrier_phone || '').trim(),
       carrier_address: String(form.carrier_address || '').trim(),
-      carrier_province_codes: carrierProvinceCodes,
-      carrier_province_names: carrierProvinceNames,
-      selected_province_code: selectedProvinceCode,
-      selected_province_name: selectedProvinceName,
+        carrier_province_codes: carrierProvinceCodes,
+        carrier_province_names: carrierProvinceNames,
+        carrier_district_codes: carrierDistrictCodes,
+        carrier_district_names: carrierDistrictNames,
+        selected_province_codes: selectedProvinceCodes,
+        selected_province_names: selectedProvinceNames,
+        selected_district_codes: selectedDistrictCodes,
+        selected_district_names: selectedDistrictNames,
       driver_name: String(form.driver_name || '').trim(),
     }
 
@@ -517,7 +637,7 @@ onMounted(() => {
 
 <template>
   <AppShell>
-    <PageHeader title="Vận chuyển nhà xe" subtitle="Lọc nhà xe theo tỉnh thành và tạo đơn từ yêu cầu xuất kho">
+    <PageHeader title="Vận chuyển nhà xe" subtitle="Lọc nhà xe theo tỉnh thành, huyện và tạo đơn từ yêu cầu xuất kho">
       <button class="btn" @click="loadRows(true)">Làm mới</button>
       <button v-if="canCreate" class="btn primary" @click="openModal()">+ Tạo đơn vận chuyển</button>
     </PageHeader>
@@ -548,7 +668,7 @@ onMounted(() => {
               <td>{{ row.order_code || '-' }}</td>
               <td>{{ row.customer_name || row.receiver_name || '-' }}<div class="small subtle">{{ row.receiver_phone || '' }}</div></td>
               <td><b>{{ row.carrier_name || '-' }}</b><div class="small subtle">{{ row.carrier_phone || '' }}</div><div v-if="row.carrier_address" class="small subtle">{{ row.carrier_address }}</div></td>
-              <td>{{ row.selected_province_name || transportCarrierProvinceNames(row).join(', ') || '-' }}</td>
+              <td><b>{{ selectedTransportProvinceNames(row).join(', ') || transportCarrierProvinceNames(row).join(', ') || '-' }}</b><div v-if="selectedTransportDistrictNames(row).length" class="small subtle">{{ selectedTransportDistrictNames(row).join(', ') }}</div></td>
               <td>{{ row.departure_at ? formatDateTime(row.departure_at) : '-' }}</td>
               <td><span class="badge">{{ row.transport_status || 'Chờ xuất phát' }}</span></td>
               <td><div class="action-buttons"><button class="btn-sm btn-view" @click="openDetail(row)">Xem</button><button class="btn-sm btn-view" @click="openPrint(row)">In tem</button><button v-if="canEdit" class="btn-sm" @click="openModal(row)">Sửa</button><button v-if="canDelete" class="btn-sm btn-delete" @click="remove(row)">Xóa</button></div></td>
@@ -572,7 +692,8 @@ onMounted(() => {
         <div class="form-group full carrier-picker">
           <div class="carrier-picker-heading"><div><label>Chọn nhà xe <span class="required">*</span></label><p class="small subtle">Chọn tỉnh thành để chỉ hiển thị các nhà xe có phục vụ khu vực đó.</p></div><span class="small subtle">{{ filteredCarrierCards.length.toLocaleString('vi-VN') }} nhà xe phù hợp</span></div>
           <div class="carrier-picker-filters">
-            <SearchableSelect v-model="carrierProvinceFilter" :options="provinceFilterOptions" placeholder="Tất cả tỉnh thành" @change="onCarrierProvinceFilterChange" />
+            <SearchableMultiSelect v-model="carrierProvinceFilter" :options="provinceFilterOptions" placeholder="Tất cả tỉnh thành" search-placeholder="Tìm tỉnh thành không dấu..." @change="onCarrierProvinceFilterChange" />
+            <SearchableMultiSelect v-model="carrierDistrictFilter" :options="districtFilterOptions" :disabled="!carrierProvinceFilter.length || districtsLoading" placeholder="Tất cả huyện" search-placeholder="Tìm huyện không dấu..." @change="onCarrierDistrictFilterChange" />
             <input v-model="carrierKeyword" class="input" placeholder="Tìm tên, số điện thoại, địa chỉ hoặc tài xế..." />
           </div>
           <div v-if="filteredCarrierCards.length" class="carrier-card-grid">
@@ -589,6 +710,7 @@ onMounted(() => {
               <div class="carrier-address">{{ carrier.carrier_address || 'Chưa thiết lập địa chỉ' }}</div>
               <div v-if="carrierServiceProvinceNames(carrier).length" class="province-chips"><span v-for="name in carrierServiceProvinceNames(carrier).slice(0, 4)" :key="name" class="province-chip">{{ name }}</span><span v-if="carrierServiceProvinceNames(carrier).length > 4" class="province-chip more">+{{ carrierServiceProvinceNames(carrier).length - 4 }}</span></div>
               <div v-else class="small warning-text">Chưa thiết lập tỉnh thành phục vụ</div>
+              <div v-if="carrierServiceDistrictNames(carrier).length" class="province-chips"><span v-for="name in carrierServiceDistrictNames(carrier).slice(0, 4)" :key="name" class="province-chip district-chip">{{ name }}</span><span v-if="carrierServiceDistrictNames(carrier).length > 4" class="province-chip more">+{{ carrierServiceDistrictNames(carrier).length - 4 }}</span></div>
             </button>
           </div>
           <div v-else class="empty carrier-empty">Không có nhà xe phục vụ tỉnh thành hoặc từ khóa này.</div>
@@ -599,6 +721,7 @@ onMounted(() => {
         <div class="form-group"><label>Số điện thoại nhà xe</label><input v-model="form.carrier_phone" class="input readonly-field" readonly /></div>
         <div class="form-group"><label>Tên chủ xe/Tài xế</label><input v-model="form.driver_name" class="input readonly-field" readonly /></div>
         <div class="form-group"><label>Tỉnh thành phục vụ</label><input :value="selectedCarrierProvinceText" class="input readonly-field" readonly /></div>
+        <div class="form-group full"><label>Huyện phục vụ</label><input :value="selectedCarrierDistrictText || 'Phục vụ toàn bộ tỉnh thành đã chọn'" class="input readonly-field" readonly /></div>
         <div class="form-group full"><label>Địa chỉ nhà xe</label><input v-model="form.carrier_address" class="input readonly-field" readonly /></div>
         <div class="form-group"><label>Giờ bắt đầu xuất phát</label><input v-model="form.departure_at" class="input" type="datetime-local" /></div>
         <div class="form-group"><label>Trạng thái vận chuyển</label><select v-model="form.transport_status" class="select"><option>Chờ xuất phát</option><option>Đã xuất phát</option><option>Đã hoàn thành</option></select></div>
@@ -623,9 +746,11 @@ onMounted(() => {
         <div class="detail-item"><label>Nhà xe</label><strong>{{ selectedDetail.carrier_name || '-' }}</strong></div>
         <div class="detail-item"><label>SĐT nhà xe</label><strong>{{ selectedDetail.carrier_phone || '-' }}</strong></div>
         <div class="detail-item"><label>Chủ xe/Tài xế</label><strong>{{ selectedDetail.driver_name || '-' }}</strong></div>
-        <div class="detail-item"><label>Tỉnh vận chuyển</label><strong>{{ selectedDetail.selected_province_name || '-' }}</strong></div>
+        <div class="detail-item detail-full"><label>Tỉnh vận chuyển</label><strong>{{ selectedTransportProvinceNames(selectedDetail).join(', ') || '-' }}</strong></div>
+        <div class="detail-item detail-full"><label>Huyện vận chuyển</label><strong>{{ selectedTransportDistrictNames(selectedDetail).join(', ') || '-' }}</strong></div>
         <div class="detail-item detail-full"><label>Địa chỉ nhà xe</label><strong>{{ selectedDetail.carrier_address || '-' }}</strong></div>
         <div class="detail-item detail-full"><label>Tỉnh thành nhà xe phục vụ</label><strong>{{ transportCarrierProvinceNames(selectedDetail).join(', ') || '-' }}</strong></div>
+        <div class="detail-item detail-full"><label>Huyện nhà xe phục vụ</label><strong>{{ transportCarrierDistrictNames(selectedDetail).join(', ') || 'Phục vụ toàn bộ tỉnh thành đã chọn' }}</strong></div>
         <div class="detail-item"><label>Giờ xuất phát</label><strong>{{ selectedDetail.departure_at ? formatDateTime(selectedDetail.departure_at) : '-' }}</strong></div>
         <div class="detail-item"><label>Trạng thái</label><strong>{{ selectedDetail.transport_status || '-' }}</strong></div>
       </div>
@@ -644,7 +769,7 @@ onMounted(() => {
 .carrier-picker-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
 .carrier-picker-heading label { display:block; margin-bottom:3px; }
 .carrier-picker-heading p { margin:0; }
-.carrier-picker-filters { display:grid; grid-template-columns:minmax(240px, .75fr) minmax(280px, 1.25fr); gap:10px; margin-bottom:12px; }
+.carrier-picker-filters { display:grid; grid-template-columns:minmax(220px, .8fr) minmax(220px, .8fr) minmax(280px, 1.2fr); gap:10px; margin-bottom:12px; }
 .carrier-card-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; max-height:430px; overflow-y:auto; padding:2px; }
 .carrier-card { width:100%; display:flex; flex-direction:column; gap:7px; padding:13px; border:1px solid #cbd5e1; border-radius:11px; background:#fff; color:#0f172a; text-align:left; cursor:pointer; transition:border-color .18s ease, box-shadow .18s ease, background .18s ease; }
 .carrier-card:hover { border-color:#60a5fa; box-shadow:0 5px 16px rgba(37, 99, 235, .1); }
@@ -656,6 +781,7 @@ onMounted(() => {
 .province-chips { display:flex; flex-wrap:wrap; gap:5px; }
 .province-chip { display:inline-flex; padding:3px 7px; border:1px solid #bfdbfe; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:11px; line-height:1.2; }
 .province-chip.more { border-color:#cbd5e1; background:#f8fafc; color:#475569; }
+.district-chip { border-color:#bbf7d0; background:#f0fdf4; color:#15803d; }
 .warning-text { color:#b45309; }
 .carrier-empty { padding:24px 12px; border:1px dashed #cbd5e1; border-radius:10px; background:#fff; }
 .legacy-carrier { margin-top:10px; padding:10px 12px; border:1px solid #fcd34d; border-radius:9px; background:#fffbeb; color:#92400e; font-size:13px; }
