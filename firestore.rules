@@ -871,6 +871,36 @@ service cloud.firestore {
       ]);
     }
 
+    function validActiveCustomerReferenceForOrder(data) {
+      let customerId = data.get('customer_id', '');
+      let path = customerPath(customerId);
+      return customerId is string
+        && customerId != ''
+        && canUseCustomerForOrder(customerId)
+        && get(path).data.get('active', false) == true
+        && data.get('customer_code', '') == get(path).data.get('customer_code', '')
+        && data.get('customer_name', '') == get(path).data.get('customer_name', '')
+        && data.get('phone', '') == get(path).data.get('phone', '');
+    }
+
+    function orderCustomerReassignmentDataValid(before, after) {
+      return after.diff(before).changedKeys().hasAll(['customer_id', 'customer_code'])
+        && after.diff(before).affectedKeys().hasOnly([
+          'customer_id', 'customer_code', 'customer_name', 'phone', 'search_text',
+          'invoice_relation_revision', 'relation_last_module', 'relation_last_action',
+          'relation_last_document_id', 'relation_updated_by', 'relation_updated_at',
+          'revision', 'last_operation_id', 'updated_at'
+        ])
+        && relationLockReadyData(before)
+        && before.get('payment_record_count', -1) == 0
+        && before.get('warehouse_fulfillment_status', '') == 'chua_xuat'
+        && before.get('warehouse_request_status', '') == ''
+        && before.get('printing_progress_count', -1) == 0
+        && before.get('shipment_record_count', -1) == 0
+        && saleMutableInvoiceStatusValue(before.get('invoice_status', ''))
+        && validActiveCustomerReferenceForOrder(after);
+    }
+
     function childIdentityUnchanged() {
       return unchanged([
         'order_id',
@@ -1610,6 +1640,98 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && request.resource.data.get('updated_at', null) == request.time
         && after.get('invoice_status', '') == request.resource.data.get('invoice_status', '')
         && relationParentMarkerMatches(orderId, 'invoices', 'update', invoiceId, 'invoice_relation_revision');
+    }
+
+    function customerReassignmentInvoicePatchValid(invoiceBefore, invoiceAfter, orderBefore, orderAfter, invoiceId) {
+      let customer = get(customerPath(orderAfter.get('customer_id', ''))).data;
+      return activeRelationData(invoiceBefore)
+        && activeRelationData(invoiceAfter)
+        && invoiceBefore.get('order_id', '') == orderAfter.get('id', '')
+        && invoiceAfter.get('order_id', '') == invoiceBefore.get('order_id', '')
+        && invoiceAfter.get('order_code', '') == invoiceBefore.get('order_code', '')
+        && invoiceAfter.get('invoice_status', '') == invoiceBefore.get('invoice_status', '')
+        && saleMutableInvoiceStatusValue(invoiceBefore.get('invoice_status', ''))
+        && invoiceAfter.diff(invoiceBefore).affectedKeys().hasOnly([
+          'tax_code', 'company_name', 'billing_address',
+          'relation_revision', 'last_operation_id', 'updated_at'
+        ])
+        && invoiceAfter.get('tax_code', '') == customer.get('tax_code', '')
+        && invoiceAfter.get('company_name', '') == customer.get('company_name', '')
+        && invoiceAfter.get('billing_address', '') == customer.get('billing_address', '')
+        && invoiceAfter.get('relation_revision', -1) == invoiceBefore.get('relation_revision', 0) + 1
+        && invoiceAfter.get('relation_revision', -1) == orderAfter.get('invoice_relation_revision', -2)
+        && invoiceAfter.get('last_operation_id', '') == orderAfter.get('last_operation_id', '')
+        && invoiceAfter.get('updated_at', null) == request.time
+        && orderAfter.get('invoice_relation_revision', -1) == orderBefore.get('invoice_relation_revision', 0) + 1
+        && orderAfter.get('invoice_record_count', -1) == orderBefore.get('invoice_record_count', -2)
+        && orderAfter.get('relation_last_module', '') == 'invoices'
+        && orderAfter.get('relation_last_action', '') == 'update'
+        && orderAfter.get('relation_last_document_id', '') == invoiceId
+        && ownEmailField(orderAfter, 'relation_updated_by')
+        && orderAfter.get('relation_updated_at', null) == request.time
+        && orderAfter.get('updated_at', null) == request.time;
+    }
+
+    function orderCustomerReassignmentAllowed(orderId) {
+      let invoiceId = request.resource.data.get('relation_last_document_id', '');
+      let invoicePathValue = invoicePath(invoiceId);
+      let invoiceAfter = getAfter(invoicePathValue).data;
+      return hasPerm('orders.edit')
+        && (ownsOrderData(resource.data) || hasPerm('orders.view_all') || isAdmin())
+        && orderCustomerReassignmentDataValid(resource.data, request.resource.data)
+        && request.resource.data.get('revision', -1) == resource.data.get('revision', 0) + 1
+        && validBoundedString(request.resource.data.get('last_operation_id', ''), 1, 200)
+        && request.resource.data.get('invoice_relation_revision', -1) == resource.data.get('invoice_relation_revision', 0) + 1
+        && request.resource.data.get('relation_last_module', '') == 'invoices'
+        && request.resource.data.get('relation_last_action', '') == 'update'
+        && invoiceId == 'inv_' + orderId
+        && exists(invoicePathValue)
+        && existsAfter(invoicePathValue)
+        && activeRelationData(invoiceAfter)
+        && invoiceAfter.get('order_id', '') == orderId
+        && invoiceAfter.get('relation_revision', -1) == request.resource.data.get('invoice_relation_revision', -2)
+        && invoiceAfter.get('last_operation_id', '') == request.resource.data.get('last_operation_id', '');
+    }
+
+    function invoiceCustomerSnapshotUpdateAllowed(invoiceId) {
+      let orderId = resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      let before = get(path).data;
+      let after = getAfter(path).data;
+      let customer = get(customerPath(after.get('customer_id', ''))).data;
+      return orderId is string
+        && orderId != ''
+        && exists(path)
+        && existsAfter(path)
+        && orderDataIsActive(before)
+        && before.get('payment_record_count', -1) == 0
+        && before.get('warehouse_fulfillment_status', '') == 'chua_xuat'
+        && before.get('warehouse_request_status', '') == ''
+        && before.get('printing_progress_count', -1) == 0
+        && before.get('shipment_record_count', -1) == 0
+        && saleMutableInvoiceStatusValue(before.get('invoice_status', ''))
+        && hasPerm('orders.edit')
+        && (ownsOrderData(before) || hasPerm('orders.view_all') || isAdmin())
+        && request.resource.data.get('order_id', '') == orderId
+        && childIdentityUnchanged()
+        && childOwnershipSafe(orderId)
+        && after.get('customer_id', '') != before.get('customer_id', '')
+        && after.get('invoice_relation_revision', -1) == before.get('invoice_relation_revision', 0) + 1
+        && after.get('relation_last_module', '') == 'invoices'
+        && after.get('relation_last_action', '') == 'update'
+        && after.get('relation_last_document_id', '') == invoiceId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'tax_code', 'company_name', 'billing_address',
+          'relation_revision', 'last_operation_id', 'updated_at'
+        ])
+        && request.resource.data.get('invoice_status', '') == resource.data.get('invoice_status', '')
+        && request.resource.data.get('tax_code', '') == customer.get('tax_code', '')
+        && request.resource.data.get('company_name', '') == customer.get('company_name', '')
+        && request.resource.data.get('billing_address', '') == customer.get('billing_address', '')
+        && request.resource.data.get('relation_revision', -1) == resource.data.get('relation_revision', 0) + 1
+        && request.resource.data.get('relation_revision', -1) == after.get('invoice_relation_revision', -2)
+        && request.resource.data.get('last_operation_id', '') == after.get('last_operation_id', '')
+        && request.resource.data.get('updated_at', null) == request.time;
     }
 
     function orderEditKeepsNonInvoiceSystemFields() {
@@ -2379,7 +2501,9 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
             )
           )
           ? orderWarehouseSummaryUpdateAllowed()
-          : changedAny([
+          : changedAny(['customer_id', 'customer_code'])
+            ? orderCustomerReassignmentAllowed(docId)
+            : changedAny([
               'relation_last_module', 'relation_last_action',
               'relation_last_document_id', 'relation_updated_by',
               'relation_updated_at'
@@ -2980,7 +3104,7 @@ hasAnyPerm([
             )
             : (
               invoiceRequestOrderRevisionAdvanced()
-                ? saleInvoiceStatusUpdateAllowed(docId)
+                ? (invoiceCustomerSnapshotUpdateAllowed(docId) || saleInvoiceStatusUpdateAllowed(docId))
                 : (
                   hasPerm('invoices.view_all')
                   && relationExistingChildBase(resource.data.order_id, 'invoices.view_all')

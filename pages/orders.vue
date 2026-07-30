@@ -24,7 +24,7 @@ import {
   SALE_INVOICE_STATUSES,
 } from '~/utils/orderInvoiceFlow.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
-import { stripOrderEditSystemFields } from '~/utils/orderAtomicSave.mjs'
+import { orderCustomerReassignmentBlocker, stripOrderEditSystemFields } from '~/utils/orderAtomicSave.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import {
   warehouseOrderDeleteBlocker,
@@ -364,6 +364,35 @@ function chooseCustomer() {
   form.customer_code = c.customer_code || ''
 }
 
+function customerChangedInEdit() {
+  return Boolean(editing.value)
+    && String(editing.value?.customer_id || '') !== String(form.customer_id || '')
+}
+
+async function confirmCustomerReassignment() {
+  if (!customerChangedInEdit() || !editing.value) return true
+  const nextCustomer = customers.value.find(customer => customer.id === form.customer_id)
+  if (!nextCustomer || !isActive(nextCustomer)) {
+    showToast('Khách hàng mới không còn hoạt động hoặc không nằm trong phạm vi bạn được phép sử dụng.', 'error')
+    return false
+  }
+  const blocker = orderCustomerReassignmentBlocker(editing.value)
+  if (blocker) {
+    showToast(blocker, 'error')
+    return false
+  }
+  if (normalizeInvoiceStatus(form.invoice_status) !== normalizeInvoiceStatus(editing.value.invoice_status)) {
+    showToast('Vui lòng lưu thay đổi trạng thái hóa đơn trước hoặc sau khi đổi khách hàng.', 'error')
+    return false
+  }
+  return askConfirm({
+    title: 'Đổi khách hàng của đơn',
+    message: `Đơn ${editing.value.order_code || editing.value.id} sẽ chuyển từ “${editing.value.customer_name || 'Khách cũ'}” sang “${nextCustomer.customer_name || 'Khách mới'}”. Mã đơn và số thứ tự vẫn được giữ nguyên.`,
+    confirmLabel: 'Đổi khách hàng',
+    variant: 'primary',
+  })
+}
+
 function openCustomerModal() {
   if (!hasPermission('customers.create')) {
     showToast(reportPermissionError({
@@ -696,6 +725,8 @@ async function saveOrder() {
     missingPermissions: ['orders.create'],
   }), 'error')
   if (!form.customer_name) return showToast('Thiếu khách hàng', 'error')
+  const customerChanged = customerChangedInEdit()
+  if (customerChanged && !await confirmCustomerReassignment()) return
   const itemValidation = validateOrderItems()
   if (itemValidation) return showToast(itemValidation, 'error')
 
@@ -806,8 +837,8 @@ async function saveOrder() {
           tax_code: selectedCustomer?.tax_code || '',
           company_name: selectedCustomer?.company_name || '',
           billing_address: selectedCustomer?.billing_address || '',
-          note: '',
         },
+        customerChanged,
       })
     }
 
@@ -884,6 +915,7 @@ async function saveOrder() {
       activityBefore: editing.value
         ? { ...editing.value, items: existingItems }
         : null,
+      allowCustomerChange: customerChanged,
     })
     commitSucceeded = true
 

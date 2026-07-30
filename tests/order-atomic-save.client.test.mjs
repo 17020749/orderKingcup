@@ -9,7 +9,9 @@ import {
   buildOrderOperationId,
   estimateAtomicOrderWrites,
   nextOrderRevision,
+  orderCustomerReassignmentBlocker,
   planAtomicOrderItems,
+  preservePersistedOrderIdentityForEdit,
 } from '../utils/orderAtomicSave.mjs'
 
 test('lập kế hoạch upsert và xóa mềm item trong cùng giao dịch', () => {
@@ -88,6 +90,49 @@ test('operation id ổn định theo tham số và không chứa ký tự không
     buildOrderOperationId('ord/ABC', 1_000, 0.25),
     'order_ordABC_rs_5cwg',
   )
+})
+
+test('đổi khách chỉ được phép khi toàn bộ khóa quan hệ của đơn ở trạng thái an toàn', () => {
+  const safeOrder = {
+    payment_record_count: 0,
+    warehouse_fulfillment_status: 'chua_xuat',
+    warehouse_request_status: '',
+    printing_progress_count: 0,
+    shipment_record_count: 0,
+    invoice_status: 'Không xuất',
+    relation_lock_version: 1,
+    invoice_record_count: 1,
+  }
+  assert.equal(orderCustomerReassignmentBlocker(safeOrder), '')
+  assert.match(orderCustomerReassignmentBlocker({ ...safeOrder, payment_record_count: 1 }), /thanh toán/)
+  assert.match(orderCustomerReassignmentBlocker({ ...safeOrder, shipment_record_count: 1 }), /vận chuyển/)
+  assert.match(orderCustomerReassignmentBlocker({ ...safeOrder, invoice_status: 'Đã xuất' }), /hóa đơn đã xuất/)
+})
+
+test('đổi khách giữ nguyên mã đơn và ownership nhưng thay customer identity đã xác nhận', () => {
+  const persisted = {
+    order_code: 'SALE1-OLD001-0001',
+    order_sequence: 1,
+    user_code: 'SALE1',
+    customer_id: 'customer-old',
+    customer_code: 'OLD001',
+    owner_email: 'sale@example.com',
+    created_by: 'sale@example.com',
+    sale_email: 'sale@example.com',
+    created_at: 'old-time',
+  }
+  const payload = preservePersistedOrderIdentityForEdit({
+    ...persisted,
+    customer_id: 'customer-new',
+    customer_code: 'NEW002',
+    customer_name: 'Khách mới',
+  }, persisted, { allowCustomerChange: true })
+
+  assert.equal(payload.customer_id, 'customer-new')
+  assert.equal(payload.customer_code, 'NEW002')
+  assert.equal(payload.customer_name, 'Khách mới')
+  assert.equal(payload.order_code, persisted.order_code)
+  assert.equal(payload.owner_email, persisted.owner_email)
 })
 
 test('client thực tế dùng một transaction cho order, items, sequence và activity', () => {

@@ -63,6 +63,18 @@ async function seed() {
         active: true,
         deleted: false,
       }),
+      setDoc(doc(db, 'customers', 'customer-reassigned'), {
+        id: 'customer-reassigned',
+        customer_code: 'GHI003',
+        customer_name: 'Khách đổi an toàn',
+        phone: '0903000000',
+        company_name: 'Công ty khách mới',
+        tax_code: 'MST-NEW',
+        billing_address: 'Địa chỉ khách mới',
+        created_by: EDITOR,
+        active: true,
+        deleted: false,
+      }),
       setDoc(doc(db, 'orders', 'order-edit'), {
         id: 'order-edit',
         order_code: 'EDIT1-DEF002-0001',
@@ -85,12 +97,57 @@ async function seed() {
         payment_count: 0,
         deposit_count: 0,
         collect_count: 0,
+        printing_progress_count: 0,
+        printing_lock_version: 1,
+        printing_last_action: 'reconcile',
+        printing_last_print_order_id: '',
+        printing_lock_updated_by: EDITOR,
+        printing_lock_updated_at: '2026-07-19T00:00:00.000Z',
+        relation_lock_version: 1,
+        payment_record_count: 0,
+        invoice_record_count: 1,
+        shipment_record_count: 0,
+        payment_relation_revision: 0,
+        invoice_relation_revision: 1,
+        shipment_relation_revision: 0,
+        relation_last_module: 'invoices',
+        relation_last_action: 'create',
+        relation_last_document_id: 'inv_order-edit',
+        relation_updated_by: EDITOR,
+        relation_updated_at: '2026-07-19T00:00:00.000Z',
+        shipment_status: '',
+        shipping_fee_total: 0,
+        cod_amount_total: 0,
+        last_operation_id: 'operation-seed',
         items_count: 2,
         revision: 1,
         active: true,
         deleted: false,
         status: 'active',
         created_at: '2026-07-19T00:00:00.000Z',
+      }),
+      setDoc(doc(db, 'invoices', 'inv_order-edit'), {
+        id: 'inv_order-edit',
+        order_id: 'order-edit',
+        order_code: 'EDIT1-DEF002-0001',
+        invoice_number: '',
+        invoice_date: '',
+        invoice_amount: 100,
+        invoice_status: 'Không xuất',
+        tax_code: '',
+        company_name: '',
+        billing_address: '',
+        created_by: EDITOR,
+        order_owner_email: EDITOR,
+        order_created_by: EDITOR,
+        order_sale_email: EDITOR,
+        relation_revision: 1,
+        last_operation_id: 'operation-seed',
+        status: 'active',
+        active: true,
+        deleted: false,
+        created_at: '2026-07-19T00:00:00.000Z',
+        updated_at: '2026-07-19T00:00:00.000Z',
       }),
       setDoc(doc(db, 'order_items', 'item-keep'), {
         id: 'item-keep',
@@ -466,4 +523,68 @@ test('một item mới sai ownership làm rollback toàn bộ transaction sửa 
     assert.equal((await getDoc(doc(adminDb, 'order_items', 'item-new'))).exists(), false)
     assert.equal((await getDoc(doc(adminDb, 'activity_logs', 'activity-edit-invalid'))).exists(), false)
   })
+})
+
+async function reassignCustomer(db, { customerCode = 'GHI003' } = {}) {
+  const orderRef = doc(db, 'orders', 'order-edit')
+  const invoiceRef = doc(db, 'invoices', 'inv_order-edit')
+  await runTransaction(db, async transaction => {
+    const orderSnapshot = await transaction.get(orderRef)
+    const invoiceSnapshot = await transaction.get(invoiceRef)
+    assert.equal(orderSnapshot.data().revision, 1)
+    assert.equal(invoiceSnapshot.data().relation_revision, 1)
+
+    transaction.update(orderRef, {
+      customer_id: 'customer-reassigned',
+      customer_code: customerCode,
+      customer_name: 'Khách đổi an toàn',
+      phone: '0903000000',
+      revision: 2,
+      invoice_relation_revision: 2,
+      relation_last_module: 'invoices',
+      relation_last_action: 'update',
+      relation_last_document_id: 'inv_order-edit',
+      relation_updated_by: EDITOR,
+      relation_updated_at: serverTimestamp(),
+      last_operation_id: 'operation-customer-reassign',
+      updated_at: serverTimestamp(),
+    })
+    transaction.update(invoiceRef, {
+      tax_code: 'MST-NEW',
+      company_name: 'Công ty khách mới',
+      billing_address: 'Địa chỉ khách mới',
+      relation_revision: 2,
+      last_operation_id: 'operation-customer-reassign',
+      updated_at: serverTimestamp(),
+    })
+  })
+}
+
+test('cho phép đổi khách và đồng bộ snapshot hóa đơn trong cùng transaction an toàn', async () => {
+  const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  await assertSucceeds(reassignCustomer(db))
+
+  const order = (await getDoc(doc(db, 'orders', 'order-edit'))).data()
+  const invoice = (await getDoc(doc(db, 'invoices', 'inv_order-edit'))).data()
+  assert.equal(order.customer_id, 'customer-reassigned')
+  assert.equal(order.customer_code, 'GHI003')
+  assert.equal(order.order_code, 'EDIT1-DEF002-0001')
+  assert.equal(order.payment_record_count, 0)
+  assert.equal(invoice.tax_code, 'MST-NEW')
+  assert.equal(invoice.relation_revision, 2)
+})
+
+test('chặn đổi khách khi đơn đã có thanh toán', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'orders', 'order-edit'), {
+      payment_record_count: 1,
+    }, { merge: true })
+  })
+  const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  await assertFails(reassignCustomer(db))
+})
+
+test('chặn đổi khách khi mã khách không khớp document khách hàng', async () => {
+  const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  await assertFails(reassignCustomer(db, { customerCode: 'BAD999' }))
 })

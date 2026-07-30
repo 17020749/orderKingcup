@@ -52,6 +52,42 @@ test('client runtime chỉ status_update khi có đúng một invoice và Sale �
   })
 })
 
+test('client runtime lên kế hoạch đồng bộ snapshot hóa đơn khi đổi khách', () => {
+  const invoice = {
+    id: 'inv_order-existing',
+    invoice_status: 'Không xuất',
+    relation_revision: 4,
+  }
+  assert.deepEqual(planOrderEditInvoiceMutation({
+    orderId: 'order-existing',
+    persistedStatus: 'Không xuất',
+    requestedStatus: 'Không xuất',
+    currentInvoice: invoice,
+    activeInvoiceCount: 1,
+    customerChanged: true,
+    payload: { tax_code: 'MST', company_name: 'Công ty mới', billing_address: 'Địa chỉ mới' },
+  }), {
+    mode: 'customer_update',
+    invoiceId: 'inv_order-existing',
+    requestedStatus: 'Không xuất',
+    expectedStatus: 'Không xuất',
+    expectedRelationRevision: 4,
+    payload: { tax_code: 'MST', company_name: 'Công ty mới', billing_address: 'Địa chỉ mới' },
+  })
+})
+
+test('client runtime chặn đổi khách khi đồng thời đổi trạng thái hóa đơn hoặc hóa đơn đã xuất', () => {
+  const invoice = { id: 'inv_order-existing', invoice_status: 'Không xuất', relation_revision: 1 }
+  assert.throws(() => planOrderEditInvoiceMutation({
+    orderId: 'order-existing', persistedStatus: 'Không xuất', requestedStatus: 'Yêu cầu xuất',
+    currentInvoice: invoice, customerChanged: true,
+  }), /trạng thái hóa đơn/)
+  assert.throws(() => planOrderEditInvoiceMutation({
+    orderId: 'order-existing', persistedStatus: 'Đã xuất', requestedStatus: 'Đã xuất',
+    currentInvoice: { ...invoice, invoice_status: 'Đã xuất' }, customerChanged: true,
+  }), /hóa đơn đã xuất/)
+})
+
 test('client runtime chặn nhiều invoice hoạt động trước transaction', () => {
   assert.throws(() => planOrderEditInvoiceMutation({
     orderId: 'order-duplicate',

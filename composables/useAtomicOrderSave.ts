@@ -20,6 +20,7 @@ import {
   buildOrderItemLifecyclePatch,
   buildOrderOperationId,
   nextOrderRevision,
+  orderCustomerReassignmentBlocker,
   planAtomicOrderItems,
   preservePersistedOrderIdentityForEdit,
   resolveOrderOwnershipForSave,
@@ -33,7 +34,7 @@ import { isActiveOrderRelation } from '~/utils/orderRelationState.mjs'
 type AtomicOrderMode = 'create' | 'edit'
 
 type AtomicInvoiceMutation = {
-  mode: 'create' | 'legacy_create' | 'status_update'
+  mode: 'create' | 'legacy_create' | 'status_update' | 'customer_update'
   invoiceId: string
   requestedStatus: string
   expectedStatus?: string
@@ -59,6 +60,7 @@ export type AtomicOrderSaveInput = {
   activityAction: string
   activityItemName: string
   activityBefore?: Record<string, any> | null
+  allowCustomerChange?: boolean
 }
 
 export type AtomicOrderSaveResult = {
@@ -121,11 +123,14 @@ export function useAtomicOrderSave() {
       mode: input.mode,
       existingItems: input.existingItems,
       nextItems: input.nextItems,
-      updateInvoiceStatus: invoiceMutation?.mode === 'status_update' || invoiceMutation?.mode === 'legacy_create',
+      updateInvoiceStatus: invoiceMutation?.mode === 'status_update'
+        || invoiceMutation?.mode === 'customer_update'
+        || invoiceMutation?.mode === 'legacy_create',
     })
     const itemPlan = planAtomicOrderItems(input.existingItems, input.nextItems)
     const orderRef = doc(db, 'orders', input.orderId)
     const sequenceRef = doc(db, 'order_sequences', input.customerId)
+    const selectedCustomerRef = doc(db, 'customers', input.customerId)
     const activityRef = doc(collection(db, 'activity_logs'))
     const invoiceRef = invoiceMutation ? doc(db, 'invoices', invoiceMutation.invoiceId) : null
     const operationId = buildOrderOperationId(input.orderId)
@@ -147,6 +152,11 @@ export function useAtomicOrderSave() {
       }
 
       const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}
+      const customerChanged = input.mode === 'edit'
+        && String(existingOrder.customer_id || '') !== String(input.customerId || '')
+      const selectedCustomerSnapshot = customerChanged
+        ? await transaction.get(selectedCustomerRef)
+        : null
       const invoiceSnapshot = invoiceRef && shouldReadExistingInvoiceSnapshot({
         mode: input.mode,
         invoiceMutation,
@@ -180,6 +190,26 @@ export function useAtomicOrderSave() {
         }
       }
 
+      let selectedCustomerData: Record<string, any> | null = null
+      if (customerChanged) {
+        if (!input.allowCustomerChange) {
+          throw new Error('Đổi khách hàng cần được xác nhận trước khi lưu.')
+        }
+        const blocker = orderCustomerReassignmentBlocker(existingOrder)
+        if (blocker) throw new Error(blocker)
+        if (!selectedCustomerSnapshot?.exists()) {
+          throw new Error('Không tìm thấy khách hàng mới. Vui lòng tải lại dữ liệu.')
+        }
+        selectedCustomerData = selectedCustomerSnapshot.data()
+        if (selectedCustomerData.deleted === true || selectedCustomerData.active !== true) {
+          throw new Error('Khách hàng mới không còn hoạt động.')
+        }
+        const persistedCustomerCode = String(selectedCustomerData.customer_code || '').trim().toUpperCase()
+        if (!persistedCustomerCode || persistedCustomerCode !== String(input.customerCode || '').trim().toUpperCase()) {
+          throw new Error('Mã khách hàng mới không khớp dữ liệu hiện tại. Vui lòng tải lại dữ liệu.')
+        }
+      }
+
       let requestedInvoiceStatus = ''
       let existingInvoice: Record<string, any> | null = null
       if (invoiceMutation) {
@@ -203,7 +233,7 @@ export function useAtomicOrderSave() {
             }
             existingInvoice = persistedInvoice
           }
-        } else if (invoiceMutation.mode === 'status_update') {
+        } else if (invoiceMutation.mode === 'status_update' || invoiceMutation.mode === 'customer_update') {
           if (!invoiceSnapshot?.exists()) {
             throw new Error('Không tìm thấy hóa đơn đang hoạt động của đơn. Hãy tải lại dữ liệu.')
           }
@@ -225,8 +255,17 @@ export function useAtomicOrderSave() {
           if (toNumber(existingOrder.invoice_record_count) !== 1) {
             throw new Error('Đơn hàng phải có đúng một hóa đơn hoạt động để Sale cập nhật trạng thái.')
           }
-          if (!canSaleTransitionInvoiceStatus(currentInvoiceStatus, requestedInvoiceStatus)) {
+          if (invoiceMutation.mode === 'status_update'
+            && !canSaleTransitionInvoiceStatus(currentInvoiceStatus, requestedInvoiceStatus)) {
             throw new Error('Hóa đơn đã xuất hoặc trạng thái chuyển đổi không hợp lệ.')
+          }
+          if (invoiceMutation.mode === 'customer_update') {
+            if (!customerChanged || currentInvoiceStatus !== requestedInvoiceStatus) {
+              throw new Error('Dữ liệu hóa đơn không phù hợp để đổi khách hàng.')
+            }
+            if (currentInvoiceStatus === 'Đã xuất') {
+              throw new Error('Không thể đổi khách hàng khi hóa đơn đã xuất.')
+            }
           }
         }
       }
@@ -268,9 +307,9 @@ export function useAtomicOrderSave() {
               relation_updated_by: actor,
               relation_updated_at: serverTimestamp(),
             }
-          : invoiceMutation?.mode === 'status_update'
+          : (invoiceMutation?.mode === 'status_update' || invoiceMutation?.mode === 'customer_update')
             ? {
-                invoice_status: requestedInvoiceStatus,
+                ...(invoiceMutation.mode === 'status_update' ? { invoice_status: requestedInvoiceStatus } : {}),
                 invoice_record_count: toNumber(existingOrder.invoice_record_count),
                 invoice_relation_revision: toNumber(existingOrder.invoice_relation_revision) + 1,
                 relation_lock_version: 1,
@@ -284,11 +323,17 @@ export function useAtomicOrderSave() {
 
       const candidateFinalOrderPayload = {
         ...input.orderPayload,
+        ...(selectedCustomerData ? {
+          customer_id: input.customerId,
+          customer_code: selectedCustomerData.customer_code,
+          customer_name: selectedCustomerData.customer_name || '',
+          phone: selectedCustomerData.phone || '',
+        } : {}),
         ...invoiceRelationPatch,
         order_code: orderCode,
         order_sequence: orderSequence,
         user_code: input.userCode,
-        customer_code: input.customerCode,
+        customer_code: selectedCustomerData?.customer_code || input.customerCode,
         owner_email: effectiveOwnership.ownerEmail,
         created_by: effectiveOwnership.createdBy,
         sale_email: effectiveOwnership.saleEmail,
@@ -297,7 +342,9 @@ export function useAtomicOrderSave() {
         updated_at: serverTimestamp(),
       }
       const finalOrderPayload = input.mode === 'edit'
-        ? preservePersistedOrderIdentityForEdit(candidateFinalOrderPayload, existingOrder)
+        ? preservePersistedOrderIdentityForEdit(candidateFinalOrderPayload, existingOrder, {
+            allowCustomerChange: customerChanged && input.allowCustomerChange === true,
+          })
         : candidateFinalOrderPayload
 
       if (input.mode === 'create') {
@@ -336,9 +383,14 @@ export function useAtomicOrderSave() {
           created_at: existingInvoice?.created_at || serverTimestamp(),
           updated_at: serverTimestamp(),
         })
-      } else if (invoiceMutation?.mode === 'status_update' && invoiceRef && existingInvoice) {
+      } else if ((invoiceMutation?.mode === 'status_update' || invoiceMutation?.mode === 'customer_update') && invoiceRef && existingInvoice) {
         transaction.update(invoiceRef, {
-          invoice_status: requestedInvoiceStatus,
+          ...(invoiceMutation.mode === 'status_update' ? { invoice_status: requestedInvoiceStatus } : {}),
+          ...(invoiceMutation.mode === 'customer_update' ? {
+            tax_code: selectedCustomerData?.tax_code || '',
+            company_name: selectedCustomerData?.company_name || '',
+            billing_address: selectedCustomerData?.billing_address || '',
+          } : {}),
           relation_revision: toNumber(existingInvoice.relation_revision) + 1,
           last_operation_id: operationId,
           updated_at: serverTimestamp(),
@@ -387,14 +439,7 @@ export function useAtomicOrderSave() {
         changed_by: input.changedBy,
         before_json: JSON.stringify(input.activityBefore || {}),
         after_json: JSON.stringify({
-          ...input.orderPayload,
-          ...invoiceRelationPatch,
-          order_code: orderCode,
-          order_sequence: orderSequence,
-          user_code: input.userCode,
-          customer_code: input.customerCode,
-          revision,
-          last_operation_id: operationId,
+          ...finalOrderPayload,
           items_count: localItems.length,
           removed_item_ids: itemPlan.removedItems.map(item => item.id || item.firestore_id),
         }),

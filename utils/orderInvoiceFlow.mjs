@@ -56,12 +56,32 @@ export function planOrderEditInvoiceMutation({
   currentInvoice = null,
   activeInvoiceCount = currentInvoice ? 1 : 0,
   payload = {},
+  customerChanged = false,
 } = {}) {
   if (Number(activeInvoiceCount) > 1) {
     throw new Error('Đơn hàng có nhiều hóa đơn đang hoạt động. Hãy xử lý trùng trước khi lưu.')
   }
 
   const normalizedRequestedStatus = normalizeInvoiceStatus(requestedStatus)
+  if (customerChanged) {
+    if (normalizeInvoiceStatus(persistedStatus) === 'Đã xuất') {
+      throw new Error('Không thể đổi khách hàng khi hóa đơn đã xuất.')
+    }
+    if (invoiceStatusChangeRequested(persistedStatus, normalizedRequestedStatus)) {
+      throw new Error('Vui lòng lưu thay đổi trạng thái hóa đơn trước hoặc sau khi đổi khách hàng.')
+    }
+    if (!currentInvoice) {
+      throw new Error('Đơn hàng chưa có hóa đơn hoạt động để đồng bộ thông tin khách hàng. Vui lòng nhờ quản trị viên kiểm tra dữ liệu.')
+    }
+    return {
+      mode: 'customer_update',
+      invoiceId: currentInvoice.id,
+      requestedStatus: normalizedRequestedStatus,
+      expectedStatus: currentInvoice.invoice_status,
+      expectedRelationRevision: Number(currentInvoice.relation_revision) || 0,
+      payload: { ...payload },
+    }
+  }
   if (!currentInvoice) {
     return {
       mode: 'legacy_create',
