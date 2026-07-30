@@ -2,7 +2,10 @@ import {
   invalidateScopedCache as invalidateLegacyScopedCache,
   useScopedQueries as useLegacyScopedQueries,
 } from '../composables/useScopedQueries'
-import { useExportRequestQueries } from '../composables/useExportRequestQueries'
+import {
+  clearExportRequestOrderCache,
+  useExportRequestQueries,
+} from '../composables/useExportRequestQueries'
 import {
   clearSharedQueryCache,
   invalidateQueryCacheTags,
@@ -26,6 +29,9 @@ export function useScopedQueries() {
 
 export function invalidateScopedCache(collectionName?: string) {
   invalidateLegacyScopedCache(collectionName)
+  if (!collectionName || collectionName === 'order_export_requests') {
+    clearExportRequestOrderCache()
+  }
 
   if (!collectionName) {
     return clearSharedQueryCache()

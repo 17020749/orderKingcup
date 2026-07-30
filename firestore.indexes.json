@@ -52,6 +52,30 @@
       { "fieldPath": "status", "order": "ASCENDING" },
       { "fieldPath": "updated_at", "order": "DESCENDING" }
     ] },
+    { "collectionGroup": "order_export_requests", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "window_state", "order": "ASCENDING" },
+      { "fieldPath": "sort_at", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "order_export_requests", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "requested_by", "order": "ASCENDING" },
+      { "fieldPath": "window_state", "order": "ASCENDING" },
+      { "fieldPath": "sort_at", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "order_export_requests", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "order_owner_email", "order": "ASCENDING" },
+      { "fieldPath": "window_state", "order": "ASCENDING" },
+      { "fieldPath": "sort_at", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "order_export_requests", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "order_created_by", "order": "ASCENDING" },
+      { "fieldPath": "window_state", "order": "ASCENDING" },
+      { "fieldPath": "sort_at", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "order_export_requests", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "order_sale_email", "order": "ASCENDING" },
+      { "fieldPath": "window_state", "order": "ASCENDING" },
+      { "fieldPath": "sort_at", "order": "DESCENDING" }
+    ] },
     { "collectionGroup": "import_orders", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "supplier_id", "order": "ASCENDING" },
       { "fieldPath": "import_date", "order": "DESCENDING" }

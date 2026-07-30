@@ -112,7 +112,7 @@ test('Rules ưu tiên nhánh rẻ để không vượt giới hạn biểu thứ
   assert.match(rules, /allow update: if changedAny\(\['deleted', 'active', 'deleted_at'\]\)[\s\S]*?orderPrintingReconcileAllowed\(\)[\s\S]*?\|\| orderPrintingSummaryUpdateAllowed\(docId\)/)
   assert.match(rules, /Normal edits are evaluated before the more expensive atomic delete path/)
   assert.match(rules, /Normal item edits are evaluated before the atomic soft-delete path/)
-  assert.match(rules, /allow update: if changedAny\(\['deleted', 'active', 'deleted_at'\]\)\s*\? \(exportSoftDeleteAllowed\(\) \|\| exportOrderCascadeDeleteAllowed\(\)\)[\s\S]*?\? exportRequestReleaseAllowed\(docId\)/)
+  assert.match(rules, /allow update: if changedAny\(\['deleted', 'active', 'deleted_at'\]\)\s*\? \(exportSoftDeleteAllowed\(docId\) \|\| exportOrderCascadeDeleteAllowed\(\)\)[\s\S]*?\? exportRequestReleaseAllowed\(docId\)/)
 })
 
 test('regression xóa order dùng fixture không có tiến độ in', () => {

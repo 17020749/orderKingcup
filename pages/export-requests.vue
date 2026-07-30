@@ -3,8 +3,8 @@ import {
   collection,
   doc,
   getDoc,
+  runTransaction,
   serverTimestamp,
-  writeBatch,
 } from "firebase/firestore";
 import type { FulfillmentRow } from "~/composables/useWarehouseLogic";
 import type {
@@ -28,7 +28,15 @@ import {
   permissionDecisionMessage,
 } from "~/utils/permissionDecisions.mjs";
 // @ts-ignore Shared window helper is executed directly by Node client tests.
-import { mergeExportRequestWindows } from "~/utils/exportRequestWindow.mjs";
+import {
+  exportRequestWindowFields,
+  mergeExportRequestWindows,
+} from "~/utils/exportRequestWindow.mjs";
+// @ts-ignore Shared mutation helper is executed directly by Node client tests.
+import {
+  buildExportRequestOrderMarker,
+  exportRequestRevisionOf,
+} from "~/utils/exportRequestMutation.mjs";
 import { isDateInRange, matchesKeyword, uniqueOptions } from "~/utils/listFilters";
 import {
   buildNotificationPayload,
@@ -42,6 +50,7 @@ const {
   loadScopedOrderItems,
   listenScopedExportRequests,
   loadScopedExportRequestHistoryPage,
+  loadScopedExportRequestQueuePage,
   loadExportRequestsForOrder,
   invalidateExportRequestsForOrder,
 } = useScopedQueries();
@@ -67,6 +76,10 @@ const dateTo = ref("");
 const requestedByFilter = ref("");
 const rows = ref<any[]>([]);
 const queueRows = ref<any[]>([]);
+const queuePageRows = ref<any[]>([]);
+const queueCursor = shallowRef<any>(null);
+const queueHasMore = ref(false);
+const queueLoading = ref(false);
 const historyRows = ref<any[]>([]);
 const historyCursor = shallowRef<any>(null);
 const historyHasMore = ref(false);
@@ -83,6 +96,7 @@ const exportLines = ref<Array<FulfillmentRow & { export_quantity: number }>>(
 const form = reactive<any>({});
 let stopRequestsListener: (() => void) | null = null;
 let lastRealtimeError = "";
+let historyResetPending = false;
 
 
 const requestedByOptions = computed(() => uniqueOptions(rows.value, "requested_by"));
@@ -126,9 +140,9 @@ const summary = computed(() =>
   ),
 );
 
-function syncRows() {
-  rows.value = mergeExportRequestWindows(queueRows.value, historyRows.value);
-  syncOpenRequestState(rows.value);
+function syncRows(settled = false) {
+  rows.value = mergeExportRequestWindows(queueRows.value, historyRows.value, queuePageRows.value);
+  syncOpenRequestState(rows.value, settled);
 }
 
 const selectedOrder = computed(() =>
@@ -202,11 +216,11 @@ function requestRevision(row: any) {
   ].join("|");
 }
 
-function syncOpenRequestState(nextRows: any[]) {
+function syncOpenRequestState(nextRows: any[], settled = false) {
   if (selectedRequest.value) {
     const fresh = nextRows.find(row => row.id === selectedRequest.value.id);
     if (fresh) selectedRequest.value = fresh;
-    else {
+    else if (settled) {
       selectedRequest.value = null;
       showDetailModal.value = false;
     }
@@ -214,6 +228,7 @@ function syncOpenRequestState(nextRows: any[]) {
 
   if (!editing.value || !showModal.value || saving.value) return;
   const fresh = nextRows.find(row => row.id === editing.value.id);
+  if (!fresh && !settled) return;
   if (fresh && requestRevision(fresh) === requestRevision(editing.value)) return;
   showModal.value = false;
   editing.value = null;
@@ -226,13 +241,16 @@ function syncOpenRequestState(nextRows: any[]) {
 }
 
 async function loadHistory(reset = false) {
-  if (historyLoading.value) return;
+  if (historyLoading.value) {
+    if (reset) historyResetPending = true;
+    return;
+  }
   if (!reset && !historyHasMore.value) return;
   if (reset) {
     historyRows.value = [];
     historyCursor.value = null;
     historyHasMore.value = false;
-    syncRows();
+    syncRows(false);
   }
 
   historyLoading.value = true;
@@ -247,11 +265,39 @@ async function loadHistory(reset = false) {
       : mergeExportRequestWindows([], [...historyRows.value, ...page.rows]);
     historyCursor.value = page.cursor;
     historyHasMore.value = page.hasMore;
-    syncRows();
+    syncRows(true);
   } catch (error) {
     showToast(reportFirebaseError(error, "Không tải được lịch sử yêu cầu xuất kho."), "error");
   } finally {
     historyLoading.value = false;
+    if (historyResetPending) {
+      historyResetPending = false;
+      void loadHistory(true);
+    }
+  }
+}
+
+async function loadMoreQueue() {
+  if (queueLoading.value || !queueHasMore.value || !queueCursor.value) return;
+  queueLoading.value = true;
+  try {
+    const page = await loadScopedExportRequestQueuePage(
+      orders.value,
+      queueCursor.value,
+      50,
+    );
+    queuePageRows.value = mergeExportRequestWindows(
+      [],
+      [],
+      [...queuePageRows.value, ...page.rows],
+    );
+    queueCursor.value = page.cursor;
+    queueHasMore.value = page.hasMore;
+    syncRows(true);
+  } catch (error) {
+    showToast(reportFirebaseError(error, "KhÃ´ng táº£i Ä‘Æ°á»£c cÃ¡c yÃªu cáº§u Ä‘ang xá»­ lÃ½ cÅ© hÆ¡n."), "error");
+  } finally {
+    queueLoading.value = false;
   }
 }
 
@@ -261,12 +307,17 @@ function startRequestsListener() {
   realtimeLoading.value = true;
   stopRequestsListener = listenScopedExportRequests(
     orders.value,
-    nextRows => {
+    (nextRows, nextCursor) => {
       const previousIds = new Set(queueRows.value.map(row => row.id));
       const nextIds = new Set(nextRows.map(row => row.id));
       const queueRemoved = Array.from(previousIds).some(id => !nextIds.has(id));
       queueRows.value = nextRows;
-      syncRows();
+      orderRequestsByOrder.value = {};
+      if (!queuePageRows.value.length) {
+        queueCursor.value = nextCursor;
+        queueHasMore.value = nextRows.length >= 100;
+      }
+      syncRows(false);
       realtimeLoading.value = false;
       lastRealtimeError = "";
       if (queueRemoved) void loadHistory(true);
@@ -290,6 +341,9 @@ async function loadRows(force = false) {
       orderRequestsByOrder.value = {};
       invalidateExportRequestsForOrder();
     }
+    queuePageRows.value = [];
+    queueCursor.value = null;
+    queueHasMore.value = false;
     const loadedOrders = await loadScopedOrders(force);
     orders.value = loadedOrders.filter(isActive);
     const items = await loadScopedOrderItems(orders.value, force);
@@ -326,7 +380,6 @@ function requestsForOrder(orderId: string) {
 async function ensureOrderRequests(orderId: string, force = false) {
   const id = String(orderId || "").trim();
   if (!id) return [];
-  if (!force && orderRequestsByOrder.value[id]) return orderRequestsByOrder.value[id];
   const loaded = await loadExportRequestsForOrder(id, force);
   orderRequestsByOrder.value = {
     ...orderRequestsByOrder.value,
@@ -459,7 +512,16 @@ async function saveRequest() {
   const action = editing.value ? "edit" : "create";
   const decision = requestActionDecision(action, editing.value, selectedOrder.value);
   if (!decision.allowed) return showToast(requestDecisionMessage(decision, action === "edit" ? "sửa" : "tạo", editing.value), "error");
-  await ensureOrderRequests(selectedOrder.value.id);
+  const validationOrderRef = doc(db, "orders", selectedOrder.value.id);
+  const validationOrderBefore = await getDoc(validationOrderRef);
+  if (!validationOrderBefore.exists()) return showToast("Order no longer exists.", "error");
+  const expectedOrderRevision = exportRequestRevisionOf(validationOrderBefore.data());
+  await ensureOrderRequests(selectedOrder.value.id, true);
+  const validationOrderAfter = await getDoc(validationOrderRef);
+  if (!validationOrderAfter.exists()
+    || exportRequestRevisionOf(validationOrderAfter.data()) !== expectedOrderRevision) {
+    return showToast("Export requests changed while validating quantities. Reload and try again.", "error");
+  }
   const chosen = validLines();
   if (!chosen.length)
     return showToast(
@@ -554,6 +616,8 @@ async function saveRequest() {
       items,
     };
 
+    const requestStatus = editing.value?.status || "cho_xu_ly";
+    const nextRequestRevision = Math.trunc(Number(editing.value?.revision || 0)) + 1;
     const record = {
       id: form.id,
       request_id: form.request_id,
@@ -570,7 +634,7 @@ async function saveRequest() {
       order_owner_email: order.owner_email || "",
       order_created_by: order.created_by || "",
       order_sale_email: order.sale_email || "",
-      status: editing.value?.status || "cho_xu_ly",
+      status: requestStatus,
       payload_json: JSON.stringify(payload),
       request_timeline_json: JSON.stringify(timeline),
       warehouse_export_code: editing.value?.warehouse_export_code || "",
@@ -579,6 +643,12 @@ async function saveRequest() {
       warehouse_note: editing.value?.warehouse_note || "",
       active: true,
       deleted: false,
+      revision: nextRequestRevision,
+      ...exportRequestWindowFields({
+        status: requestStatus,
+        active: true,
+        deleted: false,
+      }, now),
     };
 
     const nowLocal = new Date().toISOString();
@@ -586,6 +656,7 @@ async function saveRequest() {
       ...record,
       created_at: editing.value?.created_at || nowLocal,
       updated_at: nowLocal,
+      sort_at: nowLocal,
     };
     const nextRequests = [
       ...requestsForOrder(order.id).filter((row) => row.id !== form.id),
@@ -596,12 +667,29 @@ async function saveRequest() {
       nextRequests,
     );
 
-    const batch = writeBatch(db);
     const requestRef = doc(db, "order_export_requests", form.id);
+    const orderRef = validationOrderRef;
+    await runTransaction(db, async (tx) => {
+      const currentOrderSnapshot = await tx.get(orderRef);
+      if (!currentOrderSnapshot.exists()) throw new Error("Order no longer exists.");
+      const currentOrder = currentOrderSnapshot.data() || {};
+      if (exportRequestRevisionOf(currentOrder) !== expectedOrderRevision) {
+        throw new Error("Export requests changed in another session. Reload the page.");
+      }
+      const currentRequestSnapshot = await tx.get(requestRef);
+      if (editing.value) {
+        if (!currentRequestSnapshot.exists()) throw new Error("Export request no longer exists.");
+        if (Math.trunc(Number(currentRequestSnapshot.data()?.revision || 0))
+          !== Math.trunc(Number(editing.value?.revision || 0))) {
+          throw new Error("Export request changed in another session. Reload the page.");
+        }
+      } else if (currentRequestSnapshot.exists()) {
+        throw new Error("Export request ID already exists.");
+      }
     if (editing.value) {
       // Chỉ cập nhật các field nghiệp vụ Sale được phép sửa. Không gửi lại
       // identity/status/field xử lý kho để tránh Rules hiểu là thay đổi quyền sở hữu.
-      batch.update(requestRef, {
+      tx.update(requestRef, {
         order_code: record.order_code,
         customer_name: record.customer_name,
         customer_id: record.customer_id,
@@ -614,26 +702,36 @@ async function saveRequest() {
         updated_by: record.updated_by,
         payload_json: record.payload_json,
         request_timeline_json: record.request_timeline_json,
+        revision: record.revision,
+        window_state: record.window_state,
+        sort_at: serverTimestamp(),
         updated_at: serverTimestamp(),
       });
     } else {
-      batch.set(requestRef, {
+      tx.set(requestRef, {
         ...record,
+        sort_at: serverTimestamp(),
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
       });
     }
-    batch.update(doc(db, "orders", order.id), {
+    tx.update(orderRef, {
       ...nextSummary,
+      ...buildExportRequestOrderMarker(currentOrder, {
+        action: editing.value ? "update" : "create",
+        requestId: form.id,
+        actor: appUser.value?.email || "",
+        updatedAt: serverTimestamp(),
+      }),
       updated_at: serverTimestamp(),
     });
-    batch.set(doc(collection(db, "activity_logs")), {
+    tx.set(doc(collection(db, "activity_logs")), {
       module: "order_export_requests",
       action: editing.value ? "update" : "create",
       item_code: form.request_id,
       item_name: `${order.order_code} - ${order.customer_name || ""}`,
       changed_by: appUser.value?.email || "",
-      after_json: JSON.stringify(record),
+      after_json: JSON.stringify(nextRow),
       created_at: serverTimestamp(),
       active: true,
       deleted: false,
@@ -648,7 +746,7 @@ async function saveRequest() {
       const notificationMessage = editing.value
         ? `${form.request_id} · Đơn ${order.order_code || "-"} vừa được Sale cập nhật.`
         : `${form.request_id} · Đơn ${order.order_code || "-"} · ${order.customer_name || "Khách hàng"}`;
-      batch.set(
+      tx.set(
         doc(collection(db, "notifications")),
         buildNotificationPayload({
           type: notificationType,
@@ -669,7 +767,7 @@ async function saveRequest() {
         }),
       );
     }
-    await batch.commit();
+    });
 
     orderRequestsByOrder.value = {
       ...orderRequestsByOrder.value,
@@ -680,7 +778,11 @@ async function saveRequest() {
     else queueRows.value.unshift(nextRow);
     historyRows.value = historyRows.value.filter(row => row.id !== form.id);
     syncRows();
-    Object.assign(order, nextSummary);
+    Object.assign(order, nextSummary, {
+      export_request_revision: expectedOrderRevision + 1,
+      export_request_last_action: editing.value ? "update" : "create",
+      export_request_last_request_id: form.id,
+    });
     invalidateExportRequestsForOrder(order.id);
     invalidateScopedCache("order_export_requests");
     invalidateScopedCache("orders");
@@ -751,7 +853,22 @@ Sau khi Kho tiếp nhận, Sale sẽ không thể xóa phiếu.`,
   if (!confirmed) return;
 
   await withLoading(async () => {
-    await ensureOrderRequests(row.order_id);
+    const orderRef = doc(db, "orders", row.order_id);
+    const validationOrderBefore = await getDoc(orderRef);
+    if (!validationOrderBefore.exists()) throw new Error("Order no longer exists.");
+    const expectedOrderRevision = exportRequestRevisionOf(validationOrderBefore.data());
+    await ensureOrderRequests(row.order_id, true);
+    const validationOrderAfter = await getDoc(orderRef);
+    if (!validationOrderAfter.exists()
+      || exportRequestRevisionOf(validationOrderAfter.data()) !== expectedOrderRevision) {
+      throw new Error("Export requests changed while validating deletion. Reload the page.");
+    }
+    const freshRow = requestsForOrder(row.order_id).find(item => item.id === row.id);
+    if (!freshRow) throw new Error("Export request no longer exists.");
+    const freshDecision = requestActionDecision("delete", freshRow);
+    if (!freshDecision.allowed || requestHasExported(freshRow)) {
+      throw new Error("Export request changed and can no longer be deleted. Reload the page.");
+    }
     const remainingRequests = requestsForOrder(row.order_id).filter(
       (item) =>
         item.id !== row.id && item.order_id === row.order_id && isActive(item),
@@ -763,44 +880,70 @@ Sau khi Kho tiếp nhận, Sale sẽ không thể xóa phiếu.`,
       ),
       remainingRequests,
     );
-    const deletedAt = serverTimestamp();
-    const batch = writeBatch(db);
-    batch.update(doc(db, "order_export_requests", row.id), {
-      deleted: true,
-      active: false,
-      status: "deleted",
-      deleted_at: deletedAt,
-      updated_at: deletedAt,
-    });
-    batch.update(doc(db, "orders", row.order_id), {
-      ...nextSummary,
-      updated_at: deletedAt,
-    });
-    batch.set(doc(collection(db, "activity_logs")), {
-      module: "order_export_requests",
-      action: "delete",
-      item_code: row.request_id,
-      item_name: row.order_code || row.request_id,
-      changed_by: appUser.value?.email || "",
-      after_json: JSON.stringify({
-        id: row.id,
-        request_id: row.request_id,
+    const requestRef = doc(db, "order_export_requests", row.id);
+    await runTransaction(db, async (tx) => {
+      const currentOrderSnapshot = await tx.get(orderRef);
+      const currentRequestSnapshot = await tx.get(requestRef);
+      if (!currentOrderSnapshot.exists() || !currentRequestSnapshot.exists()) {
+        throw new Error("Order or export request no longer exists.");
+      }
+      if (exportRequestRevisionOf(currentOrderSnapshot.data()) !== expectedOrderRevision
+        || Math.trunc(Number(currentRequestSnapshot.data()?.revision || 0))
+          !== Math.trunc(Number(freshRow.revision || 0))) {
+        throw new Error("Export request changed in another session. Reload the page.");
+      }
+      const deletedAt = serverTimestamp();
+      tx.update(requestRef, {
         deleted: true,
-      }),
-      created_at: deletedAt,
-      active: true,
-      deleted: false,
+        active: false,
+        status: "deleted",
+        window_state: "hidden",
+        sort_at: deletedAt,
+        deleted_at: deletedAt,
+        revision: Math.trunc(Number(freshRow.revision || 0)) + 1,
+        updated_at: deletedAt,
+      });
+      tx.update(orderRef, {
+        ...nextSummary,
+        ...buildExportRequestOrderMarker(currentOrderSnapshot.data(), {
+          action: "delete",
+          requestId: row.id,
+          actor: appUser.value?.email || "",
+          updatedAt: deletedAt,
+        }),
+        updated_at: deletedAt,
+      });
+      tx.set(doc(collection(db, "activity_logs")), {
+        module: "order_export_requests",
+        action: "delete",
+        item_code: row.request_id,
+        item_name: row.order_code || row.request_id,
+        changed_by: appUser.value?.email || "",
+        after_json: JSON.stringify({
+          id: row.id,
+          request_id: row.request_id,
+          status: "deleted",
+          window_state: "hidden",
+          deleted: true,
+        }),
+        created_at: deletedAt,
+        active: true,
+        deleted: false,
+      });
     });
-    await batch.commit();
     orderRequestsByOrder.value = {
       ...orderRequestsByOrder.value,
       [row.order_id]: remainingRequests,
     };
     queueRows.value = queueRows.value.filter(item => item.id !== row.id);
     historyRows.value = historyRows.value.filter(item => item.id !== row.id);
-    syncRows();
+    syncRows(true);
     const order = orders.value.find((item) => item.id === row.order_id);
-    if (order) Object.assign(order, nextSummary);
+    if (order) Object.assign(order, nextSummary, {
+      export_request_revision: expectedOrderRevision + 1,
+      export_request_last_action: "delete",
+      export_request_last_request_id: row.id,
+    });
     invalidateExportRequestsForOrder(row.order_id);
     invalidateScopedCache("order_export_requests");
     invalidateScopedCache("orders");
@@ -1036,6 +1179,11 @@ onBeforeUnmount(() => {
             </tr>
           </tbody>
         </table>
+      </div>
+      <div v-if="queueHasMore" style="display:flex;justify-content:center;margin-top:16px">
+        <button class="btn" :disabled="queueLoading" @click="loadMoreQueue">
+          {{ queueLoading ? "Äang táº£i phiáº¿u Ä‘ang xá»­ lÃ½..." : "Táº£i thÃªm 50 phiáº¿u Ä‘ang xá»­ lÃ½" }}
+        </button>
       </div>
       <div v-if="historyHasMore" style="display:flex;justify-content:center;margin-top:16px">
         <button class="btn" :disabled="historyLoading" @click="loadHistory(false)">

@@ -143,7 +143,10 @@ test('cho phép xóa đơn và cascade yêu cầu đã từ chối', async () =>
     deleted: true,
     active: false,
     status: 'deleted',
+    window_state: 'hidden',
+    sort_at: deletedAt,
     deleted_at: deletedAt,
+    revision: 1,
     updated_at: deletedAt,
   })
   await assertSucceeds(batch.commit())

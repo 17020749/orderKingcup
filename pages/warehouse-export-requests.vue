@@ -1,12 +1,21 @@
 <script setup lang="ts">
-import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore'
+import {
+  collection,
+  doc,
+  increment,
+  runTransaction,
+  serverTimestamp,
+} from 'firebase/firestore'
 import type { ProductDoc, WarehouseDoc } from '~/types/models'
 import { formatDateTime, isActive, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared lifecycle helper is also executed by Node client tests.
 import { canCancelExportRequestRelease, canReleaseExportRequest } from '~/utils/exportLifecycle.mjs'
 // @ts-ignore Shared window helper is executed directly by Node client tests.
-import { mergeExportRequestWindows } from '~/utils/exportRequestWindow.mjs'
+import {
+  exportRequestWindowState,
+  mergeExportRequestWindows,
+} from '~/utils/exportRequestWindow.mjs'
 import {
   buildNotificationPayload,
   resolveSaleNotificationRecipients,
@@ -19,6 +28,7 @@ const {
   loadWarehouses,
   listenWarehouseExportRequests,
   loadWarehouseExportRequestHistoryPage,
+  loadWarehouseExportRequestQueuePage,
 } = useScopedQueries()
 const { requestLineProgress } = useWarehouseLogic()
 const { processExportRequestToExportOrder, cancelExportRequestRelease } = useWarehouseTransactions()
@@ -35,6 +45,10 @@ const search = ref('')
 const statusFilter = ref('')
 const rows = ref<any[]>([])
 const queueRows = ref<any[]>([])
+const queuePageRows = ref<any[]>([])
+const queueCursor = shallowRef<any>(null)
+const queueHasMore = ref(false)
+const queueLoading = ref(false)
 const historyRows = ref<any[]>([])
 const historyCursor = shallowRef<any>(null)
 const historyHasMore = ref(false)
@@ -50,6 +64,7 @@ const releaseLines = ref<any[]>([])
 const releaseWarehouseIds = ref<Record<number, string>>({})
 let stopRequestsListener: (() => void) | null = null
 let lastRealtimeError = ''
+let historyResetPending = false
 
 const canOpenPage = computed(() => hasAnyPermission(['page.warehouse_export_requests', 'export_requests.process']))
 const canAcceptAction = computed(() => hasAnyPermission(['export_requests.accept', 'export_requests.process']))
@@ -88,9 +103,9 @@ const summary = computed(() => filtered.value.reduce((out, row) => {
   return out
 }, { total: 0, waiting: 0, accepted: 0, exported: 0, rejected: 0 }))
 
-function syncRows() {
-  rows.value = mergeExportRequestWindows(queueRows.value, historyRows.value)
-  syncOpenRequestState(rows.value)
+function syncRows(settled = false) {
+  rows.value = mergeExportRequestWindows(queueRows.value, historyRows.value, queuePageRows.value)
+  syncOpenRequestState(rows.value, settled)
 }
 
 function statusLabel(status: any) {
@@ -285,36 +300,64 @@ function addSaleNotifications(batch: any, row: any, input: { type: string; title
 
 async function updateRequestStatus(row: any, nextStatus: string, action: string, title: string, note = '', extra: Record<string, any> = {}, notification?: { type: string; title: string; message: string }) {
   const orderPatch = fallbackOrderPatch(nextStatus)
-  const batch = writeBatch(db)
-  const patch = {
-    status: nextStatus,
-    warehouse_handled_by: appUser.value?.email || '',
-    warehouse_handled_at: serverTimestamp(),
-    warehouse_note: note || '',
-    request_timeline_json: appendTimeline(row, action, title, nextStatus, note),
-    updated_at: serverTimestamp(),
-    ...extra
-  }
-  batch.update(doc(db, 'order_export_requests', row.id), patch)
-  if (row.order_id && Object.keys(orderPatch).length) {
-    batch.update(doc(db, 'orders', row.order_id), {
+  if (!row.order_id) throw new Error('Export request is missing its parent order.')
+  const requestRef = doc(db, 'order_export_requests', row.id)
+  const orderRef = doc(db, 'orders', row.order_id)
+  let notificationCount = 0
+  await runTransaction(db, async tx => {
+    const currentSnapshot = await tx.get(requestRef)
+    if (!currentSnapshot.exists()) throw new Error('Export request no longer exists.')
+    const current = { ...currentSnapshot.data(), id: currentSnapshot.id }
+    if (Math.trunc(Number(current.revision || 0)) !== Math.trunc(Number(row.revision || 0))) {
+      throw new Error('Export request changed in another session. Reload the page.')
+    }
+    const mutationAt = serverTimestamp()
+    const patch = {
+      ...extra,
+      status: nextStatus,
+      window_state: exportRequestWindowState({
+        ...current,
+        ...extra,
+        status: nextStatus,
+      }),
+      sort_at: mutationAt,
+      warehouse_handled_by: appUser.value?.email || '',
+      warehouse_handled_at: mutationAt,
+      warehouse_note: note || '',
+      request_timeline_json: appendTimeline(current, action, title, nextStatus, note),
+      revision: Math.trunc(Number(current.revision || 0)) + 1,
+      updated_at: mutationAt,
+    }
+    tx.update(requestRef, patch)
+    tx.update(orderRef, {
       ...orderPatch,
-      updated_at: serverTimestamp()
+      export_request_revision: increment(1),
+      export_request_last_action: action,
+      export_request_last_request_id: row.id,
+      export_request_updated_by: String(appUser.value?.email || '').trim().toLowerCase(),
+      export_request_updated_at: mutationAt,
+      updated_at: mutationAt,
     })
-  }
-  batch.set(doc(collection(db, 'activity_logs')), {
-    module: 'order_export_requests',
-    action,
-    item_code: row.request_id || row.id,
-    item_name: `${row.order_code || ''} - ${row.customer_name || ''}`,
-    changed_by: appUser.value?.email || '',
-    after_json: JSON.stringify({ id: row.id, request_id: row.request_id, status: nextStatus, note, ...extra }),
-    created_at: serverTimestamp(),
-    active: true,
-    deleted: false
+    tx.set(doc(collection(db, 'activity_logs')), {
+      module: 'order_export_requests',
+      action,
+      item_code: row.request_id || row.id,
+      item_name: `${row.order_code || ''} - ${row.customer_name || ''}`,
+      changed_by: appUser.value?.email || '',
+      after_json: JSON.stringify({
+        id: row.id,
+        request_id: row.request_id,
+        status: nextStatus,
+        window_state: patch.window_state,
+        note,
+        ...extra,
+      }),
+      created_at: mutationAt,
+      active: true,
+      deleted: false
+    })
+    notificationCount = notification ? addSaleNotifications(tx, current, notification) : 0
   })
-  const notificationCount = notification ? addSaleNotifications(batch, row, notification) : 0
-  await batch.commit()
   invalidateScopedCache('order_export_requests')
   invalidateScopedCache('orders')
   invalidateScopedCache('activity_logs')
@@ -490,11 +533,11 @@ function detailRequestLines(row: any) {
   return requestLineProgress(row)
 }
 
-function syncOpenRequestState(nextRows: any[]) {
+function syncOpenRequestState(nextRows: any[], settled = false) {
   if (selectedRequest.value) {
     const fresh = nextRows.find(row => row.id === selectedRequest.value.id)
     if (fresh) selectedRequest.value = fresh
-    else {
+    else if (settled) {
       selectedRequest.value = null
       showDetailModal.value = false
     }
@@ -503,6 +546,7 @@ function syncOpenRequestState(nextRows: any[]) {
   if (!actionRequest.value) return
   const fresh = nextRows.find(row => row.id === actionRequest.value.id)
   if (!fresh) {
+    if (!settled) return
     actionRequest.value = null
     if (showActionModal.value && !saving.value) {
       showActionModal.value = false
@@ -519,13 +563,17 @@ function syncOpenRequestState(nextRows: any[]) {
 }
 
 async function loadHistory(reset = false) {
-  if (!canOpenPage.value || historyLoading.value) return
+  if (!canOpenPage.value) return
+  if (historyLoading.value) {
+    if (reset) historyResetPending = true
+    return
+  }
   if (!reset && !historyHasMore.value) return
   if (reset) {
     historyRows.value = []
     historyCursor.value = null
     historyHasMore.value = false
-    syncRows()
+    syncRows(false)
   }
 
   historyLoading.value = true
@@ -539,11 +587,35 @@ async function loadHistory(reset = false) {
       : mergeExportRequestWindows([], [...historyRows.value, ...page.rows])
     historyCursor.value = page.cursor
     historyHasMore.value = page.hasMore
-    syncRows()
+    syncRows(true)
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được lịch sử yêu cầu xuất kho.'), 'error')
   } finally {
     historyLoading.value = false
+    if (historyResetPending) {
+      historyResetPending = false
+      void loadHistory(true)
+    }
+  }
+}
+
+async function loadMoreQueue() {
+  if (!canOpenPage.value || queueLoading.value || !queueHasMore.value || !queueCursor.value) return
+  queueLoading.value = true
+  try {
+    const page = await loadWarehouseExportRequestQueuePage(queueCursor.value, 50)
+    queuePageRows.value = mergeExportRequestWindows(
+      [],
+      [],
+      [...queuePageRows.value, ...page.rows],
+    )
+    queueCursor.value = page.cursor
+    queueHasMore.value = page.hasMore
+    syncRows(true)
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'KhÃ´ng táº£i Ä‘Æ°á»£c cÃ¡c yÃªu cáº§u Ä‘ang xá»­ lÃ½ cÅ© hÆ¡n.'), 'error')
+  } finally {
+    queueLoading.value = false
   }
 }
 
@@ -552,12 +624,16 @@ function startRequestsListener() {
   stopRequestsListener = null
   realtimeLoading.value = true
   stopRequestsListener = listenWarehouseExportRequests(
-    nextRows => {
+    (nextRows, nextCursor) => {
       const previousIds = new Set(queueRows.value.map(row => row.id))
       const nextIds = new Set(nextRows.map(row => row.id))
       const queueRemoved = Array.from(previousIds).some(id => !nextIds.has(id))
       queueRows.value = nextRows
-      syncRows()
+      if (!queuePageRows.value.length) {
+        queueCursor.value = nextCursor
+        queueHasMore.value = nextRows.length >= 100
+      }
+      syncRows(false)
       realtimeLoading.value = false
       lastRealtimeError = ''
       if (queueRemoved) void loadHistory(true)
@@ -577,6 +653,9 @@ function startRequestsListener() {
 async function loadRows(force = false) {
   supportingLoading.value = true
   try {
+    queuePageRows.value = []
+    queueCursor.value = null
+    queueHasMore.value = false
     const [productRows, warehouseRows] = await Promise.all([
       loadProducts(force),
       loadWarehouses(force)
@@ -659,6 +738,11 @@ onBeforeUnmount(() => {
             <tr v-if="!filtered.length"><td colspan="8" class="empty">Không có yêu cầu xuất kho phù hợp.</td></tr>
           </tbody>
         </table>
+      </div>
+      <div v-if="canOpenPage && queueHasMore" style="display:flex;justify-content:center;margin-top:16px">
+        <button class="btn" :disabled="queueLoading" @click="loadMoreQueue">
+          {{ queueLoading ? 'Äang táº£i phiáº¿u Ä‘ang xá»­ lÃ½...' : 'Táº£i thÃªm 50 phiáº¿u Ä‘ang xá»­ lÃ½' }}
+        </button>
       </div>
       <div v-if="canOpenPage && historyHasMore" style="display:flex;justify-content:center;margin-top:16px">
         <button class="btn" :disabled="historyLoading" @click="loadHistory(false)">

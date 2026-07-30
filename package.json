@@ -24,7 +24,8 @@
     "test:pagination": "node --test tests/cursor-pagination.test.mjs",
     "migrate:order-item-ownership": "node scripts/backfill-order-item-ownership.mjs",
     "migrate:dedupe-order-invoices": "node scripts/dedupe-order-invoices.mjs",
-    "migrate:backfill-order-invoices": "node scripts/backfill-order-invoices.mjs"
+    "migrate:backfill-order-invoices": "node scripts/backfill-order-invoices.mjs",
+    "migrate:export-request-window": "node scripts/backfill-export-request-window.mjs"
   },
   "dependencies": {
     "@nuxtjs/google-fonts": "^3.2.0",

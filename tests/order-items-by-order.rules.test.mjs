@@ -172,6 +172,7 @@ test('Bộ quyền người dùng thực tế chạy được luồng đọc s�
   )))
 
   const batch = writeBatch(db)
+  const now = serverTimestamp()
   batch.set(doc(db, 'order_export_requests', 'request-owned'), {
     id: 'request-owned',
     request_id: 'YCXK-TEST-001',
@@ -197,13 +198,21 @@ test('Bộ quyền người dùng thực tế chạy được luồng đọc s�
     warehouse_export_code: '',
     active: true,
     deleted: false,
-    created_at: '2026-07-19T06:00:00.000Z',
-    updated_at: '2026-07-19T06:00:00.000Z',
+    revision: 1,
+    window_state: 'queue',
+    sort_at: now,
+    created_at: now,
+    updated_at: now,
   })
   batch.update(doc(db, 'orders', 'order-owned'), {
     warehouse_fulfillment_status: 'chua_xuat',
     warehouse_request_status: 'cho_xu_ly',
-    updated_at: '2026-07-19T06:00:00.000Z',
+    export_request_revision: 1,
+    export_request_last_action: 'create',
+    export_request_last_request_id: 'request-owned',
+    export_request_updated_by: SALE,
+    export_request_updated_at: now,
+    updated_at: now,
   })
   batch.set(doc(db, 'activity_logs', 'activity-request-owned'), {
     module: 'order_export_requests',
