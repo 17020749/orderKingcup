@@ -41,9 +41,12 @@ function persistedText(value) {
   return String(value ?? '')
 }
 
-export function preservePersistedOrderIdentityForEdit(payload = {}, persistedOrder = {}) {
+export function preservePersistedOrderIdentityForEdit(payload = {}, persistedOrder = {}, options = {}) {
   const next = { ...(payload || {}) }
-  for (const field of ORDER_IMMUTABLE_IDENTITY_FIELDS) {
+  const immutableFields = options.allowCustomerChange
+    ? ORDER_IMMUTABLE_IDENTITY_FIELDS.filter(field => !['customer_id', 'customer_code'].includes(field))
+    : ORDER_IMMUTABLE_IDENTITY_FIELDS
+  for (const field of immutableFields) {
     if (Object.prototype.hasOwnProperty.call(persistedOrder || {}, field)) {
       next[field] = persistedOrder[field]
     } else {
@@ -51,6 +54,36 @@ export function preservePersistedOrderIdentityForEdit(payload = {}, persistedOrd
     }
   }
   return next
+}
+
+function zeroRelationCounter(value) {
+  return Number.isInteger(Number(value)) && Number(value) === 0
+}
+
+export function orderCustomerReassignmentBlocker(order = {}) {
+  if (!zeroRelationCounter(order.payment_record_count)) {
+    return 'Không thể đổi khách hàng khi đơn đã có thanh toán hoặc khóa thanh toán chưa sẵn sàng.'
+  }
+  if (String(order.warehouse_fulfillment_status || '') !== 'chua_xuat'
+    || String(order.warehouse_request_status || '').trim()) {
+    return 'Không thể đổi khách hàng khi đơn đã có yêu cầu hoặc dữ liệu xuất kho.'
+  }
+  if (!zeroRelationCounter(order.printing_progress_count)) {
+    return 'Không thể đổi khách hàng khi đơn đã có tiến độ in.'
+  }
+  if (!zeroRelationCounter(order.shipment_record_count)) {
+    return 'Không thể đổi khách hàng khi đơn đã có vận chuyển.'
+  }
+  if (String(order.invoice_status || '').trim() === 'Đã xuất') {
+    return 'Không thể đổi khách hàng khi hóa đơn đã xuất.'
+  }
+  if (!Number.isInteger(Number(order.relation_lock_version))
+    || Number(order.relation_lock_version) !== 1
+    || !Number.isInteger(Number(order.invoice_record_count))
+    || Number(order.invoice_record_count) !== 1) {
+    return 'Không thể đổi khách hàng khi khóa liên kết của đơn chưa sẵn sàng. Vui lòng nhờ quản trị viên đồng bộ dữ liệu đơn.'
+  }
+  return ''
 }
 
 export function resolveOrderOwnershipForSave({
@@ -133,7 +166,7 @@ export function shouldReadExistingInvoiceSnapshot({
   persistedOrder = {},
 } = {}) {
   if (mode !== 'edit' || !invoiceMutation) return false
-  if (invoiceMutation.mode === 'status_update') return true
+  if (invoiceMutation.mode === 'status_update' || invoiceMutation.mode === 'customer_update') return true
   if (invoiceMutation.mode !== 'legacy_create') return false
   return String(persistedOrder.relation_last_module || '') === 'invoices'
     && String(persistedOrder.relation_last_action || '') === 'delete'
