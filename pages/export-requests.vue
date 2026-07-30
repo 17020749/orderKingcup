@@ -42,6 +42,7 @@ import {
   buildNotificationPayload,
   WAREHOUSE_NOTIFICATION_PERMISSIONS,
 } from "~/composables/useNotifications";
+import { useScopedQueries } from "~/runtime/useScopedQueriesBridge";
 
 const { db } = useFirebaseServices();
 const { appUser, permissions } = useAuth();

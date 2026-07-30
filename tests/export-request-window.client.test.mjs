@@ -200,6 +200,15 @@ test('runtime bridge overrides only export request list methods', () => {
   assert.match(bridge, /clearExportRequestOrderCache/)
 })
 
+test('export request pages explicitly import the scoped query runtime bridge', () => {
+  const sale = read('pages/export-requests.vue')
+  const warehouse = read('pages/warehouse-export-requests.vue')
+  const explicitBridgeImport = /import \{ useScopedQueries \} from ['"]~\/runtime\/useScopedQueriesBridge['"]/
+
+  assert.match(sale, explicitBridgeImport)
+  assert.match(warehouse, explicitBridgeImport)
+})
+
 test('declares all bounded export request composite indexes', () => {
   const document = JSON.parse(read('firestore.indexes.json'))
   const indexes = document.indexes || []

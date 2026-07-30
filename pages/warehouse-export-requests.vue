@@ -20,6 +20,7 @@ import {
   buildNotificationPayload,
   resolveSaleNotificationRecipients,
 } from '~/composables/useNotifications'
+import { useScopedQueries } from '~/runtime/useScopedQueriesBridge'
 
 const { db } = useFirebaseServices()
 const { appUser, hasPermission, hasAnyPermission } = useAuth()
