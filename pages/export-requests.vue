@@ -27,6 +27,8 @@ import {
   exportRequestActionDecision,
   permissionDecisionMessage,
 } from "~/utils/permissionDecisions.mjs";
+// @ts-ignore Shared window helper is executed directly by Node client tests.
+import { mergeExportRequestWindows } from "~/utils/exportRequestWindow.mjs";
 import { isDateInRange, matchesKeyword, uniqueOptions } from "~/utils/listFilters";
 import {
   buildNotificationPayload,
@@ -39,6 +41,9 @@ const {
   loadScopedOrders,
   loadScopedOrderItems,
   listenScopedExportRequests,
+  loadScopedExportRequestHistoryPage,
+  loadExportRequestsForOrder,
+  invalidateExportRequestsForOrder,
 } = useScopedQueries();
 const {
   buildFulfillmentRows,
@@ -52,6 +57,7 @@ const { invalidateScopedCache } = useRepo();
 
 const supportingLoading = ref(false);
 const realtimeLoading = ref(true);
+const historyLoading = ref(false);
 const loading = computed(() => supportingLoading.value || realtimeLoading.value);
 const saving = ref(false);
 const search = ref("");
@@ -60,6 +66,11 @@ const dateFrom = ref("");
 const dateTo = ref("");
 const requestedByFilter = ref("");
 const rows = ref<any[]>([]);
+const queueRows = ref<any[]>([]);
+const historyRows = ref<any[]>([]);
+const historyCursor = shallowRef<any>(null);
+const historyHasMore = ref(false);
+const orderRequestsByOrder = ref<Record<string, any[]>>({});
 const orders = ref<OrderDoc[]>([]);
 const itemsByOrder = ref<Record<string, OrderItemDoc[]>>({});
 const showModal = ref(false);
@@ -114,6 +125,11 @@ const summary = computed(() =>
     { total: 0, waiting: 0, accepted: 0, exported: 0 },
   ),
 );
+
+function syncRows() {
+  rows.value = mergeExportRequestWindows(queueRows.value, historyRows.value);
+  syncOpenRequestState(rows.value);
+}
 
 const selectedOrder = computed(() =>
   orders.value.find((order) => order.id === form.order_id),
@@ -209,6 +225,36 @@ function syncOpenRequestState(nextRows: any[]) {
   );
 }
 
+async function loadHistory(reset = false) {
+  if (historyLoading.value) return;
+  if (!reset && !historyHasMore.value) return;
+  if (reset) {
+    historyRows.value = [];
+    historyCursor.value = null;
+    historyHasMore.value = false;
+    syncRows();
+  }
+
+  historyLoading.value = true;
+  try {
+    const page = await loadScopedExportRequestHistoryPage(
+      orders.value,
+      reset ? null : historyCursor.value,
+      50,
+    );
+    historyRows.value = reset
+      ? page.rows
+      : mergeExportRequestWindows([], [...historyRows.value, ...page.rows]);
+    historyCursor.value = page.cursor;
+    historyHasMore.value = page.hasMore;
+    syncRows();
+  } catch (error) {
+    showToast(reportFirebaseError(error, "Không tải được lịch sử yêu cầu xuất kho."), "error");
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
 function startRequestsListener() {
   stopRequestsListener?.();
   stopRequestsListener = null;
@@ -216,11 +262,14 @@ function startRequestsListener() {
   stopRequestsListener = listenScopedExportRequests(
     orders.value,
     nextRows => {
-      syncOpenRequestState(nextRows);
-      rows.value = nextRows;
-      applyAllLocalOrderSummaries();
+      const previousIds = new Set(queueRows.value.map(row => row.id));
+      const nextIds = new Set(nextRows.map(row => row.id));
+      const queueRemoved = Array.from(previousIds).some(id => !nextIds.has(id));
+      queueRows.value = nextRows;
+      syncRows();
       realtimeLoading.value = false;
       lastRealtimeError = "";
+      if (queueRemoved) void loadHistory(true);
     },
     error => {
       realtimeLoading.value = false;
@@ -237,6 +286,10 @@ function startRequestsListener() {
 async function loadRows(force = false) {
   supportingLoading.value = true;
   try {
+    if (force) {
+      orderRequestsByOrder.value = {};
+      invalidateExportRequestsForOrder();
+    }
     const loadedOrders = await loadScopedOrders(force);
     orders.value = loadedOrders.filter(isActive);
     const items = await loadScopedOrderItems(orders.value, force);
@@ -250,8 +303,8 @@ async function loadRows(force = false) {
       {} as Record<string, OrderItemDoc[]>,
     );
 
-    applyAllLocalOrderSummaries();
     startRequestsListener();
+    await loadHistory(true);
   } catch (error) {
     realtimeLoading.value = false;
     showToast(
@@ -264,7 +317,22 @@ async function loadRows(force = false) {
 }
 
 function requestsForOrder(orderId: string) {
-  return rows.value.filter((row) => row.order_id === orderId && isActive(row));
+  const id = String(orderId || "").trim();
+  if (!id) return [];
+  return orderRequestsByOrder.value[id]
+    || rows.value.filter((row) => row.order_id === id && isActive(row));
+}
+
+async function ensureOrderRequests(orderId: string, force = false) {
+  const id = String(orderId || "").trim();
+  if (!id) return [];
+  if (!force && orderRequestsByOrder.value[id]) return orderRequestsByOrder.value[id];
+  const loaded = await loadExportRequestsForOrder(id, force);
+  orderRequestsByOrder.value = {
+    ...orderRequestsByOrder.value,
+    [id]: loaded,
+  };
+  return loaded;
 }
 
 function applyLocalOrderSummary(orderId: string) {
@@ -313,6 +381,7 @@ async function hydrateReceiverSnapshot(order: any) {
 }
 
 async function onOrderChanged() {
+  if (selectedOrder.value) await ensureOrderRequests(selectedOrder.value.id);
   prepareLines()
   if (selectedOrder.value) await hydrateReceiverSnapshot(selectedOrder.value)
 }
@@ -374,6 +443,7 @@ async function openModal(request?: any) {
           customer_id: "", receiver_name: "", receiver_phone: "", receiver_address: "",
         },
   );
+  if (selectedOrder.value) await ensureOrderRequests(selectedOrder.value.id);
   prepareLines();
   if (selectedOrder.value) await hydrateReceiverSnapshot(selectedOrder.value);
   showModal.value = true;
@@ -389,6 +459,7 @@ async function saveRequest() {
   const action = editing.value ? "edit" : "create";
   const decision = requestActionDecision(action, editing.value, selectedOrder.value);
   if (!decision.allowed) return showToast(requestDecisionMessage(decision, action === "edit" ? "sửa" : "tạo", editing.value), "error");
+  await ensureOrderRequests(selectedOrder.value.id);
   const chosen = validLines();
   if (!chosen.length)
     return showToast(
@@ -517,7 +588,7 @@ async function saveRequest() {
       updated_at: nowLocal,
     };
     const nextRequests = [
-      ...rows.value.filter((row) => row.id !== form.id),
+      ...requestsForOrder(order.id).filter((row) => row.id !== form.id),
       nextRow,
     ].filter((row) => row.order_id === order.id && isActive(row));
     const nextSummary = orderSummary(
@@ -600,10 +671,17 @@ async function saveRequest() {
     }
     await batch.commit();
 
-    const index = rows.value.findIndex((row) => row.id === form.id);
-    if (index >= 0) rows.value[index] = nextRow;
-    else rows.value.unshift(nextRow);
+    orderRequestsByOrder.value = {
+      ...orderRequestsByOrder.value,
+      [order.id]: nextRequests,
+    };
+    const queueIndex = queueRows.value.findIndex((row) => row.id === form.id);
+    if (queueIndex >= 0) queueRows.value[queueIndex] = nextRow;
+    else queueRows.value.unshift(nextRow);
+    historyRows.value = historyRows.value.filter(row => row.id !== form.id);
+    syncRows();
     Object.assign(order, nextSummary);
+    invalidateExportRequestsForOrder(order.id);
     invalidateScopedCache("order_export_requests");
     invalidateScopedCache("orders");
     invalidateScopedCache("activity_logs");
@@ -624,7 +702,7 @@ async function saveRequest() {
             : "Không tạo được yêu cầu xuất kho.",
           {
             operation: editing.value ? "export_requests.edit" : "export_requests.create",
-            record: form.id || order.id,
+            record: form.id || selectedOrder.value?.id,
             status: editing.value?.status || "new",
             actionPermission: "orders.warehouse_export",
             scopePermission: "export_requests.view_all",
@@ -666,13 +744,15 @@ async function removeRequest(row: any) {
   if (requestHasExported(row)) return showToast(`Xóa yêu cầu xuất kho bị chặn (record=${row.request_id || row.id}, code=export_request_has_exported_quantity, status=${row.status || "(unknown)"}).`, "error");
   const confirmed = await askConfirm({
     title: "Xóa yêu cầu xuất kho",
-    message: `Bạn chắc chắn muốn xóa yêu cầu xuất kho ${row.request_id}?\nSau khi Kho tiếp nhận, Sale sẽ không thể xóa phiếu.`,
+    message: `Bạn chắc chắn muốn xóa yêu cầu xuất kho ${row.request_id}?
+Sau khi Kho tiếp nhận, Sale sẽ không thể xóa phiếu.`,
     confirmLabel: "Xóa phiếu",
   });
   if (!confirmed) return;
 
   await withLoading(async () => {
-    const remainingRequests = rows.value.filter(
+    await ensureOrderRequests(row.order_id);
+    const remainingRequests = requestsForOrder(row.order_id).filter(
       (item) =>
         item.id !== row.id && item.order_id === row.order_id && isActive(item),
     );
@@ -712,9 +792,16 @@ async function removeRequest(row: any) {
       deleted: false,
     });
     await batch.commit();
-    rows.value = rows.value.filter((item) => item.id !== row.id);
+    orderRequestsByOrder.value = {
+      ...orderRequestsByOrder.value,
+      [row.order_id]: remainingRequests,
+    };
+    queueRows.value = queueRows.value.filter(item => item.id !== row.id);
+    historyRows.value = historyRows.value.filter(item => item.id !== row.id);
+    syncRows();
     const order = orders.value.find((item) => item.id === row.order_id);
     if (order) Object.assign(order, nextSummary);
+    invalidateExportRequestsForOrder(row.order_id);
     invalidateScopedCache("order_export_requests");
     invalidateScopedCache("orders");
     invalidateScopedCache("activity_logs");
@@ -751,7 +838,8 @@ function statusLabel(status: any) {
   );
 }
 
-function openDetail(row: any) {
+async function openDetail(row: any) {
+  if (row?.order_id) await ensureOrderRequests(row.order_id);
   selectedRequest.value = row;
   showDetailModal.value = true;
 }
@@ -856,7 +944,7 @@ onBeforeUnmount(() => {
 
     <div class="summary-grid">
       <div class="summary-card">
-        <label>Tổng phiếu</label><strong>{{ summary.total }}</strong>
+        <label>Đang hiển thị</label><strong>{{ summary.total }}</strong>
       </div>
       <div class="summary-card">
         <label>Chờ kho</label><strong>{{ summary.waiting }}</strong>
@@ -948,6 +1036,14 @@ onBeforeUnmount(() => {
             </tr>
           </tbody>
         </table>
+      </div>
+      <div v-if="historyHasMore" style="display:flex;justify-content:center;margin-top:16px">
+        <button class="btn" :disabled="historyLoading" @click="loadHistory(false)">
+          {{ historyLoading ? "Đang tải lịch sử..." : "Tải thêm 50 phiếu lịch sử" }}
+        </button>
+      </div>
+      <div v-else-if="historyRows.length" class="small subtle" style="text-align:center;margin-top:12px">
+        Đã tải hết lịch sử hiện có.
       </div>
     </div>
 
