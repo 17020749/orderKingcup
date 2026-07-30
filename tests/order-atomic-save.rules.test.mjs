@@ -11,6 +11,7 @@ import {
   runTransaction,
   serverTimestamp,
   setDoc,
+  updateDoc,
 } from 'firebase/firestore'
 import assert from 'node:assert/strict'
 
@@ -119,6 +120,11 @@ async function seed() {
         shipping_fee_total: 0,
         cod_amount_total: 0,
         last_operation_id: 'operation-seed',
+        export_request_revision: 3,
+        export_request_last_action: 'accept',
+        export_request_last_request_id: 'request-existing',
+        export_request_updated_by: EDITOR,
+        export_request_updated_at: '2026-07-19T00:30:00.000Z',
         items_count: 2,
         revision: 1,
         active: true,
@@ -523,6 +529,27 @@ test('một item mới sai ownership làm rollback toàn bộ transaction sửa 
     assert.equal((await getDoc(doc(adminDb, 'order_items', 'item-new'))).exists(), false)
     assert.equal((await getDoc(doc(adminDb, 'activity_logs', 'activity-edit-invalid'))).exists(), false)
   })
+})
+
+test('normal order edit preserves current export request markers', async () => {
+  const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  await assertSucceeds(atomicEdit(db))
+
+  const order = (await getDoc(doc(db, 'orders', 'order-edit'))).data()
+  assert.equal(order.export_request_revision, 3)
+  assert.equal(order.export_request_last_action, 'accept')
+  assert.equal(order.export_request_last_request_id, 'request-existing')
+})
+
+test('Sale cannot forge export request markers through normal order edit', async () => {
+  const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  await assertFails(updateDoc(doc(db, 'orders', 'order-edit'), {
+    export_request_last_action: 'warehouse_export',
+    export_request_last_request_id: 'request-forged',
+    export_request_updated_by: EDITOR,
+    export_request_updated_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  }))
 })
 
 async function reassignCustomer(db, { customerCode = 'GHI003' } = {}) {

@@ -930,7 +930,8 @@ service cloud.firestore {
         && resource.data.get('printing_progress_count', -1) == 0
         && relationLockReadyData(resource.data)
         && resource.data.get('payment_record_count', -1) == 0
-        && resource.data.get('shipment_record_count', -1) == 0;
+        && resource.data.get('shipment_record_count', -1) == 0
+        && resource.data.get('invoice_status', 'Không xuất') != 'Đã xuất';
     }
 
     function exportRequestEditable() {
@@ -1748,6 +1749,9 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           'printing_last_print_order_id', 'printing_lock_updated_by', 'printing_lock_updated_at',
           'relation_lock_version', 'payment_record_count', 'invoice_record_count',
           'shipment_record_count', 'payment_relation_revision', 'shipment_relation_revision',
+          'export_request_revision', 'export_request_last_action',
+          'export_request_last_request_id', 'export_request_updated_by',
+          'export_request_updated_at',
           'shipment_status', 'shipping_fee_total', 'cod_amount_total',
           'deleted', 'active', 'status', 'deleted_at'
         ]);
@@ -1787,6 +1791,9 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           'printing_last_print_order_id', 'printing_lock_updated_by', 'printing_lock_updated_at',
           'payment_record_count', 'shipment_record_count',
           'payment_relation_revision', 'shipment_relation_revision',
+          'export_request_revision', 'export_request_last_action',
+          'export_request_last_request_id', 'export_request_updated_by',
+          'export_request_updated_at',
           'shipment_status', 'shipping_fee_total', 'cod_amount_total',
           'deleted', 'active', 'status', 'deleted_at'
         ]);
@@ -1846,6 +1853,7 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && orderDataIsActive(get(path).data)
         && (ownsOrderData(get(path).data) || hasPerm('orders.view_all') || isAdmin())
         && softDeleteOnly()
+        && resource.data.get('invoice_status', 'Không xuất') != 'Đã xuất'
         && getAfter(path).data.get('deleted', false) == true
         && getAfter(path).data.get('active', true) == false;
     }
@@ -1881,6 +1889,11 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           'relation_last_document_id',
           'relation_updated_by',
           'relation_updated_at',
+          'export_request_revision',
+          'export_request_last_action',
+          'export_request_last_request_id',
+          'export_request_updated_by',
+          'export_request_updated_at',
           'invoice_status',
           'shipment_status',
           'shipping_fee_total',

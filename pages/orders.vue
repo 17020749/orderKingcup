@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { collection, doc, getDoc, serverTimestamp, writeBatch } from 'firebase/firestore'
+import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore'
 import { INVOICE_STATUS_OPTIONS, ORDER_CLASSIFICATION_OPTIONS, ORDER_STATUS_OPTIONS, VAT_RATE_OPTIONS } from '~/constants/permissions'
 import type { CustomerDoc, InvoiceDoc, OrderDoc, OrderItemDoc, PaymentDoc, PrintOrderDoc, PrintOrderItemDoc, ProductDoc } from '~/types/models'
 import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
@@ -1009,16 +1009,17 @@ async function softDeleteOrder(row: OrderDoc) {
   if (initialBlocker) return showToast(initialBlocker, 'error')
 
   let latestOrder = row
+  let latestOrderItems: OrderItemDoc[] = []
   let latestRequests: any[] = []
   let latestInvoices: InvoiceDoc[] = []
   try {
-    const [latestOrderSnap, loadedRequests, loadedInvoices] = await Promise.all([
-      getDoc(doc(db, 'orders', row.id)),
+    const [persistedOrder, loadedRequests, loadedInvoices] = await Promise.all([
+      loadPersistedOrder(row.id),
       loadScopedExportRequests([row], true),
       loadScopedInvoicesForOrders([row], true),
     ])
-    if (!latestOrderSnap.exists()) throw new Error('Không tìm thấy đơn hàng cần xóa.')
-    latestOrder = { ...latestOrderSnap.data(), id: latestOrderSnap.id } as OrderDoc
+    latestOrder = persistedOrder.order
+    latestOrderItems = persistedOrder.items
     latestRequests = loadedRequests.filter(request => request.order_id === row.id && isActive(request))
     latestInvoices = loadedInvoices.filter(invoice => invoice.order_id === row.id && isActive(invoice))
   } catch (error) {
@@ -1036,11 +1037,21 @@ async function softDeleteOrder(row: OrderDoc) {
   if (!confirmed) return
 
   await withLoading(async () => {
-    const orderItems = itemsByOrder.value[row.id] || []
+    const [persistedOrder, loadedRequests, loadedInvoices, latestPrintingProgress] = await Promise.all([
+      loadPersistedOrder(row.id),
+      loadScopedExportRequests([latestOrder], true),
+      loadScopedInvoicesForOrders([latestOrder], true),
+      loadPrintingProgressForOrder(row.id),
+    ])
+    latestOrder = persistedOrder.order
+    latestOrderItems = persistedOrder.items
+    latestRequests = loadedRequests.filter(request => request.order_id === row.id && isActive(request))
+    latestInvoices = loadedInvoices.filter(invoice => invoice.order_id === row.id && isActive(invoice))
+
+    const orderItems = latestOrderItems
     const orderRequests = warehouseRequestsForDeleteCascade(latestRequests)
     const warehouseBlocker = warehouseOrderDeleteBlocker(latestOrder, latestRequests)
     if (warehouseBlocker) throw new Error(warehouseBlocker)
-    const latestPrintingProgress = await loadPrintingProgressForOrder(row.id)
     const latestPrintingBlocker = printingDeleteBlocker(latestOrder, latestPrintingProgress)
     if (latestPrintingBlocker) throw new Error(latestPrintingBlocker)
     const latestRelationBlocker = orderRelationDeleteBlocker(latestOrder)
@@ -1066,10 +1077,7 @@ async function softDeleteOrder(row: OrderDoc) {
         deleted: true,
         active: false,
         status: 'deleted',
-        window_state: 'hidden',
-        sort_at: deletedAt,
         deleted_at: deletedAt,
-        revision: Math.trunc(Number(request.revision || 0)) + 1,
         updated_at: deletedAt
       })
     })
@@ -1079,7 +1087,10 @@ async function softDeleteOrder(row: OrderDoc) {
         deleted: true,
         active: false,
         status: 'deleted',
+        window_state: 'hidden',
+        sort_at: deletedAt,
         deleted_at: deletedAt,
+        revision: Math.trunc(Number(request.revision || 0)) + 1,
         updated_at: deletedAt
       })
     })
