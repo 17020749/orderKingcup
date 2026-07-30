@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDoc,
+  increment,
   runTransaction,
   serverTimestamp,
 } from 'firebase/firestore'
@@ -1841,11 +1842,19 @@ export function useWarehouseCostTransactions() {
           exported_at: serverTimestamp(),
           actual_exported_at: serverTimestamp(),
           revision: currentRevision + 1,
+          sort_at: serverTimestamp(),
           updated_at: serverTimestamp(),
         })
-        if (request.order_id && input.orderSummaryPatch) tx.update(doc(db, 'orders', request.order_id), {
-          warehouse_fulfillment_status: input.orderSummaryPatch.warehouse_fulfillment_status || 'da_xuat_1_phan',
-          warehouse_request_status: input.orderSummaryPatch.warehouse_request_status || 'da_xuat',
+        if (currentRequest.order_id) tx.update(doc(db, 'orders', currentRequest.order_id), {
+          ...(input.orderSummaryPatch ? {
+            warehouse_fulfillment_status: input.orderSummaryPatch.warehouse_fulfillment_status || 'da_xuat_1_phan',
+            warehouse_request_status: input.orderSummaryPatch.warehouse_request_status || 'da_xuat',
+          } : {}),
+          export_request_revision: increment(1),
+          export_request_last_action: 'warehouse_export',
+          export_request_last_request_id: requestDocId,
+          export_request_updated_by: actor,
+          export_request_updated_at: serverTimestamp(),
           updated_at: serverTimestamp(),
         })
         tx.set(doc(collection(db, 'activity_logs')), activityPayload('order_export_requests', 'warehouse_export', request.request_id || requestDocId, { request_id: request.request_id || requestDocId, export_order_id: orderId, export_code: code, strategy: setting.strategy }, actor))
@@ -2144,11 +2153,19 @@ export function useWarehouseCostTransactions() {
           warehouse_handled_at: serverTimestamp(),
           last_cancelled_at: serverTimestamp(),
           revision: revisionOf(currentRequest) + 1,
+          sort_at: serverTimestamp(),
           updated_at: serverTimestamp(),
         })
-        if (currentRequest.order_id && input.orderSummaryPatch) tx.update(doc(db, 'orders', currentRequest.order_id), {
-          warehouse_fulfillment_status: input.orderSummaryPatch.warehouse_fulfillment_status || 'chua_xuat',
-          warehouse_request_status: input.orderSummaryPatch.warehouse_request_status || 'da_tiep_nhan',
+        if (currentRequest.order_id) tx.update(doc(db, 'orders', currentRequest.order_id), {
+          ...(input.orderSummaryPatch ? {
+            warehouse_fulfillment_status: input.orderSummaryPatch.warehouse_fulfillment_status || 'chua_xuat',
+            warehouse_request_status: input.orderSummaryPatch.warehouse_request_status || 'da_tiep_nhan',
+          } : {}),
+          export_request_revision: increment(1),
+          export_request_last_action: 'warehouse_export_cancel',
+          export_request_last_request_id: requestDocId,
+          export_request_updated_by: actor,
+          export_request_updated_at: serverTimestamp(),
           updated_at: serverTimestamp(),
         })
         tx.set(doc(collection(db, 'activity_logs')), activityPayload('export_orders', 'cancel_from_request', exportCode, {

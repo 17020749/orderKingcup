@@ -1066,7 +1066,10 @@ async function softDeleteOrder(row: OrderDoc) {
         deleted: true,
         active: false,
         status: 'deleted',
+        window_state: 'hidden',
+        sort_at: deletedAt,
         deleted_at: deletedAt,
+        revision: Math.trunc(Number(request.revision || 0)) + 1,
         updated_at: deletedAt
       })
     })

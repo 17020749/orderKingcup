@@ -8,6 +8,7 @@ import {
 import {
   doc,
   getDoc,
+  serverTimestamp,
   setDoc,
   updateDoc,
   writeBatch,
@@ -137,9 +138,11 @@ function generatedItemData(overrides = {}) {
   }
 }
 
-function releaseRequestPatch(exportId = 'request_export__request-a', sequence = 1, operationId = 'op-release-a') {
+function releaseRequestPatch(exportId = 'request_export__request-a', sequence = 1, operationId = 'op-release-a', now = serverTimestamp()) {
   return {
     status: 'da_xuat',
+    window_state: 'history',
+    sort_at: now,
     lifecycle_status: 'released',
     release_sequence: sequence,
     active_export_order_id: exportId,
@@ -148,10 +151,10 @@ function releaseRequestPatch(exportId = 'request_export__request-a', sequence = 
     warehouse_export_order_id: exportId,
     export_order_id: exportId,
     warehouse_handled_by: WAREHOUSE,
-    warehouse_handled_at: 'now',
+    warehouse_handled_at: now,
     warehouse_note: '',
-    exported_at: 'now',
-    actual_exported_at: 'now',
+    exported_at: now,
+    actual_exported_at: now,
     actual_export_summary_json: '[{"source_order_id":"order-a","source_order_item_id":"order-item-a","product_id":"product-a","warehouse_id":"warehouse-a","quantity":2}]',
     stock_movement_ids: [`move-${sequence}`],
     request_timeline_json: '[{"action":"warehouse_export"}]',
@@ -161,7 +164,18 @@ function releaseRequestPatch(exportId = 'request_export__request-a', sequence = 
     last_released_export_code: sequence === 1 ? 'PXK-YCXK-A' : `PXK-YCXK-A-${sequence}`,
     last_released_by: WAREHOUSE,
     revision: sequence,
-    updated_at: 'now',
+    updated_at: now,
+  }
+}
+
+function parentMarker(action, revision, now = serverTimestamp()) {
+  return {
+    export_request_revision: revision,
+    export_request_last_action: action,
+    export_request_last_request_id: 'request-a',
+    export_request_updated_by: WAREHOUSE,
+    export_request_updated_at: now,
+    updated_at: now,
   }
 }
 
@@ -224,13 +238,14 @@ after(async () => env.cleanup())
 test('release phải tạo export và cập nhật request trong cùng batch', async () => {
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   const batch = writeBatch(db)
+  const now = serverTimestamp()
   batch.set(doc(db, 'export_orders', 'request_export__request-a'), generatedExportData())
   batch.set(doc(db, 'export_order_items', 'request_export__request-a__1'), generatedItemData())
-  batch.update(doc(db, 'order_export_requests', 'request-a'), releaseRequestPatch())
+  batch.update(doc(db, 'order_export_requests', 'request-a'), releaseRequestPatch(undefined, undefined, undefined, now))
   batch.update(doc(db, 'orders', 'order-a'), {
     warehouse_fulfillment_status: 'da_xuat_1_phan',
     warehouse_request_status: 'da_xuat',
-    updated_at: 'now',
+    ...parentMarker('warehouse_export', 1, now),
   })
   await assertSucceeds(batch.commit())
 })
@@ -259,11 +274,13 @@ test('hủy release phải cancel export và mở lại request trong cùng batc
       })),
       setDoc(doc(db, 'export_orders', 'request_export__request-a'), generatedExportData()),
       setDoc(doc(db, 'export_order_items', 'request_export__request-a__1'), generatedItemData()),
+      updateDoc(doc(db, 'orders', 'order-a'), { export_request_revision: 1 }),
     ])
   })
 
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   const batch = writeBatch(db)
+  const now = serverTimestamp()
   batch.update(doc(db, 'export_orders', 'request_export__request-a'), {
     lifecycle_status: 'cancelled',
     deleted: true,
@@ -294,6 +311,8 @@ test('hủy release phải cancel export và mở lại request trong cùng batc
   })
   batch.update(doc(db, 'order_export_requests', 'request-a'), {
     status: 'da_tiep_nhan',
+    window_state: 'queue',
+    sort_at: now,
     lifecycle_status: 'release_cancelled',
     active_export_order_id: '',
     warehouse_export_code: '',
@@ -305,7 +324,7 @@ test('hủy release phải cancel export và mở lại request trong cùng batc
     actual_export_summary_json: '[]',
     stock_movement_ids: [],
     warehouse_handled_by: WAREHOUSE,
-    warehouse_handled_at: 'later',
+    warehouse_handled_at: now,
     warehouse_note: 'Khách hoãn',
     request_timeline_json: '[{"action":"warehouse_export_cancel"}]',
     operation_id: 'op-cancel-a',
@@ -316,12 +335,12 @@ test('hủy release phải cancel export và mở lại request trong cùng batc
     last_cancel_reason: 'Khách hoãn',
     cancel_count: 1,
     revision: 2,
-    updated_at: 'later',
+    updated_at: now,
   })
   batch.update(doc(db, 'orders', 'order-a'), {
     warehouse_fulfillment_status: 'cho_xu_ly',
     warehouse_request_status: 'da_tiep_nhan',
-    updated_at: 'later',
+    ...parentMarker('warehouse_export_cancel', 2, now),
   })
   await assertSucceeds(batch.commit())
 })
@@ -332,6 +351,7 @@ test('hủy chỉ request hoặc chỉ generated export đều bị chặn', asy
     await Promise.all([
       setDoc(doc(db, 'order_export_requests', 'request-a'), requestData({ ...releaseRequestPatch(), revision: 1 })),
       setDoc(doc(db, 'export_orders', 'request_export__request-a'), generatedExportData()),
+      updateDoc(doc(db, 'orders', 'order-a'), { export_request_revision: 1 }),
     ])
   })
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
@@ -382,19 +402,23 @@ test('hủy chỉ request hoặc chỉ generated export đều bị chặn', asy
 test('sau hủy có thể release lần hai bằng export ID sequence mới', async () => {
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore()
-    await setDoc(doc(db, 'order_export_requests', 'request-a'), requestData({
-      status: 'da_tiep_nhan',
-      lifecycle_status: 'release_cancelled',
-      release_sequence: 1,
-      cancel_count: 1,
-      last_cancelled_export_order_id: 'request_export__request-a',
-      revision: 2,
-    }))
+    await Promise.all([
+      setDoc(doc(db, 'order_export_requests', 'request-a'), requestData({
+        status: 'da_tiep_nhan',
+        lifecycle_status: 'release_cancelled',
+        release_sequence: 1,
+        cancel_count: 1,
+        last_cancelled_export_order_id: 'request_export__request-a',
+        revision: 2,
+      })),
+      updateDoc(doc(db, 'orders', 'order-a'), { export_request_revision: 2 }),
+    ])
   })
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   const exportId = 'request_export__request-a__2'
   const operationId = 'op-release-a-2'
   const batch = writeBatch(db)
+  const now = serverTimestamp()
   batch.set(doc(db, 'export_orders', exportId), generatedExportData({
     id: exportId,
     code: 'PXK-YCXK-A-2',
@@ -406,8 +430,13 @@ test('sau hủy có thể release lần hai bằng export ID sequence mới', as
     last_operation_id: operationId,
   }))
   batch.update(doc(db, 'order_export_requests', 'request-a'), {
-    ...releaseRequestPatch(exportId, 2, operationId),
+    ...releaseRequestPatch(exportId, 2, operationId, now),
     revision: 3,
+  })
+  batch.update(doc(db, 'orders', 'order-a'), {
+    warehouse_fulfillment_status: 'da_xuat_1_phan',
+    warehouse_request_status: 'da_xuat',
+    ...parentMarker('warehouse_export', 3, now),
   })
   await assertSucceeds(batch.commit())
   const snap = await getDoc(doc(db, 'order_export_requests', 'request-a'))

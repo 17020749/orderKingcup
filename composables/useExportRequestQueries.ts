@@ -17,22 +17,25 @@ import type { OrderDoc } from '~/types/models'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import {
   EXPORT_REQUEST_HISTORY_PAGE_SIZE,
-  EXPORT_REQUEST_HISTORY_STATUSES,
-  EXPORT_REQUEST_OWNER_FIELDS,
+  EXPORT_REQUEST_WINDOW_OWNER_FIELDS,
   EXPORT_REQUEST_QUEUE_LIMIT,
-  EXPORT_REQUEST_QUEUE_STATUSES,
+  EXPORT_REQUEST_QUEUE_PAGE_SIZE,
+  EXPORT_REQUEST_WINDOW_STATES,
   isVisibleExportRequest,
   mergeExportRequestWindows,
   safeExportRequestPageSize,
 } from '~/utils/exportRequestWindow.mjs'
 
-export type ExportRequestHistoryPage = {
+export type ExportRequestPage = {
   rows: any[]
   cursor: QueryDocumentSnapshot<DocumentData> | null
   hasMore: boolean
 }
 
-type RealtimeRowsHandler = (rows: any[]) => void
+type RealtimeRowsHandler = (
+  rows: any[],
+  cursor: QueryDocumentSnapshot<DocumentData> | null,
+) => void
 type RealtimeErrorHandler = (error: any) => void
 
 type OrderRequestCacheEntry = {
@@ -42,6 +45,10 @@ type OrderRequestCacheEntry = {
 
 const orderRequestCache = new Map<string, OrderRequestCacheEntry>()
 const ORDER_REQUEST_CACHE_TTL_MS = 20_000
+
+export function clearExportRequestOrderCache() {
+  orderRequestCache.clear()
+}
 
 function listenerErrorCode(error: any) {
   return String(error?.code || '').replace(/^firestore\//, '')
@@ -77,11 +84,13 @@ function listenQueryWithRetry(
       snapshot => {
         if (!active) return
         retryAttempt = 0
-        onRows(snapshot.docs.map(item => ({
+        clearExportRequestOrderCache()
+        const rows = snapshot.docs.map(item => ({
           ...item.data(),
           id: item.id,
           firestore_id: item.id,
-        })))
+        }))
+        onRows(rows, snapshot.docs.at(-1) || null)
       },
       error => {
         if (!active) return
@@ -137,7 +146,7 @@ export function useExportRequestQueries() {
   }
 
   function ownerFilter(currentEmail: string) {
-    return or(...EXPORT_REQUEST_OWNER_FIELDS.map(field => where(field, '==', currentEmail)))
+    return or(...EXPORT_REQUEST_WINDOW_OWNER_FIELDS.map(field => where(field, '==', currentEmail)))
   }
 
   function visibleScopedRows(rows: any[], orders: OrderDoc[]) {
@@ -149,7 +158,7 @@ export function useExportRequestQueries() {
     return mergeExportRequestWindows(rows.filter(row => (
       isVisibleExportRequest(row)
       && (
-        EXPORT_REQUEST_OWNER_FIELDS.some(field => (
+        EXPORT_REQUEST_WINDOW_OWNER_FIELDS.some(field => (
           String(row?.[field] || '').trim().toLowerCase() === currentEmail
         ))
         || ownedOrderIds.has(String(row?.order_id || '').trim())
@@ -162,9 +171,9 @@ export function useExportRequestQueries() {
     if (!currentEmail) return null
     return query(
       collection(db, 'order_export_requests'),
-      where('status', 'in', [...EXPORT_REQUEST_QUEUE_STATUSES]),
+      where('window_state', '==', EXPORT_REQUEST_WINDOW_STATES.queue),
       ownerFilter(currentEmail),
-      orderBy('updated_at', 'desc'),
+      orderBy('sort_at', 'desc'),
       queryLimit(EXPORT_REQUEST_QUEUE_LIMIT),
     )
   }
@@ -172,8 +181,8 @@ export function useExportRequestQueries() {
   function warehouseQueueQuery() {
     return query(
       collection(db, 'order_export_requests'),
-      where('status', 'in', [...EXPORT_REQUEST_QUEUE_STATUSES]),
-      orderBy('updated_at', 'desc'),
+      where('window_state', '==', EXPORT_REQUEST_WINDOW_STATES.queue),
+      orderBy('sort_at', 'desc'),
       queryLimit(EXPORT_REQUEST_QUEUE_LIMIT),
     )
   }
@@ -184,7 +193,7 @@ export function useExportRequestQueries() {
     onError: RealtimeErrorHandler,
   ): Unsubscribe {
     if (!canReadScopedRequests()) {
-      onRows([])
+      onRows([], null)
       return () => {}
     }
 
@@ -192,13 +201,13 @@ export function useExportRequestQueries() {
       ? warehouseQueueQuery()
       : scopedQueueQuery()
     if (!target) {
-      onRows([])
+      onRows([], null)
       return () => {}
     }
 
     return listenQueryWithRetry(
       target,
-      rows => onRows(visibleScopedRows(rows, orders)),
+      (rows, cursor) => onRows(visibleScopedRows(rows, orders), cursor),
       onError,
     )
   }
@@ -208,33 +217,37 @@ export function useExportRequestQueries() {
     onError: RealtimeErrorHandler,
   ): Unsubscribe {
     if (!canReadWarehouseRequests()) {
-      onRows([])
+      onRows([], null)
       return () => {}
     }
 
     return listenQueryWithRetry(
       warehouseQueueQuery(),
-      rows => onRows(mergeExportRequestWindows(rows.filter(isVisibleExportRequest), [])),
+      (rows, cursor) => onRows(
+        mergeExportRequestWindows(rows.filter(isVisibleExportRequest), []),
+        cursor,
+      ),
       onError,
     )
   }
 
-  async function fetchHistoryPage(input: {
+  async function fetchWindowPage(input: {
+    windowState: string
     scoped: boolean
     orders?: OrderDoc[]
     cursor?: QueryDocumentSnapshot<DocumentData> | null
     pageSize?: number
-  }): Promise<ExportRequestHistoryPage> {
+  }): Promise<ExportRequestPage> {
     const safeSize = safeExportRequestPageSize(input.pageSize, EXPORT_REQUEST_HISTORY_PAGE_SIZE)
     const constraints: any[] = [
-      where('status', 'in', [...EXPORT_REQUEST_HISTORY_STATUSES]),
+      where('window_state', '==', input.windowState),
     ]
     if (input.scoped && !canAll('export_requests.view_all')) {
       const currentEmail = email()
       if (!currentEmail) return { rows: [], cursor: null, hasMore: false }
       constraints.push(ownerFilter(currentEmail))
     }
-    constraints.push(orderBy('updated_at', 'desc'))
+    constraints.push(orderBy('sort_at', 'desc'))
     if (input.cursor) constraints.push(startAfter(input.cursor))
     constraints.push(queryLimit(safeSize + 1))
 
@@ -265,7 +278,13 @@ export function useExportRequestQueries() {
     pageSize = EXPORT_REQUEST_HISTORY_PAGE_SIZE,
   ) {
     if (!canReadScopedRequests()) return { rows: [], cursor: null, hasMore: false }
-    return fetchHistoryPage({ scoped: true, orders, cursor, pageSize })
+    return fetchWindowPage({
+      windowState: EXPORT_REQUEST_WINDOW_STATES.history,
+      scoped: true,
+      orders,
+      cursor,
+      pageSize,
+    })
   }
 
   async function loadWarehouseExportRequestHistoryPage(
@@ -273,7 +292,40 @@ export function useExportRequestQueries() {
     pageSize = EXPORT_REQUEST_HISTORY_PAGE_SIZE,
   ) {
     if (!canReadWarehouseRequests()) return { rows: [], cursor: null, hasMore: false }
-    return fetchHistoryPage({ scoped: false, cursor, pageSize })
+    return fetchWindowPage({
+      windowState: EXPORT_REQUEST_WINDOW_STATES.history,
+      scoped: false,
+      cursor,
+      pageSize,
+    })
+  }
+
+  async function loadScopedExportRequestQueuePage(
+    orders: OrderDoc[] = [],
+    cursor: QueryDocumentSnapshot<DocumentData> | null = null,
+    pageSize = EXPORT_REQUEST_QUEUE_PAGE_SIZE,
+  ) {
+    if (!canReadScopedRequests() || !cursor) return { rows: [], cursor: null, hasMore: false }
+    return fetchWindowPage({
+      windowState: EXPORT_REQUEST_WINDOW_STATES.queue,
+      scoped: true,
+      orders,
+      cursor,
+      pageSize,
+    })
+  }
+
+  async function loadWarehouseExportRequestQueuePage(
+    cursor: QueryDocumentSnapshot<DocumentData> | null = null,
+    pageSize = EXPORT_REQUEST_QUEUE_PAGE_SIZE,
+  ) {
+    if (!canReadWarehouseRequests() || !cursor) return { rows: [], cursor: null, hasMore: false }
+    return fetchWindowPage({
+      windowState: EXPORT_REQUEST_WINDOW_STATES.queue,
+      scoped: false,
+      cursor,
+      pageSize,
+    })
   }
 
   async function loadExportRequestsForOrder(orderId: string, force = false) {
@@ -317,6 +369,8 @@ export function useExportRequestQueries() {
     listenWarehouseExportRequests,
     loadScopedExportRequestHistoryPage,
     loadWarehouseExportRequestHistoryPage,
+    loadScopedExportRequestQueuePage,
+    loadWarehouseExportRequestQueuePage,
     loadExportRequestsForOrder,
     invalidateExportRequestsForOrder,
   }

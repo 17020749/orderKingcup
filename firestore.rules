@@ -1181,6 +1181,11 @@ service cloud.firestore {
       return onlyChanged([
         'warehouse_fulfillment_status',
         'warehouse_request_status',
+        'export_request_revision',
+        'export_request_last_action',
+        'export_request_last_request_id',
+        'export_request_updated_by',
+        'export_request_updated_at',
         'updated_at'
       ]);
     }
@@ -1887,8 +1892,42 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         ]);
     }
 
-    function orderWarehouseSummaryUpdateAllowed() {
+    function exportRequestOrderMarkerAllowed(orderId) {
+      let action = request.resource.data.get('export_request_last_action', '');
+      let requestId = request.resource.data.get('export_request_last_request_id', '');
+      let path = exportRequestPath(requestId);
+      return action in [
+          'create', 'update', 'delete', 'accept', 'reject',
+          'warehouse_export', 'warehouse_export_cancel'
+        ]
+        && requestId is string
+        && requestId != ''
+        && request.resource.data.get('export_request_revision', -1)
+          == resource.data.get('export_request_revision', 0) + 1
+        && emailFieldEquals(request.resource.data, 'export_request_updated_by', email())
+        && request.resource.data.get('export_request_updated_at', null) == request.time
+        && request.resource.data.get('updated_at', null) == request.time
+        && existsAfter(path)
+        && getAfter(path).data.get('order_id', '') == orderId
+        && (
+          action == 'create'
+            ? (
+              !exists(path)
+              && getAfter(path).data.get('revision', -1) == 1
+              && getAfter(path).data.get('created_at', null) == request.time
+              && getAfter(path).data.get('updated_at', null) == request.time
+            )
+            : (
+              exists(path)
+              && getAfter(path).data.get('revision', -1) == get(path).data.get('revision', 0) + 1
+              && getAfter(path).data.get('updated_at', null) == request.time
+            )
+        );
+    }
+
+    function orderWarehouseSummaryUpdateAllowed(orderId) {
       return onlyWarehouseSummaryChanged()
+        && exportRequestOrderMarkerAllowed(orderId)
         && (
           (
             hasPerm('orders.warehouse_export')
@@ -2101,7 +2140,50 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && getAfter(path).data.get('operation_id', '') == request.resource.data.get('operation_id', '');
     }
 
-    function exportCreateAllowed() {
+    function exportRequestWindowState(data) {
+      return data.get('deleted', false) == true
+          || data.get('active', true) == false
+          || data.get('status', '') == 'deleted'
+        ? 'hidden'
+        : data.get('status', '') in [
+            'cho_xu_ly', 'pending', 'dang_xu_ly', 'processing',
+            'da_tiep_nhan', 'accepted', 'cho_xuat_kho', 'ready_to_export',
+            'cho_xac_nhan', 'da_xuat_1_phan', 'da_xuat_mot_phan',
+            'partial_exported'
+          ]
+          ? 'queue'
+          : data.get('status', '') in [
+              'da_xuat', 'da_xuat_kho', 'da_xuat_du', 'exported',
+              'completed', 'hoan_thanh', 'tu_choi', 'rejected',
+              'cancelled', 'canceled', 'da_huy', 'loi'
+            ]
+            ? 'history'
+            : 'hidden';
+    }
+
+    function validExportRequestWindowMutation() {
+      return request.resource.data.get('window_state', '') == exportRequestWindowState(request.resource.data)
+        && request.resource.data.get('sort_at', null) is timestamp
+        && request.resource.data.get('sort_at', null) == request.time
+        && request.resource.data.get('updated_at', null) == request.time;
+    }
+
+    function exportRequestHasParentMarker(requestId, action) {
+      let orderId = request.resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      return orderId is string
+        && orderId != ''
+        && exists(path)
+        && existsAfter(path)
+        && getAfter(path).data.get('export_request_revision', -1)
+          == get(path).data.get('export_request_revision', 0) + 1
+        && getAfter(path).data.get('export_request_last_action', '') == action
+        && getAfter(path).data.get('export_request_last_request_id', '') == requestId
+        && emailFieldEquals(getAfter(path).data, 'export_request_updated_by', email())
+        && getAfter(path).data.get('export_request_updated_at', null) == request.time;
+    }
+
+    function exportCreateAllowed(requestId) {
       let userPathValue = userPath();
       let user = get(userPathValue).data;
       let path = orderPath(request.resource.data.order_id);
@@ -2118,12 +2200,28 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           || ownsOrderData(order)
         )
         && requestMatchesOrderData(order)
-        && ownEmailField(request.resource.data, 'requested_by');
+        && ownEmailField(request.resource.data, 'requested_by')
+        && request.resource.data.get('revision', -1) == 1
+        && validExportRequestWindowMutation()
+        && exportRequestHasParentMarker(requestId, 'create');
     }
 
-    function exportSoftDeleteAllowed() {
-      return softDeleteOnly()
+    function exportRequestSoftDeleteOnly() {
+      return onlyChanged([
+          'deleted', 'active', 'status', 'window_state', 'sort_at',
+          'deleted_at', 'revision', 'updated_at'
+        ])
+        && request.resource.data.get('deleted', false) == true
+        && request.resource.data.get('active', true) == false
+        && request.resource.data.get('status', '') == 'deleted';
+    }
+
+    function exportSoftDeleteAllowed(requestId) {
+      return exportRequestSoftDeleteOnly()
         && exportRequestCanBeDeleted()
+        && request.resource.data.get('revision', -1) == resource.data.get('revision', 0) + 1
+        && validExportRequestWindowMutation()
+        && exportRequestHasParentMarker(requestId, 'delete')
         && hasPerm('export_requests.delete')
         && (
           hasPerm('export_requests.view_all')
@@ -2134,8 +2232,10 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
     function exportOrderCascadeDeleteAllowed() {
       let orderId = resource.data.get('order_id', '');
       let path = orderPath(orderId);
-      return softDeleteOnly()
+      return exportRequestSoftDeleteOnly()
         && exportRequestCanBeDeleted()
+        && request.resource.data.get('revision', -1) == resource.data.get('revision', 0) + 1
+        && validExportRequestWindowMutation()
         && hasPerm('orders.delete')
         && orderId is string
         && exists(path)
@@ -2149,7 +2249,7 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && getAfter(path).data.get('active', true) == false;
     }
 
-    function exportOwnerEditAllowed() {
+    function exportOwnerEditAllowed(requestId) {
       return exportRequestEditable()
         && onlyChanged([
           'order_code',
@@ -2164,8 +2264,14 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           'updated_by',
           'payload_json',
           'request_timeline_json',
+          'window_state',
+          'sort_at',
+          'revision',
           'updated_at'
         ])
+        && request.resource.data.get('revision', -1) == resource.data.get('revision', 0) + 1
+        && validExportRequestWindowMutation()
+        && exportRequestHasParentMarker(requestId, 'update')
         && hasPerm('orders.warehouse_export')
         && (
           hasPerm('export_requests.view_all')
@@ -2184,7 +2290,8 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         'operation_id', 'last_operation_id', 'revision', 'last_released_export_order_id',
         'last_released_export_code', 'last_released_by', 'last_cancelled_export_order_id',
         'last_cancelled_export_code', 'last_cancelled_by', 'last_cancel_reason',
-        'last_cancelled_at', 'cancel_count', 'updated_at'
+        'last_cancelled_at', 'cancel_count', 'updated_at',
+        'window_state', 'sort_at'
       ]);
     }
 
@@ -2193,6 +2300,8 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && request.resource.data.get('status', '') == 'da_xuat'
         && resource.data.get('status', '') in ['da_tiep_nhan', 'cho_xuat_kho', 'loi']
         && exportRequestLifecycleFieldsOnly()
+        && validExportRequestWindowMutation()
+        && exportRequestHasParentMarker(requestId, 'warehouse_export')
         && hasAnyPerm(['export_requests.release', 'export_requests.process'])
         && ownEmailField(request.resource.data, 'warehouse_handled_by')
         && exportRequestReleaseLinkValid(requestId);
@@ -2203,12 +2312,14 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && request.resource.data.get('status', '') in ['da_tiep_nhan', 'cho_xuat_kho']
         && resource.data.get('status', '') == 'da_xuat'
         && exportRequestLifecycleFieldsOnly()
+        && validExportRequestWindowMutation()
+        && exportRequestHasParentMarker(requestId, 'warehouse_export_cancel')
         && hasAnyPerm(['export_requests.release', 'export_requests.process'])
         && ownEmailField(request.resource.data, 'warehouse_handled_by')
         && exportRequestCancelLinkValid(requestId);
     }
 
-    function exportWarehouseProcessAllowed() {
+    function exportWarehouseProcessAllowed(requestId) {
       let path = userPath();
       let user = get(path).data;
       let permissions = user.get('permissions_flat', []);
@@ -2225,8 +2336,15 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && activeUserData(user)
         && onlyChanged([
           'status', 'warehouse_handled_by', 'warehouse_handled_at',
-          'warehouse_note', 'request_timeline_json', 'updated_at'
+          'warehouse_note', 'request_timeline_json', 'window_state',
+          'sort_at', 'revision', 'updated_at'
         ])
+        && request.resource.data.get('revision', -1) == resource.data.get('revision', 0) + 1
+        && validExportRequestWindowMutation()
+        && exportRequestHasParentMarker(
+          requestId,
+          afterStatus == 'tu_choi' ? 'reject' : 'accept'
+        )
         && ownEmailField(request.resource.data, 'warehouse_handled_by')
         && (
           (
@@ -2490,7 +2608,10 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           && orderCanBeDeleted()
         )
         : (
-            changedAny(['warehouse_fulfillment_status', 'warehouse_request_status'])
+            changedAny([
+              'warehouse_fulfillment_status', 'warehouse_request_status',
+              'export_request_revision'
+            ])
             || (
               onlyChanged(['updated_at'])
               && hasAnyPerm([
@@ -2500,7 +2621,7 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
               ])
             )
           )
-          ? orderWarehouseSummaryUpdateAllowed()
+          ? orderWarehouseSummaryUpdateAllowed(docId)
           : changedAny(['customer_id', 'customer_code'])
             ? orderCustomerReassignmentAllowed(docId)
             : changedAny([
@@ -2782,17 +2903,17 @@ hasAnyPerm([
           )
         );
 
-      allow create: if exportCreateAllowed();
+      allow create: if exportCreateAllowed(docId);
 
       // Soft delete, lifecycle and ordinary edits have disjoint payloads. Lazy
       // dispatch keeps the valid path small enough for a multi-document batch.
       allow update: if changedAny(['deleted', 'active', 'deleted_at'])
-        ? (exportSoftDeleteAllowed() || exportOrderCascadeDeleteAllowed())
+        ? (exportSoftDeleteAllowed(docId) || exportOrderCascadeDeleteAllowed())
         : request.resource.data.get('lifecycle_status', '') == 'released'
           ? exportRequestReleaseAllowed(docId)
           : request.resource.data.get('lifecycle_status', '') == 'release_cancelled'
             ? exportRequestCancelAllowed(docId)
-            : (exportOwnerEditAllowed() || exportWarehouseProcessAllowed() || isAdmin());
+            : (exportOwnerEditAllowed(docId) || exportWarehouseProcessAllowed(docId));
 
       allow delete: if isAdmin()
         || (
