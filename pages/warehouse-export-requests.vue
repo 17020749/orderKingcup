@@ -5,6 +5,8 @@ import { formatDateTime, isActive, normalizeText, safeJsonParse, todayKey, toNum
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared lifecycle helper is also executed by Node client tests.
 import { canCancelExportRequestRelease, canReleaseExportRequest } from '~/utils/exportLifecycle.mjs'
+// @ts-ignore Shared window helper is executed directly by Node client tests.
+import { mergeExportRequestWindows } from '~/utils/exportRequestWindow.mjs'
 import {
   buildNotificationPayload,
   resolveSaleNotificationRecipients,
@@ -16,6 +18,7 @@ const {
   loadProducts,
   loadWarehouses,
   listenWarehouseExportRequests,
+  loadWarehouseExportRequestHistoryPage,
 } = useScopedQueries()
 const { requestLineProgress } = useWarehouseLogic()
 const { processExportRequestToExportOrder, cancelExportRequestRelease } = useWarehouseTransactions()
@@ -25,11 +28,16 @@ const { invalidateScopedCache } = useRepo()
 
 const supportingLoading = ref(false)
 const realtimeLoading = ref(true)
-const loading = computed(() => supportingLoading.value || realtimeLoading.value)
+const historyLoading = ref(false)
+const loading = computed(() => supportingLoading.value || realtimeLoading.value || historyLoading.value)
 const saving = ref(false)
 const search = ref('')
 const statusFilter = ref('')
 const rows = ref<any[]>([])
+const queueRows = ref<any[]>([])
+const historyRows = ref<any[]>([])
+const historyCursor = shallowRef<any>(null)
+const historyHasMore = ref(false)
 const products = ref<ProductDoc[]>([])
 const warehouses = ref<WarehouseDoc[]>([])
 const selectedRequest = ref<any>(null)
@@ -79,6 +87,11 @@ const summary = computed(() => filtered.value.reduce((out, row) => {
   if (row.status === 'tu_choi') out.rejected++
   return out
 }, { total: 0, waiting: 0, accepted: 0, exported: 0, rejected: 0 }))
+
+function syncRows() {
+  rows.value = mergeExportRequestWindows(queueRows.value, historyRows.value)
+  syncOpenRequestState(rows.value)
+}
 
 function statusLabel(status: any) {
   return ({
@@ -451,13 +464,20 @@ async function submitCancelRelease(row: any) {
 
 async function submitAction() {
   const row = actionRequest.value
-  if (!row || !actionType.value) return
+  const completedAction = actionType.value
+  if (!row || !completedAction) return
   saving.value = true
   try {
-    if (actionType.value === 'accept') await submitAccept(row)
-    if (actionType.value === 'reject') await submitReject(row)
-    if (actionType.value === 'release') await submitRelease(row)
-    if (actionType.value === 'cancel_release') await submitCancelRelease(row)
+    if (completedAction === 'accept') await submitAccept(row)
+    if (completedAction === 'reject') await submitReject(row)
+    if (completedAction === 'release') await submitRelease(row)
+    if (completedAction === 'cancel_release') await submitCancelRelease(row)
+    if (completedAction === 'reject' || completedAction === 'release') {
+      await loadHistory(true)
+    } else if (completedAction === 'cancel_release') {
+      historyRows.value = historyRows.value.filter(item => item.id !== row.id)
+      syncRows()
+    }
     showActionModal.value = false
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không xử lý được yêu cầu xuất kho.'), 'error')
@@ -498,16 +518,49 @@ function syncOpenRequestState(nextRows: any[]) {
   }
 }
 
+async function loadHistory(reset = false) {
+  if (!canOpenPage.value || historyLoading.value) return
+  if (!reset && !historyHasMore.value) return
+  if (reset) {
+    historyRows.value = []
+    historyCursor.value = null
+    historyHasMore.value = false
+    syncRows()
+  }
+
+  historyLoading.value = true
+  try {
+    const page = await loadWarehouseExportRequestHistoryPage(
+      reset ? null : historyCursor.value,
+      50,
+    )
+    historyRows.value = reset
+      ? page.rows
+      : mergeExportRequestWindows([], [...historyRows.value, ...page.rows])
+    historyCursor.value = page.cursor
+    historyHasMore.value = page.hasMore
+    syncRows()
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không tải được lịch sử yêu cầu xuất kho.'), 'error')
+  } finally {
+    historyLoading.value = false
+  }
+}
+
 function startRequestsListener() {
   stopRequestsListener?.()
   stopRequestsListener = null
   realtimeLoading.value = true
   stopRequestsListener = listenWarehouseExportRequests(
     nextRows => {
-      syncOpenRequestState(nextRows)
-      rows.value = nextRows
+      const previousIds = new Set(queueRows.value.map(row => row.id))
+      const nextIds = new Set(nextRows.map(row => row.id))
+      const queueRemoved = Array.from(previousIds).some(id => !nextIds.has(id))
+      queueRows.value = nextRows
+      syncRows()
       realtimeLoading.value = false
       lastRealtimeError = ''
+      if (queueRemoved) void loadHistory(true)
     },
     error => {
       realtimeLoading.value = false
@@ -531,6 +584,7 @@ async function loadRows(force = false) {
     products.value = productRows
     warehouses.value = warehouseRows
     startRequestsListener()
+    await loadHistory(true)
   } catch (error) {
     realtimeLoading.value = false
     showToast(reportFirebaseError(error, 'Không tải được danh sách yêu cầu xuất kho cần xử lý.'), 'error')
@@ -553,7 +607,7 @@ onBeforeUnmount(() => {
     </PageHeader>
 
     <div class="summary-grid">
-      <div class="summary-card"><label>Tổng yêu cầu</label><strong>{{ summary.total.toLocaleString('vi-VN') }}</strong></div>
+      <div class="summary-card"><label>Đang hiển thị</label><strong>{{ summary.total.toLocaleString('vi-VN') }}</strong></div>
       <div class="summary-card"><label>Chờ tiếp nhận</label><strong>{{ summary.waiting.toLocaleString('vi-VN') }}</strong></div>
       <div class="summary-card"><label>Đã tiếp nhận</label><strong>{{ summary.accepted.toLocaleString('vi-VN') }}</strong></div>
       <div class="summary-card"><label>Đã xuất kho</label><strong>{{ summary.exported.toLocaleString('vi-VN') }}</strong></div>
@@ -605,6 +659,14 @@ onBeforeUnmount(() => {
             <tr v-if="!filtered.length"><td colspan="8" class="empty">Không có yêu cầu xuất kho phù hợp.</td></tr>
           </tbody>
         </table>
+      </div>
+      <div v-if="canOpenPage && historyHasMore" style="display:flex;justify-content:center;margin-top:16px">
+        <button class="btn" :disabled="historyLoading" @click="loadHistory(false)">
+          {{ historyLoading ? 'Đang tải lịch sử...' : 'Tải thêm 50 phiếu lịch sử' }}
+        </button>
+      </div>
+      <div v-else-if="canOpenPage && historyRows.length" class="small subtle" style="text-align:center;margin-top:12px">
+        Đã tải hết lịch sử hiện có.
       </div>
     </div>
 
