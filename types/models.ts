@@ -148,6 +148,11 @@ export interface OrderDoc {
   payment_relation_revision?: number
   invoice_relation_revision?: number
   shipment_relation_revision?: number
+  export_request_revision?: number
+  export_request_last_action?: string
+  export_request_last_request_id?: string
+  export_request_updated_by?: string
+  export_request_updated_at?: any
   relation_last_module?: string
   relation_last_action?: string
   relation_last_document_id?: string

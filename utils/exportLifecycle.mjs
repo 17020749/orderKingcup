@@ -102,6 +102,7 @@ export function buildReleasedRequestPatch(input = {}) {
   }
   return {
     status: EXPORT_REQUEST_STATUSES.released,
+    window_state: 'history',
     lifecycle_status: 'released',
     release_sequence: sequence,
     active_export_order_id: exportOrderId,
@@ -134,6 +135,7 @@ export function buildCancelledReleaseRequestPatch(input = {}) {
 
   return {
     status: EXPORT_REQUEST_STATUSES.accepted,
+    window_state: 'queue',
     lifecycle_status: 'release_cancelled',
     active_export_order_id: '',
     warehouse_export_code: '',

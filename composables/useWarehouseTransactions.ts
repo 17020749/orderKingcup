@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDoc,
+  increment,
   runTransaction,
   serverTimestamp
 } from 'firebase/firestore'
@@ -2473,12 +2474,18 @@ export function useWarehouseTransactions() {
           exported_at: serverTimestamp(),
           actual_exported_at: serverTimestamp(),
           revision: currentRevision + 1,
+          sort_at: serverTimestamp(),
           updated_at: serverTimestamp(),
         })
         resultRevision = 1
-        if (request.order_id && input.orderSummaryPatch) {
-          tx.update(doc(db, 'orders', request.order_id), {
-            ...input.orderSummaryPatch,
+        if (currentRequest.order_id) {
+          tx.update(doc(db, 'orders', currentRequest.order_id), {
+            ...(input.orderSummaryPatch || {}),
+            export_request_revision: increment(1),
+            export_request_last_action: 'warehouse_export',
+            export_request_last_request_id: requestDocId,
+            export_request_updated_by: handledBy,
+            export_request_updated_at: serverTimestamp(),
             updated_at: serverTimestamp()
           })
         }
@@ -2767,11 +2774,17 @@ export function useWarehouseTransactions() {
           warehouse_handled_at: serverTimestamp(),
           last_cancelled_at: serverTimestamp(),
           revision: revisionOf(currentRequest) + 1,
+          sort_at: serverTimestamp(),
           updated_at: serverTimestamp(),
         })
-        if (request.order_id && input.orderSummaryPatch) {
-          tx.update(doc(db, 'orders', request.order_id), {
-            ...input.orderSummaryPatch,
+        if (currentRequest.order_id) {
+          tx.update(doc(db, 'orders', currentRequest.order_id), {
+            ...(input.orderSummaryPatch || {}),
+            export_request_revision: increment(1),
+            export_request_last_action: 'warehouse_export_cancel',
+            export_request_last_request_id: requestDocId,
+            export_request_updated_by: cancelledBy,
+            export_request_updated_at: serverTimestamp(),
             updated_at: serverTimestamp(),
           })
         }

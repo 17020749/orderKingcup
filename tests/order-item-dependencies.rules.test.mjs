@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { after, before, beforeEach, test } from 'node:test'
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing'
-import { doc, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
+import { doc, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
 
 const projectId = 'demo-order-item-dependencies'
 const EDITOR = 'editor@example.com'
@@ -142,6 +142,7 @@ test('new print item must reference an active item in the same source order', as
 function releaseBatch(db, itemOverrides = {}) {
   const batch = writeBatch(db)
   const exportId = 'request_export__request-active'
+  const now = serverTimestamp()
   batch.set(doc(db, 'export_orders', exportId), {
     id: exportId, code: 'PXK-YCXK-A', export_code: 'PXK-YCXK-A', source_request_id: 'request-active',
     sync_source: 'kingcup_firestore:request-active', source: 'kingcup_firestore', lifecycle_status: 'released',
@@ -156,13 +157,22 @@ function releaseBatch(db, itemOverrides = {}) {
     ...itemOverrides,
   })
   batch.update(doc(db, 'order_export_requests', 'request-active'), {
-    status: 'da_xuat', lifecycle_status: 'released', release_sequence: 1,
+    status: 'da_xuat', window_state: 'history', sort_at: now,
+    lifecycle_status: 'released', release_sequence: 1,
     active_export_order_id: exportId, export_order_id: exportId, warehouse_export_order_id: exportId, warehouse_export_id: exportId,
-    warehouse_export_code: 'PXK-YCXK-A', warehouse_handled_by: WAREHOUSE, warehouse_handled_at: 'now',
-    warehouse_note: '', exported_at: 'now', actual_exported_at: 'now',
+    warehouse_export_code: 'PXK-YCXK-A', warehouse_handled_by: WAREHOUSE, warehouse_handled_at: now,
+    warehouse_note: '', exported_at: now, actual_exported_at: now,
     actual_export_summary_json: '[]', stock_movement_ids: [], request_timeline_json: '[]',
     operation_id: 'op-release', last_operation_id: 'op-release', last_released_export_order_id: exportId,
-    last_released_export_code: 'PXK-YCXK-A', last_released_by: WAREHOUSE, revision: 1, updated_at: 'now',
+    last_released_export_code: 'PXK-YCXK-A', last_released_by: WAREHOUSE, revision: 1, updated_at: now,
+  })
+  batch.update(doc(db, 'orders', 'order-active'), {
+    export_request_revision: 1,
+    export_request_last_action: 'warehouse_export',
+    export_request_last_request_id: 'request-active',
+    export_request_updated_by: WAREHOUSE,
+    export_request_updated_at: now,
+    updated_at: now,
   })
   return batch
 }

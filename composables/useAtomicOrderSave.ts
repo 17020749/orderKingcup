@@ -25,6 +25,7 @@ import {
   preservePersistedOrderIdentityForEdit,
   resolveOrderOwnershipForSave,
   shouldReadExistingInvoiceSnapshot,
+  stripOrderEditSystemFields,
 } from '~/utils/orderAtomicSave.mjs'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
@@ -321,8 +322,11 @@ export function useAtomicOrderSave() {
               }
             : {}
 
+      const safeOrderPayload = input.mode === 'edit'
+        ? stripOrderEditSystemFields(input.orderPayload)
+        : input.orderPayload
       const candidateFinalOrderPayload = {
-        ...input.orderPayload,
+        ...safeOrderPayload,
         ...(selectedCustomerData ? {
           customer_id: input.customerId,
           customer_code: selectedCustomerData.customer_code,

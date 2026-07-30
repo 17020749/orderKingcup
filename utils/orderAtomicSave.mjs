@@ -11,6 +11,9 @@ export const ORDER_EDIT_SYSTEM_FIELDS = Object.freeze([
   'shipment_record_count', 'payment_relation_revision', 'invoice_relation_revision',
   'shipment_relation_revision', 'relation_last_module', 'relation_last_action',
   'relation_last_document_id', 'relation_updated_by', 'relation_updated_at',
+  'export_request_revision', 'export_request_last_action',
+  'export_request_last_request_id', 'export_request_updated_by',
+  'export_request_updated_at',
   'invoice_status', 'shipment_status', 'shipping_fee_total', 'cod_amount_total',
   'deleted', 'active', 'status', 'deleted_at', 'created_at',
 ])

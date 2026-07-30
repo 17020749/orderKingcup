@@ -90,6 +90,77 @@ function ownership(email) {
   }
 }
 
+function requestWindowState(status, active = true, deleted = false) {
+  if (!active || deleted || status === 'deleted') return 'hidden'
+  if (['da_xuat', 'tu_choi', 'rejected', 'loi'].includes(status)) return 'history'
+  return 'queue'
+}
+
+function exportRequestMarker(action, requestId, actor, revision, now) {
+  return {
+    export_request_revision: revision,
+    export_request_last_action: action,
+    export_request_last_request_id: requestId,
+    export_request_updated_by: actor,
+    export_request_updated_at: now,
+    updated_at: now,
+  }
+}
+
+function atomicRequestCreate(db, requestId, orderId, actor, data = {}) {
+  const batch = writeBatch(db)
+  const now = serverTimestamp()
+  const status = data.status || 'cho_xu_ly'
+  batch.set(doc(db, 'order_export_requests', requestId), {
+    id: requestId,
+    request_id: requestId,
+    order_id: orderId,
+    requested_by: actor,
+    ...data,
+    status,
+    active: data.active !== false,
+    deleted: data.deleted === true,
+    revision: 1,
+    window_state: requestWindowState(status, data.active !== false, data.deleted === true),
+    sort_at: now,
+    created_at: now,
+    updated_at: now,
+  })
+  batch.update(doc(db, 'orders', orderId), {
+    ...exportRequestMarker('create', requestId, actor, 1, now),
+  })
+  return batch.commit()
+}
+
+function atomicRequestUpdate(db, {
+  requestId,
+  orderId = 'order-a',
+  actor,
+  action,
+  patch,
+  requestRevision = 1,
+  parentRevision = 1,
+  orderPatch = {},
+}) {
+  const batch = writeBatch(db)
+  const now = serverTimestamp()
+  const status = patch.status || 'cho_xu_ly'
+  const active = patch.active !== false
+  const deleted = patch.deleted === true
+  batch.update(doc(db, 'order_export_requests', requestId), {
+    ...patch,
+    revision: requestRevision,
+    window_state: requestWindowState(status, active, deleted),
+    sort_at: now,
+    updated_at: now,
+  })
+  batch.update(doc(db, 'orders', orderId), {
+    ...orderPatch,
+    ...exportRequestMarker(action, requestId, actor, parentRevision, now),
+  })
+  return batch.commit()
+}
+
 async function seed() {
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore()
@@ -289,7 +360,8 @@ test('Xóa mềm order và order_items trong cùng batch là nguyên tử', asyn
     deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now'
   })
   batch.update(doc(db, 'order_export_requests', 'export-delete'), {
-    deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now'
+    deleted: true, active: false, status: 'deleted', window_state: 'hidden',
+    sort_at: serverTimestamp(), deleted_at: 'now', revision: 1, updated_at: serverTimestamp()
   })
 
   await assertSucceeds(batch.commit())
@@ -342,10 +414,10 @@ test('User A không thể sửa hoặc hard-delete payment của User B', async 
 
 test('User A tạo phiếu xuất order A nhưng không thể giả phiếu cho order B', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
-  await assertSucceeds(setDoc(doc(db, 'order_export_requests', 'export-own'), {
+  await assertSucceeds(atomicRequestCreate(db, 'export-own', 'order-a', A, {
     order_id: 'order-a', requested_by: A, ...ownership(A), status: 'cho_xu_ly', payload_json: '{}', active: true
   }))
-  await assertFails(setDoc(doc(db, 'order_export_requests', 'export-forged'), {
+  await assertFails(atomicRequestCreate(db, 'export-forged', 'order-b', A, {
     order_id: 'order-b', requested_by: A, ...ownership(A), status: 'cho_xu_ly', payload_json: '{}', active: true
   }))
 })
@@ -375,6 +447,7 @@ test('Sale chỉ tạo/sửa yêu cầu, không được tự tiếp nhận, t�
 test('Sale sửa được yêu cầu đang chờ bằng đúng batch của page', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
   const batch = writeBatch(db)
+  const now = serverTimestamp()
 
   batch.update(doc(db, 'order_export_requests', 'export-a'), {
     order_code: 'order-a',
@@ -383,12 +456,15 @@ test('Sale sửa được yêu cầu đang chờ bằng đúng batch của page'
     updated_by: A,
     payload_json: JSON.stringify({ note: 'Sale sửa nội dung', items: [] }),
     request_timeline_json: JSON.stringify([{ action: 'update', actor: A }]),
-    updated_at: 'now'
+    revision: 1,
+    window_state: 'queue',
+    sort_at: now,
+    updated_at: now
   })
   batch.update(doc(db, 'orders', 'order-a'), {
     warehouse_fulfillment_status: 'cho_xu_ly',
     warehouse_request_status: 'cho_xu_ly',
-    updated_at: 'now'
+    ...exportRequestMarker('update', 'export-a', A, 1, now)
   })
   batch.set(doc(collection(db, 'activity_logs')), {
     module: 'order_export_requests',
@@ -414,18 +490,22 @@ test('Sale không thể giả updated_by khi sửa yêu cầu', async () => {
 test('Sale xóa mềm được yêu cầu chưa được Kho tiếp nhận', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
   const batch = writeBatch(db)
+  const now = serverTimestamp()
 
   batch.update(doc(db, 'order_export_requests', 'export-a'), {
     deleted: true,
     active: false,
     status: 'deleted',
+    window_state: 'hidden',
+    sort_at: now,
     deleted_at: 'now',
-    updated_at: 'now'
+    revision: 1,
+    updated_at: now
   })
   batch.update(doc(db, 'orders', 'order-a'), {
     warehouse_fulfillment_status: 'chua_xuat',
     warehouse_request_status: '',
-    updated_at: 'now'
+    ...exportRequestMarker('delete', 'export-a', A, 1, now)
   })
   batch.set(doc(collection(db, 'activity_logs')), {
     module: 'order_export_requests',
@@ -472,8 +552,11 @@ test('User có users.manage không thể tự cấp quyền admin', async () => 
 
 test('Warehouse chỉ sửa field xử lý, không sửa payload phiếu', async () => {
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
-  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
-    status: 'da_tiep_nhan', warehouse_handled_by: WAREHOUSE, updated_at: 'now'
+  await assertSucceeds(atomicRequestUpdate(db, {
+    requestId: 'export-a',
+    actor: WAREHOUSE,
+    action: 'accept',
+    patch: { status: 'da_tiep_nhan', warehouse_handled_by: WAREHOUSE },
   }))
   await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a'), { payload_json: '{"forged":true}' }))
   await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
@@ -497,10 +580,11 @@ test('Quyền trang Kho xử lý YC xuất chỉ được đọc, không đượ
 test('Quyền tiếp nhận chỉ được tiếp nhận, không được từ chối hoặc cho xuất', async () => {
   const db = env.authenticatedContext(WAREHOUSE_ACCEPT, { email: WAREHOUSE_ACCEPT }).firestore()
 
-  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
-    status: 'da_tiep_nhan',
-    warehouse_handled_by: WAREHOUSE_ACCEPT,
-    updated_at: 'now'
+  await assertSucceeds(atomicRequestUpdate(db, {
+    requestId: 'export-a',
+    actor: WAREHOUSE_ACCEPT,
+    action: 'accept',
+    patch: { status: 'da_tiep_nhan', warehouse_handled_by: WAREHOUSE_ACCEPT },
   }))
   await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
     status: 'tu_choi',
@@ -518,10 +602,11 @@ test('Quyền tiếp nhận chỉ được tiếp nhận, không được từ c
 test('Quyền từ chối chỉ được từ chối, không được tiếp nhận hoặc cho xuất', async () => {
   const db = env.authenticatedContext(WAREHOUSE_REJECT, { email: WAREHOUSE_REJECT }).firestore()
 
-  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
-    status: 'tu_choi',
-    warehouse_handled_by: WAREHOUSE_REJECT,
-    updated_at: 'now'
+  await assertSucceeds(atomicRequestUpdate(db, {
+    requestId: 'export-a',
+    actor: WAREHOUSE_REJECT,
+    action: 'reject',
+    patch: { status: 'tu_choi', warehouse_handled_by: WAREHOUSE_REJECT },
   }))
   await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
     status: 'da_tiep_nhan',
@@ -545,6 +630,7 @@ test('Quyền cho xuất được tạo phiếu xuất thật và cập nhật r
   const exportId = 'request_export__export-a-accepted'
   const operationId = 'op-release-test'
   const batch = writeBatch(db)
+  const now = serverTimestamp()
   batch.set(doc(db, 'export_orders', exportId), {
     id: exportId,
     code: 'PX-YC-001',
@@ -588,6 +674,8 @@ test('Quyền cho xuất được tạo phiếu xuất thật và cập nhật r
   })
   batch.update(doc(db, 'order_export_requests', 'export-a-accepted'), {
     status: 'da_xuat',
+    window_state: 'history',
+    sort_at: now,
     lifecycle_status: 'released',
     release_sequence: 1,
     active_export_order_id: exportId,
@@ -596,10 +684,10 @@ test('Quyền cho xuất được tạo phiếu xuất thật và cập nhật r
     warehouse_export_order_id: exportId,
     export_order_id: exportId,
     warehouse_handled_by: WAREHOUSE_RELEASE,
-    warehouse_handled_at: 'now',
+    warehouse_handled_at: now,
     warehouse_note: '',
-    exported_at: 'now',
-    actual_exported_at: 'now',
+    exported_at: now,
+    actual_exported_at: now,
     actual_export_summary_json: '[{"source_order_id":"order-a","source_order_item_id":"item-a","product_id":"product-existing","warehouse_id":"wh-a","quantity":2}]',
     stock_movement_ids: ['move-release'],
     request_timeline_json: '[]',
@@ -609,12 +697,12 @@ test('Quyền cho xuất được tạo phiếu xuất thật và cập nhật r
     last_released_export_code: 'PX-YC-001',
     last_released_by: WAREHOUSE_RELEASE,
     revision: 1,
-    updated_at: 'now'
+    updated_at: now
   })
   batch.update(doc(db, 'orders', 'order-a'), {
     warehouse_fulfillment_status: 'da_xuat_1_phan',
     warehouse_request_status: 'da_xuat',
-    updated_at: 'now'
+    ...exportRequestMarker('warehouse_export', 'export-a-accepted', WAREHOUSE_RELEASE, 1, now)
   })
   await assertSucceeds(batch.commit())
 
@@ -938,8 +1026,11 @@ test('Admin có thể tạo dữ liệu con cho order của user khác bằng ba
 
 test('Chủ phiếu chỉ sửa khi phiếu còn ở trạng thái cho phép', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
-  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
-    payload_json: '{"quantity":2}', updated_by: A, updated_at: 'now'
+  await assertSucceeds(atomicRequestUpdate(db, {
+    requestId: 'export-a',
+    actor: A,
+    action: 'update',
+    patch: { payload_json: '{"quantity":2}', updated_by: A },
   }))
   await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a-done'), {
     payload_json: '{"quantity":999}', updated_at: 'now'
@@ -980,8 +1071,11 @@ test('User có quyền sản phẩm được thêm, sửa và xóa mềm nhưng 
 
 test('Chủ phiếu được xóa mềm phiếu chưa xuất nhưng không xóa phiếu đã xuất', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
-  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'export-a'), {
-    deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now'
+  await assertSucceeds(atomicRequestUpdate(db, {
+    requestId: 'export-a',
+    actor: A,
+    action: 'delete',
+    patch: { deleted: true, active: false, status: 'deleted', deleted_at: 'now' },
   }))
   await assertFails(updateDoc(doc(db, 'order_export_requests', 'export-a-done'), {
     deleted: true, active: false, status: 'deleted', deleted_at: 'now', updated_at: 'now'
@@ -1010,6 +1104,7 @@ test('Người nhận notification chỉ được đổi trạng thái đọc, k
 test('Tạo phiếu xuất và cập nhật tổng hợp đơn trong cùng batch', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
   const batch = writeBatch(db)
+  const now = serverTimestamp()
   batch.set(doc(db, 'order_export_requests', 'export-batch-create'), {
     id: 'export-batch-create',
     request_id: 'YCXK-BATCH-CREATE',
@@ -1020,13 +1115,16 @@ test('Tạo phiếu xuất và cập nhật tổng hợp đơn trong cùng batch
     payload_json: '{"items":[{"product_code":"SP001","export_quantity":1}]}',
     active: true,
     deleted: false,
-    created_at: 'now',
-    updated_at: 'now'
+    revision: 1,
+    window_state: 'queue',
+    sort_at: now,
+    created_at: now,
+    updated_at: now
   })
   batch.update(doc(db, 'orders', 'order-a'), {
     warehouse_fulfillment_status: 'cho_xu_ly',
     warehouse_request_status: 'cho_xu_ly',
-    updated_at: 'now'
+    ...exportRequestMarker('create', 'export-batch-create', A, 1, now)
   })
   batch.set(doc(collection(db, 'activity_logs')), {
     module: 'order_export_requests',
@@ -1043,17 +1141,21 @@ test('Tạo phiếu xuất và cập nhật tổng hợp đơn trong cùng batch
 test('Xóa mềm phiếu chưa xuất và cập nhật lại tổng hợp đơn trong cùng batch', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
   const batch = writeBatch(db)
+  const now = serverTimestamp()
   batch.update(doc(db, 'order_export_requests', 'export-a'), {
     deleted: true,
     active: false,
     status: 'deleted',
+    window_state: 'hidden',
+    sort_at: now,
     deleted_at: 'now',
-    updated_at: 'now'
+    revision: 1,
+    updated_at: now
   })
   batch.update(doc(db, 'orders', 'order-a'), {
     warehouse_fulfillment_status: 'chua_xuat',
     warehouse_request_status: '',
-    updated_at: 'now'
+    ...exportRequestMarker('delete', 'export-a', A, 1, now)
   })
   batch.set(doc(collection(db, 'activity_logs')), {
     module: 'order_export_requests',
@@ -1782,6 +1884,7 @@ test('V7.5 quyền release ghi revision và operation id qua liên kết nguyên
   const exportId = 'export-v75'
   const operationId = 'op-v75-release'
   const batch = writeBatch(db)
+  const now = serverTimestamp()
   batch.set(doc(db, 'export_orders', exportId), {
     id: exportId, code: 'PXK-V75', export_code: 'PXK-V75',
     source_request_id: 'export-a-accepted',
@@ -1793,16 +1896,20 @@ test('V7.5 quyền release ghi revision và operation id qua liên kết nguyên
     status: 'completed', active: true, deleted: false
   })
   batch.update(doc(db, 'order_export_requests', 'export-a-accepted'), {
-    status: 'da_xuat', lifecycle_status: 'released', release_sequence: 1,
+    status: 'da_xuat', window_state: 'history', sort_at: now,
+    lifecycle_status: 'released', release_sequence: 1,
     active_export_order_id: exportId, warehouse_export_code: 'PXK-V75',
     warehouse_export_id: exportId, warehouse_export_order_id: exportId,
     export_order_id: exportId, warehouse_handled_by: WAREHOUSE_RELEASE,
-    warehouse_handled_at: 'now', warehouse_note: '', exported_at: 'now',
-    actual_exported_at: 'now', actual_export_summary_json: '[]',
+    warehouse_handled_at: now, warehouse_note: '', exported_at: now,
+    actual_exported_at: now, actual_export_summary_json: '[]',
     stock_movement_ids: ['move-v75'], request_timeline_json: '[]',
     operation_id: operationId, last_operation_id: operationId,
     last_released_export_order_id: exportId, last_released_export_code: 'PXK-V75',
-    last_released_by: WAREHOUSE_RELEASE, revision: 1, updated_at: 'now'
+    last_released_by: WAREHOUSE_RELEASE, revision: 1, updated_at: now
+  })
+  batch.update(doc(db, 'orders', 'order-a'), {
+    ...exportRequestMarker('warehouse_export', 'export-a-accepted', WAREHOUSE_RELEASE, 1, now),
   })
   await assertSucceeds(batch.commit())
 })

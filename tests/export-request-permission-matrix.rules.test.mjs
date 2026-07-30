@@ -1,7 +1,15 @@
 import { readFileSync } from 'node:fs'
 import { after, before, beforeEach, test } from 'node:test'
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing'
-import { deleteDoc, doc, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
+import {
+  deleteDoc,
+  doc,
+  getDoc,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  writeBatch,
+} from 'firebase/firestore'
 
 const projectId = 'demo-export-request-permission-matrix'
 const ACTOR = 'actor@example.com'
@@ -81,14 +89,25 @@ function client() {
 function createRequestBatch(db, suffix, orderId, orderOwner) {
   const requestId = `request-create-${suffix}`
   const batch = writeBatch(db)
+  const now = serverTimestamp()
   batch.set(doc(db, 'order_export_requests', requestId), {
     ...exportRequest(requestId, orderId, ACTOR),
     ...ownership(orderOwner),
+    revision: 1,
+    window_state: 'queue',
+    sort_at: now,
+    created_at: now,
+    updated_at: now,
   })
   batch.update(doc(db, 'orders', orderId), {
     warehouse_fulfillment_status: 'cho_xu_ly',
     warehouse_request_status: 'cho_xu_ly',
-    updated_at: `create-${suffix}`,
+    export_request_revision: 1,
+    export_request_last_action: 'create',
+    export_request_last_request_id: requestId,
+    export_request_updated_by: ACTOR,
+    export_request_updated_at: now,
+    updated_at: now,
   })
   return batch.commit()
 }
@@ -96,16 +115,25 @@ function createRequestBatch(db, suffix, orderId, orderOwner) {
 function editRequestBatch(db, suffix, orderId) {
   const requestId = `request-${suffix}`
   const batch = writeBatch(db)
+  const now = serverTimestamp()
   batch.update(doc(db, 'order_export_requests', requestId), {
     payload_json: JSON.stringify({ edited: true }),
     request_timeline_json: JSON.stringify([{ action: 'edit', actor: ACTOR }]),
     updated_by: ACTOR,
-    updated_at: `edit-${suffix}`,
+    revision: 1,
+    window_state: 'queue',
+    sort_at: now,
+    updated_at: now,
   })
   batch.update(doc(db, 'orders', orderId), {
     warehouse_fulfillment_status: 'cho_xu_ly',
     warehouse_request_status: 'cho_xu_ly',
-    updated_at: `edit-${suffix}`,
+    export_request_revision: 1,
+    export_request_last_action: 'update',
+    export_request_last_request_id: requestId,
+    export_request_updated_by: ACTOR,
+    export_request_updated_at: now,
+    updated_at: now,
   })
   return batch.commit()
 }
@@ -113,17 +141,26 @@ function editRequestBatch(db, suffix, orderId) {
 function deleteRequestBatch(db, suffix, orderId) {
   const requestId = `request-${suffix}`
   const batch = writeBatch(db)
+  const now = serverTimestamp()
   batch.update(doc(db, 'order_export_requests', requestId), {
     deleted: true,
     active: false,
     status: 'deleted',
-    deleted_at: `delete-${suffix}`,
-    updated_at: `delete-${suffix}`,
+    window_state: 'hidden',
+    sort_at: now,
+    deleted_at: now,
+    revision: 1,
+    updated_at: now,
   })
   batch.update(doc(db, 'orders', orderId), {
     warehouse_fulfillment_status: 'chua_xuat',
     warehouse_request_status: '',
-    updated_at: `delete-${suffix}`,
+    export_request_revision: 1,
+    export_request_last_action: 'delete',
+    export_request_last_request_id: requestId,
+    export_request_updated_by: ACTOR,
+    export_request_updated_at: now,
+    updated_at: now,
   })
   return batch.commit()
 }
@@ -190,18 +227,18 @@ test('orders.delete is never a substitute for direct export request delete', asy
   await assertFails(deleteDoc(doc(db, 'order_export_requests', 'request-own')))
 })
 
-test('export_requests.delete authorizes the own child soft-delete itself', async () => {
+test('export_requests.delete rejects a child-only soft-delete without parent marker', async () => {
   await setPermissions(['export_requests.delete'])
   const db = client()
-  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'request-own'), {
+  await assertFails(updateDoc(doc(db, 'order_export_requests', 'request-own'), {
     deleted: true, active: false, status: 'deleted', deleted_at: 'child-only', updated_at: 'child-only',
   }))
 })
 
-test('export_requests.delete authorizes the own parent warehouse summary update', async () => {
+test('export_requests.delete rejects a parent-only summary update without child mutation', async () => {
   await setPermissions(['export_requests.delete'])
   const db = client()
-  await assertSucceeds(updateDoc(doc(db, 'orders', 'order-own'), {
+  await assertFails(updateDoc(doc(db, 'orders', 'order-own'), {
     warehouse_fulfillment_status: 'chua_xuat', warehouse_request_status: '', updated_at: 'parent-only',
   }))
 })
@@ -247,4 +284,48 @@ test('business locks and immutable ownership win even with view_all plus action'
   await assertFails(updateDoc(doc(db, 'order_export_requests', 'request-foreign'), {
     order_id: 'order-own', updated_by: ACTOR, updated_at: 'forged-parent',
   }))
+})
+
+test('rejects forged window state and non-incrementing parent revision', async () => {
+  await setPermissions(['orders.warehouse_export'])
+  const db = client()
+  const requestId = 'request-window-forged'
+  const now = serverTimestamp()
+  const wrongWindow = writeBatch(db)
+  wrongWindow.set(doc(db, 'order_export_requests', requestId), {
+    ...exportRequest(requestId, 'order-create-own', ACTOR),
+    revision: 1,
+    window_state: 'history',
+    sort_at: now,
+    created_at: now,
+    updated_at: now,
+  })
+  wrongWindow.update(doc(db, 'orders', 'order-create-own'), {
+    export_request_revision: 1,
+    export_request_last_action: 'create',
+    export_request_last_request_id: requestId,
+    export_request_updated_by: ACTOR,
+    export_request_updated_at: now,
+    updated_at: now,
+  })
+  await assertFails(wrongWindow.commit())
+
+  const wrongRevision = writeBatch(db)
+  wrongRevision.set(doc(db, 'order_export_requests', requestId), {
+    ...exportRequest(requestId, 'order-create-own', ACTOR),
+    revision: 1,
+    window_state: 'queue',
+    sort_at: now,
+    created_at: now,
+    updated_at: now,
+  })
+  wrongRevision.update(doc(db, 'orders', 'order-create-own'), {
+    export_request_revision: 2,
+    export_request_last_action: 'create',
+    export_request_last_request_id: requestId,
+    export_request_updated_by: ACTOR,
+    export_request_updated_at: now,
+    updated_at: now,
+  })
+  await assertFails(wrongRevision.commit())
 })
