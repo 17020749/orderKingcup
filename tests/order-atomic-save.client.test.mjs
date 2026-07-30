@@ -12,7 +12,23 @@ import {
   orderCustomerReassignmentBlocker,
   planAtomicOrderItems,
   preservePersistedOrderIdentityForEdit,
+  stripOrderEditSystemFields,
 } from '../utils/orderAtomicSave.mjs'
+
+test('stale order edit payload cannot overwrite export request markers', () => {
+  const payload = stripOrderEditSystemFields({
+    note: 'Sale-editable content',
+    export_request_revision: 2,
+    export_request_last_action: 'accept',
+    export_request_last_request_id: 'request-stale',
+    export_request_updated_by: 'stale@example.com',
+    export_request_updated_at: 'stale-time',
+  })
+
+  assert.deepEqual(payload, {
+    note: 'Sale-editable content',
+  })
+})
 
 test('lập kế hoạch upsert và xóa mềm item trong cùng giao dịch', () => {
   const plan = planAtomicOrderItems(
@@ -147,6 +163,7 @@ test('client thực tế dùng một transaction cho order, items, sequence và 
   assert.match(composable, /transaction\.set\(activityRef/)
   assert.match(composable, /assertExpectedOrderRevision/)
   assert.match(composable, /buildOrderItemLifecyclePatch\(item\.isNew\)/)
+  assert.match(composable, /stripOrderEditSystemFields\(input\.orderPayload\)/)
   assert.match(page, /saveOrderAtomic\(/)
   assert.doesNotMatch(page, /commitWriteChunks/)
   assert.doesNotMatch(page, /await orderBatch\.commit\(\)/)

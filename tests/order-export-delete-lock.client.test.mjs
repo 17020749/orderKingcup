@@ -55,3 +55,31 @@ test('page đơn hàng dùng preflight mới nhất và không thay đổi luồ
   assert.match(page, /async function saveOrder\(\)/)
   assert.match(page, /saveOrderAtomic\(/)
 })
+
+test('cascade xóa đặt metadata cửa sổ và revision đúng vào export request, không ghi nhầm vào order item', () => {
+  const page = readFileSync('pages/orders.vue', 'utf8')
+  const deleteFlow = page.slice(
+    page.indexOf('async function softDeleteOrder'),
+    page.indexOf('onMounted(loadRows)'),
+  )
+  const itemCascade = deleteFlow.slice(
+    deleteFlow.indexOf('orderItems.forEach'),
+    deleteFlow.indexOf('orderRequests.forEach'),
+  )
+  const requestCascade = deleteFlow.slice(
+    deleteFlow.indexOf('orderRequests.forEach'),
+    deleteFlow.indexOf('latestInvoices.forEach'),
+  )
+
+  assert.match(deleteFlow, /loadPersistedOrder\(row\.id\)/)
+  const postConfirm = deleteFlow.slice(deleteFlow.indexOf('if (!confirmed) return'))
+  assert.match(postConfirm, /loadPersistedOrder\(row\.id\)/)
+  assert.match(postConfirm, /loadScopedExportRequests\(\[latestOrder\], true\)/)
+  assert.match(postConfirm, /loadScopedInvoicesForOrders\(\[latestOrder\], true\)/)
+  assert.match(postConfirm, /loadPrintingProgressForOrder\(row\.id\)/)
+  assert.doesNotMatch(deleteFlow, /const orderItems\s*=\s*itemsByOrder\.value\[row\.id\]/)
+  assert.doesNotMatch(itemCascade, /window_state|sort_at|request\.revision/)
+  assert.match(requestCascade, /window_state:\s*'hidden'/)
+  assert.match(requestCascade, /sort_at:\s*deletedAt/)
+  assert.match(requestCascade, /revision:\s*Math\.trunc\(Number\(request\.revision \|\| 0\)\) \+ 1/)
+})
