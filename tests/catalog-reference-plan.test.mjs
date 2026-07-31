@@ -39,10 +39,12 @@ test('usage summary keeps the existing user-facing detail', () => {
 
 test('warehouse settings loads only catalogs on mount and checks references on delete', () => {
   const page = readFileSync('pages/warehouse-settings.vue', 'utf8')
+  const checker = readFileSync('composables/useCatalogReferenceChecks.ts', 'utf8')
   const loadSection = page.slice(page.indexOf('async function loadRows'), page.indexOf('onMounted'))
   const deleteSection = page.slice(page.indexOf('async function removeCatalog'), page.indexOf('async function loadRows'))
 
   assert.doesNotMatch(loadSection, /loadImportOrders|loadImportOrderItems|loadExportOrders|loadExportOrderItems|loadInventoryBalances|loadInventoryAdjustments|loadProducts/)
   assert.match(deleteSection, /await checkCatalogUsage\(activeTab\.value, row\)/)
-  assert.match(page, /where\(probe\.field, '==', probe\.value\)/)
+  assert.match(checker, /where\(probe\.field, '==', probe\.value\)/)
+  assert.match(checker, /seen\.add\(`\$\{probe\.collection\}:\$\{document\.id\}`\)/)
 })
