@@ -192,6 +192,7 @@ export function orderRelationDeleteBlocker(order = {}) {
   const reasons = []
   if (payments > 0) reasons.push(`${payments} phiếu thanh toán`)
   if (shipments > 0) reasons.push(`${shipments} bản ghi vận chuyển`)
+  if (text(order.invoice_status) === 'Đã xuất') reasons.push('hóa đơn đã phát hành')
   return reasons.length
     ? `Không thể xóa đơn hàng vì còn ${reasons.join(', ')} đang hoạt động.`
     : ''
