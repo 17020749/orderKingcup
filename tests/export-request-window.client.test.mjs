@@ -192,9 +192,23 @@ test('all request write paths update the derived window and parent marker', () =
 test('backfill script is dry-run by default and requires explicit project confirmation', () => {
   const script = read('scripts/backfill-export-request-window.mjs')
   assert.match(script, /process\.argv\.includes\('--apply'\)/)
+  assert.match(script, /--project=/)
+  assert.match(script, /NUXT_PUBLIC_FIREBASE_PROJECT_ID/)
   assert.match(script, /--confirm-project=/)
   assert.match(script, /index \+= 400/)
   assert.match(script, /Dry-run only/)
+  assert.doesNotMatch(script, /\|\| 'orderfirestore-501909'/)
+})
+
+test('backfill workflow requires a manual target and project confirmation', () => {
+  const workflow = read('.github/workflows/export-request-window-backfill.yml')
+  assert.match(workflow, /workflow_dispatch:/)
+  assert.match(workflow, /confirm_project_id:/)
+  assert.match(workflow, /GOOGLE_APPLICATION_CREDENTIALS/)
+  assert.match(workflow, /--apply/)
+  assert.match(workflow, /--confirm-project=\$EXPECTED_FIREBASE_PROJECT_ID/)
+  assert.match(workflow, /refs\/heads\/dev/)
+  assert.match(workflow, /refs\/heads\/main/)
 })
 
 test('runtime bridge overrides only export request list methods', () => {
