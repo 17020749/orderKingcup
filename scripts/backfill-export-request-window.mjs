@@ -6,8 +6,18 @@ import { buildExportRequestBackfillPatch } from '../utils/exportRequestBackfill.
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const repoDir = path.resolve(scriptDir, '..')
+try {
+  process.loadEnvFile(path.join(repoDir, '.env'))
+} catch {
+  // CI and local maintenance may provide the project through process.env.
+}
+
 const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS
-const projectId = process.env.FIREBASE_PROJECT_ID || 'orderfirestore-501909'
+const projectFlag = process.argv.find(value => value.startsWith('--project='))
+  ?.slice('--project='.length)
+const projectId = projectFlag
+  || process.env.FIREBASE_PROJECT_ID
+  || process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID
 const applyChanges = process.argv.includes('--apply')
 const confirmation = process.argv.find(value => value.startsWith('--confirm-project='))
   ?.slice('--confirm-project='.length)
@@ -128,6 +138,9 @@ async function commitPatches(token, patches) {
 }
 
 async function main() {
+  if (!projectId) {
+    throw new Error('Set --project=<project-id>, FIREBASE_PROJECT_ID, or NUXT_PUBLIC_FIREBASE_PROJECT_ID before running this script.')
+  }
   if (applyChanges && confirmation !== projectId) {
     throw new Error(`Apply mode requires --confirm-project=${projectId}.`)
   }
