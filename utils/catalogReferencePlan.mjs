@@ -7,7 +7,8 @@ function unique(values = []) {
 }
 
 function probes(collection, fields, values, group) {
-  return fields.flatMap(field => unique(values).map(value => ({ collection, field, value, group })))
+  const cleanedValues = unique(values)
+  return fields.map(field => ({ collection, field, values: cleanedValues, group }))
 }
 
 export function catalogReferencePlan(tab, row = {}) {
