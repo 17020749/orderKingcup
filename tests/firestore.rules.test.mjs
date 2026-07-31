@@ -1138,6 +1138,70 @@ test('Tạo phiếu xuất và cập nhật tổng hợp đơn trong cùng batch
   await assertSucceeds(batch.commit())
 })
 
+test('Sale tạo phiếu xuất kèm thông báo Kho trong cùng transaction', async () => {
+  const db = env.authenticatedContext(A, { email: A }).firestore()
+  const batch = writeBatch(db)
+  const now = serverTimestamp()
+  const requestId = 'export-batch-create-with-notification'
+  batch.set(doc(db, 'order_export_requests', requestId), {
+    id: requestId,
+    request_id: 'YCXK-BATCH-NOTIFICATION',
+    order_id: 'order-a',
+    requested_by: A,
+    updated_by: A,
+    ...ownership(A),
+    status: 'cho_xu_ly',
+    payload_json: '{"items":[{"product_code":"SP001","export_quantity":1}]}',
+    active: true,
+    deleted: false,
+    revision: 1,
+    window_state: 'queue',
+    sort_at: now,
+    created_at: now,
+    updated_at: now,
+  })
+  batch.update(doc(db, 'orders', 'order-a'), {
+    warehouse_fulfillment_status: 'cho_xu_ly',
+    warehouse_request_status: 'cho_xu_ly',
+    ...exportRequestMarker('create', requestId, A, 1, now),
+  })
+  batch.set(doc(collection(db, 'activity_logs')), {
+    module: 'order_export_requests',
+    action: 'create',
+    item_code: 'YCXK-BATCH-NOTIFICATION',
+    changed_by: A,
+    created_at: now,
+    active: true,
+    deleted: false,
+  })
+  batch.set(doc(db, 'notifications', 'notification-batch-create'), {
+    type: 'warehouse_export_request_created',
+    title: 'Có yêu cầu xuất kho mới',
+    message: 'YCXK-BATCH-NOTIFICATION',
+    route: '/warehouse-export-requests',
+    entity_collection: 'order_export_requests',
+    entity_id: requestId,
+    entity_code: 'YCXK-BATCH-NOTIFICATION',
+    created_by: A,
+    to_email: '',
+    audience: 'warehouse_export',
+    audience_permissions: [
+      'export_requests.accept',
+      'export_requests.reject',
+      'export_requests.release',
+      'export_requests.process',
+    ],
+    metadata_json: '{"order_id":"order-a"}',
+    status: 'unread',
+    read: false,
+    active: true,
+    deleted: false,
+    created_at: now,
+    updated_at: now,
+  })
+  await assertSucceeds(batch.commit())
+})
+
 test('Xóa mềm phiếu chưa xuất và cập nhật lại tổng hợp đơn trong cùng batch', async () => {
   const db = env.authenticatedContext(A, { email: A }).firestore()
   const batch = writeBatch(db)

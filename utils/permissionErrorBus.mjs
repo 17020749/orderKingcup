@@ -13,6 +13,7 @@ function cleanList(values) {
 }
 
 export function normalizePermissionErrorEvent(input = {}) {
+  const scopeKnown = typeof input.scopeSatisfied === 'boolean'
   const scopeSatisfied = input.scopeSatisfied === true
   return {
     occurredAt: input.occurredAt instanceof Date ? input.occurredAt : new Date(),
@@ -30,13 +31,13 @@ export function normalizePermissionErrorEvent(input = {}) {
       ...(input.requiredPermissions || []),
       ...(input.actionPermissions || []),
       input.actionPermission,
-      ...(scopeSatisfied ? [] : (input.scopePermissions || [])),
-      scopeSatisfied ? '' : input.scopePermission,
+      ...(scopeKnown && !scopeSatisfied ? (input.scopePermissions || []) : []),
+      scopeKnown && !scopeSatisfied ? input.scopePermission : '',
     ]),
     missingPermissions: cleanList(input.missingPermissions || []),
     context: {
       ...(input.context && typeof input.context === 'object' ? input.context : {}),
-      scope_satisfied: scopeSatisfied,
+      scope_satisfied: scopeKnown ? scopeSatisfied : null,
     },
     stack: clean(input.stack),
   }

@@ -60,11 +60,29 @@ test('scope chưa thỏa vẫn ghi đúng quyền view_all thay thế ownership'
     operation: 'orders.edit',
     actionPermission: 'orders.edit',
     scopePermission: 'orders.view_all',
+    scopeSatisfied: false,
   })
   unsubscribe()
 
   assert.deepEqual(events[0].requiredPermissions, ['orders.edit', 'orders.view_all'])
   assert.equal(events[0].context.scope_satisfied, false)
+})
+
+test('Firestore denial without ownership evidence does not infer a missing view_all permission', () => {
+  const events = []
+  const unsubscribe = subscribePermissionErrors(event => events.push(event))
+
+  permissionDeniedUserMessage({
+    module: 'export_requests',
+    operation: 'export_requests.create',
+    source: 'firestore',
+    actionPermission: 'orders.warehouse_export',
+    scopePermission: 'export_requests.view_all',
+  })
+  unsubscribe()
+
+  assert.deepEqual(events[0].requiredPermissions, ['orders.warehouse_export'])
+  assert.equal(events[0].context.scope_satisfied, null)
 })
 
 test('permission error logs have a 30-day Firestore TTL field policy', () => {
