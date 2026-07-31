@@ -10,20 +10,23 @@ test('warehouse plan checks legacy and current references without full collectio
     warehouse_code: 'KHO-01',
   })
 
-  assert.ok(plan.some(item => item.collection === 'import_order_items' && item.field === 'warehouse_id' && item.value === 'wh-1'))
-  assert.ok(plan.some(item => item.collection === 'export_order_items' && item.field === 'to_warehouse_code' && item.value === 'KHO-01'))
-  assert.ok(plan.some(item => item.collection === 'inventory_balances' && item.field === 'warehouse_legacy_id' && item.value === 'legacy-wh'))
+  assert.ok(plan.some(item => item.collection === 'import_order_items' && item.field === 'warehouse_id' && item.values.includes('wh-1')))
+  assert.ok(plan.some(item => item.collection === 'export_order_items' && item.field === 'to_warehouse_code' && item.values.includes('KHO-01')))
+  assert.ok(plan.some(item => item.collection === 'inventory_balances' && item.field === 'warehouse_legacy_id' && item.values.includes('legacy-wh')))
   assert.ok(plan.some(item => item.collection === 'inventory_adjustments'))
+  assert.equal(plan.length, 15)
 })
 
 test('supplier and unit plans cover every relation group', () => {
   const supplier = catalogReferencePlan('suppliers', { id: 'sup-1', supplier_code: 'NCC-01' })
   assert.deepEqual(new Set(supplier.map(item => item.collection)), new Set(['import_orders']))
+  assert.equal(supplier.length, 3)
 
   const unit = catalogReferencePlan('units', { unit_code: 'THUNG', name: 'Thùng' })
   assert.deepEqual(new Set(unit.map(item => item.collection)), new Set([
     'products', 'import_order_items', 'export_order_items',
   ]))
+  assert.equal(unit.length, 3)
 })
 
 test('usage summary keeps the existing user-facing detail', () => {
@@ -45,6 +48,6 @@ test('warehouse settings loads only catalogs on mount and checks references on d
 
   assert.doesNotMatch(loadSection, /loadImportOrders|loadImportOrderItems|loadExportOrders|loadExportOrderItems|loadInventoryBalances|loadInventoryAdjustments|loadProducts/)
   assert.match(deleteSection, /await checkCatalogUsage\(activeTab\.value, row\)/)
-  assert.match(checker, /where\(probe\.field, '==', probe\.value\)/)
+  assert.match(checker, /where\(probe\.field, 'in', probe\.values\)/)
   assert.match(checker, /seen\.add\(`\$\{probe\.collection\}:\$\{document\.id\}`\)/)
 })
