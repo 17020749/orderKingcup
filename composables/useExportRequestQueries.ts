@@ -274,44 +274,9 @@ export function useExportRequestQueries() {
       )
     }
 
-    const target = scopedQueueQuery()
-    if (!target) {
-      onRows([], null)
-      return () => {}
-    }
-
-    let active = true
-    let fallbackStarted = false
-    let primaryStop: Unsubscribe | null = null
-    let fallbackStop: Unsubscribe | null = null
-
-    const startFallback = () => {
-      if (!active || fallbackStarted) return
-      fallbackStarted = true
-      primaryStop?.()
-      primaryStop = null
-      fallbackStop = listenScopedOwnerFallback(orders, onRows, onError)
-    }
-
-    primaryStop = listenQueryWithRetry(
-      target,
-      (rows, cursor) => onRows(visibleScopedRows(rows, orders), cursor),
-      error => {
-        if (shouldUseScopedOwnerFallback(error)) {
-          startFallback()
-          return
-        }
-        onError(error)
-      },
-    )
-
-    return () => {
-      active = false
-      primaryStop?.()
-      primaryStop = null
-      fallbackStop?.()
-      fallbackStop = null
-    }
+    // Query each ownership field directly. The previous OR listener could be
+    // rejected as invalid by Firestore before its fallback became usable.
+    return listenScopedOwnerFallback(orders, onRows, onError)
   }
 
   function listenWarehouseExportRequests(

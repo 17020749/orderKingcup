@@ -147,7 +147,14 @@ test('runtime export request queries are bounded and use a bounded owner fallbac
   assert.match(source, /queryLimit\(pageSize\)/)
   assert.match(source, /slice\(0, EXPORT_REQUEST_QUEUE_LIMIT\)/)
   assert.match(source, /hasMore: false/)
+  assert.match(source, /return listenScopedOwnerFallback\(orders, onRows, onError\)/)
   assert.doesNotMatch(source, /query\(collection\(db, 'order_export_requests'\)\s*\)/)
+})
+
+test('scoped supporting data uses equality queries instead of an OR query', () => {
+  const source = read('composables/useScopedQueries.ts')
+  assert.match(source, /fields\.map\(field => fetchCollection<T>\(name, \[where\(field, '==', currentEmail\)\]\)\)/)
+  assert.doesNotMatch(source, /const filter = or\(\.\.\.fields\.map\(field => where\(field, '==', currentEmail\)\)\)/)
 })
 
 test('Sale and Warehouse pages combine realtime queue with cursor history', () => {
