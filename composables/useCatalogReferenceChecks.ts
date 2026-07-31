@@ -21,9 +21,12 @@ export function useCatalogReferenceChecks() {
     const seenByGroup = new Map<string, Set<string>>()
 
     await Promise.all(plan.map(async (probe: any) => {
+      if (!Array.isArray(probe.values) || !probe.values.length) return
       const snapshot = await getDocs(query(
         collection(db, probe.collection),
-        where(probe.field, '==', probe.value),
+        probe.values.length === 1
+          ? where(probe.field, '==', probe.values[0])
+          : where(probe.field, 'in', probe.values),
       ))
       if (!seenByGroup.has(probe.group)) seenByGroup.set(probe.group, new Set())
       const seen = seenByGroup.get(probe.group)!
