@@ -45,6 +45,12 @@ type OrderRequestCacheEntry = {
 
 const orderRequestCache = new Map<string, OrderRequestCacheEntry>()
 const ORDER_REQUEST_CACHE_TTL_MS = 20_000
+const SCOPED_OWNER_FALLBACK_ERROR_CODES = new Set([
+  'failed-precondition',
+  'invalid-argument',
+  'permission-denied',
+  'unimplemented',
+])
 
 export function clearExportRequestOrderCache() {
   orderRequestCache.clear()
@@ -52,6 +58,10 @@ export function clearExportRequestOrderCache() {
 
 function listenerErrorCode(error: any) {
   return String(error?.code || '').replace(/^firestore\//, '')
+}
+
+function shouldUseScopedOwnerFallback(error: any) {
+  return SCOPED_OWNER_FALLBACK_ERROR_CODES.has(listenerErrorCode(error))
 }
 
 function isRetryableListenerError(error: any) {
@@ -178,6 +188,21 @@ export function useExportRequestQueries() {
     )
   }
 
+  function scopedOwnerFieldQuery(
+    field: string,
+    currentEmail: string,
+    windowState: string,
+    pageSize: number,
+  ) {
+    return query(
+      collection(db, 'order_export_requests'),
+      where('window_state', '==', windowState),
+      where(field, '==', currentEmail),
+      orderBy('sort_at', 'desc'),
+      queryLimit(pageSize),
+    )
+  }
+
   function warehouseQueueQuery() {
     return query(
       collection(db, 'order_export_requests'),
@@ -185,6 +210,50 @@ export function useExportRequestQueries() {
       orderBy('sort_at', 'desc'),
       queryLimit(EXPORT_REQUEST_QUEUE_LIMIT),
     )
+  }
+
+  function listenScopedOwnerFallback(
+    orders: OrderDoc[],
+    onRows: RealtimeRowsHandler,
+    onError: RealtimeErrorHandler,
+  ): Unsubscribe {
+    const currentEmail = email()
+    if (!currentEmail) {
+      onRows([], null)
+      return () => {}
+    }
+
+    let active = true
+    const chunks = new Map<string, any[]>()
+    const ready = new Set<string>()
+    const publish = () => {
+      if (!active || ready.size !== EXPORT_REQUEST_WINDOW_OWNER_FIELDS.length) return
+      const rows = visibleScopedRows(Array.from(chunks.values()).flat(), orders)
+        .slice(0, EXPORT_REQUEST_QUEUE_LIMIT)
+      onRows(rows, null)
+    }
+
+    const fallbackUnsubscribes = EXPORT_REQUEST_WINDOW_OWNER_FIELDS.map(field => (
+      listenQueryWithRetry(
+        scopedOwnerFieldQuery(
+          field,
+          currentEmail,
+          EXPORT_REQUEST_WINDOW_STATES.queue,
+          EXPORT_REQUEST_QUEUE_LIMIT,
+        ),
+        rows => {
+          chunks.set(field, rows)
+          ready.add(field)
+          publish()
+        },
+        onError,
+      )
+    ))
+
+    return () => {
+      active = false
+      fallbackUnsubscribes.forEach(unsubscribe => unsubscribe())
+    }
   }
 
   function listenScopedExportRequests(
@@ -197,19 +266,52 @@ export function useExportRequestQueries() {
       return () => {}
     }
 
-    const target = canAll('export_requests.view_all')
-      ? warehouseQueueQuery()
-      : scopedQueueQuery()
+    if (canAll('export_requests.view_all')) {
+      return listenQueryWithRetry(
+        warehouseQueueQuery(),
+        (rows, cursor) => onRows(visibleScopedRows(rows, orders), cursor),
+        onError,
+      )
+    }
+
+    const target = scopedQueueQuery()
     if (!target) {
       onRows([], null)
       return () => {}
     }
 
-    return listenQueryWithRetry(
+    let active = true
+    let fallbackStarted = false
+    let primaryStop: Unsubscribe | null = null
+    let fallbackStop: Unsubscribe | null = null
+
+    const startFallback = () => {
+      if (!active || fallbackStarted) return
+      fallbackStarted = true
+      primaryStop?.()
+      primaryStop = null
+      fallbackStop = listenScopedOwnerFallback(orders, onRows, onError)
+    }
+
+    primaryStop = listenQueryWithRetry(
       target,
       (rows, cursor) => onRows(visibleScopedRows(rows, orders), cursor),
-      onError,
+      error => {
+        if (shouldUseScopedOwnerFallback(error)) {
+          startFallback()
+          return
+        }
+        onError(error)
+      },
     )
+
+    return () => {
+      active = false
+      primaryStop?.()
+      primaryStop = null
+      fallbackStop?.()
+      fallbackStop = null
+    }
   }
 
   function listenWarehouseExportRequests(
@@ -231,6 +333,40 @@ export function useExportRequestQueries() {
     )
   }
 
+  async function fetchScopedOwnerFallbackPage(input: {
+    windowState: string
+    orders: OrderDoc[]
+    cursor?: QueryDocumentSnapshot<DocumentData> | null
+    pageSize: number
+  }): Promise<ExportRequestPage> {
+    const currentEmail = email()
+    if (!currentEmail || input.cursor) {
+      return { rows: [], cursor: null, hasMore: false }
+    }
+
+    const snapshots = await Promise.all(EXPORT_REQUEST_WINDOW_OWNER_FIELDS.map(field => (
+      getDocs(scopedOwnerFieldQuery(
+        field,
+        currentEmail,
+        input.windowState,
+        input.pageSize + 1,
+      ))
+    )))
+    const rawRows = snapshots.flatMap(snapshot => snapshot.docs.map(item => ({
+      ...item.data(),
+      id: item.id,
+      firestore_id: item.id,
+    })))
+
+    return {
+      rows: visibleScopedRows(rawRows, input.orders).slice(0, input.pageSize),
+      cursor: null,
+      // Fallback ưu tiên khôi phục dữ liệu thay vì dùng một cursor sai cho
+      // bốn query độc lập. Query OR vẫn là đường chính có phân trang đầy đủ.
+      hasMore: false,
+    }
+  }
+
   async function fetchWindowPage(input: {
     windowState: string
     scoped: boolean
@@ -242,7 +378,8 @@ export function useExportRequestQueries() {
     const constraints: any[] = [
       where('window_state', '==', input.windowState),
     ]
-    if (input.scoped && !canAll('export_requests.view_all')) {
+    const usesScopedOwnerFilter = input.scoped && !canAll('export_requests.view_all')
+    if (usesScopedOwnerFilter) {
       const currentEmail = email()
       if (!currentEmail) return { rows: [], cursor: null, hasMore: false }
       constraints.push(ownerFilter(currentEmail))
@@ -251,24 +388,36 @@ export function useExportRequestQueries() {
     if (input.cursor) constraints.push(startAfter(input.cursor))
     constraints.push(queryLimit(safeSize + 1))
 
-    const snapshot = await getDocs(query(
-      collection(db, 'order_export_requests'),
-      ...constraints,
-    ))
-    const pageDocs = snapshot.docs.slice(0, safeSize)
-    const rawRows = pageDocs.map(item => ({
-      ...item.data(),
-      id: item.id,
-      firestore_id: item.id,
-    }))
-    const rows = input.scoped
-      ? visibleScopedRows(rawRows, input.orders || [])
-      : mergeExportRequestWindows(rawRows.filter(isVisibleExportRequest), [])
+    try {
+      const snapshot = await getDocs(query(
+        collection(db, 'order_export_requests'),
+        ...constraints,
+      ))
+      const pageDocs = snapshot.docs.slice(0, safeSize)
+      const rawRows = pageDocs.map(item => ({
+        ...item.data(),
+        id: item.id,
+        firestore_id: item.id,
+      }))
+      const rows = input.scoped
+        ? visibleScopedRows(rawRows, input.orders || [])
+        : mergeExportRequestWindows(rawRows.filter(isVisibleExportRequest), [])
 
-    return {
-      rows,
-      cursor: pageDocs.at(-1) || null,
-      hasMore: snapshot.docs.length > safeSize,
+      return {
+        rows,
+        cursor: pageDocs.at(-1) || null,
+        hasMore: snapshot.docs.length > safeSize,
+      }
+    } catch (error) {
+      if (usesScopedOwnerFilter && shouldUseScopedOwnerFallback(error)) {
+        return fetchScopedOwnerFallbackPage({
+          windowState: input.windowState,
+          orders: input.orders || [],
+          cursor: input.cursor,
+          pageSize: safeSize,
+        })
+      }
+      throw error
     }
   }
 
