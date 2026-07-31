@@ -131,7 +131,7 @@ test('bounds history page size', () => {
   assert.equal(safeExportRequestPageSize(1000), 100)
 })
 
-test('runtime export request queries are bounded and have no unbounded fallback listener', () => {
+test('runtime export request queries are bounded and use a bounded owner fallback', () => {
   const source = read('composables/useExportRequestQueries.ts')
   assert.match(source, /where\('window_state', '==', EXPORT_REQUEST_WINDOW_STATES\.queue\)/)
   assert.match(source, /orderBy\('sort_at', 'desc'\)/)
@@ -139,8 +139,15 @@ test('runtime export request queries are bounded and have no unbounded fallback 
   assert.match(source, /startAfter\(input\.cursor\)/)
   assert.match(source, /queryLimit\(safeSize \+ 1\)/)
   assert.match(source, /where\('order_id', '==', id\)/)
+  assert.match(source, /SCOPED_OWNER_FALLBACK_ERROR_CODES/)
+  assert.match(source, /'invalid-argument'/)
+  assert.match(source, /'failed-precondition'/)
+  assert.match(source, /EXPORT_REQUEST_WINDOW_OWNER_FIELDS\.map\(field/)
+  assert.match(source, /where\(field, '==', currentEmail\)/)
+  assert.match(source, /queryLimit\(pageSize\)/)
+  assert.match(source, /slice\(0, EXPORT_REQUEST_QUEUE_LIMIT\)/)
+  assert.match(source, /hasMore: false/)
   assert.doesNotMatch(source, /query\(collection\(db, 'order_export_requests'\)\s*\)/)
-  assert.doesNotMatch(source, /fallbackUnsubscribes/)
 })
 
 test('Sale and Warehouse pages combine realtime queue with cursor history', () => {
