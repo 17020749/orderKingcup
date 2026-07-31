@@ -3,24 +3,14 @@ import { collection, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/fi
 import type { SupplierDoc, UnitDoc, WarehouseDoc } from '~/types/models'
 import { formatDateTime, makeCode, makeId, normalizeText } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+import type { CatalogReferenceTab } from '~/composables/useCatalogReferenceChecks'
 
-type TabKey = 'warehouses' | 'suppliers' | 'units'
+type TabKey = CatalogReferenceTab
 
 const { db } = useFirebaseServices()
 const { appUser, hasPermission } = useAuth()
-const {
-  loadWarehouses,
-  loadSuppliers,
-  loadUnits,
-  loadImportOrders,
-  loadImportOrderItems,
-  loadExportOrders,
-  loadExportOrderItems,
-  loadInventoryBalances,
-  loadInventoryAdjustments,
-  loadProducts,
-  invalidateScopedCache
-} = useScopedQueries()
+const { loadWarehouses, loadSuppliers, loadUnits, invalidateScopedCache } = useScopedQueries()
+const { checkCatalogUsage } = useCatalogReferenceChecks()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
 
@@ -35,14 +25,6 @@ const selected = ref<Record<string, any> | null>(null)
 const editing = ref<Record<string, any> | null>(null)
 const showDetailModal = ref(false)
 const showFormModal = ref(false)
-const usageCheckLoaded = ref(false)
-const importOrders = ref<any[]>([])
-const importItems = ref<any[]>([])
-const exportOrders = ref<any[]>([])
-const exportItems = ref<any[]>([])
-const inventoryBalances = ref<any[]>([])
-const inventoryAdjustments = ref<any[]>([])
-const products = ref<any[]>([])
 const form = reactive<Record<string, any>>({})
 
 const tabItems: Array<{ key: TabKey; label: string }> = [
@@ -124,75 +106,6 @@ function nextCatalogCode(tab: TabKey = activeTab.value) {
     attempts += 1
   } while (usedCodes.has(normalizeText(code)) && attempts < 10)
   return code
-}
-
-function catalogReferenceKeys(row: Record<string, any>) {
-  const values = [row.id, row.legacy_id]
-  if (activeTab.value === 'warehouses') values.push(row.warehouse_code)
-  if (activeTab.value === 'suppliers') values.push(row.supplier_code)
-  if (activeTab.value === 'units') values.push(row.unit_code, row.name)
-  return new Set(values.map(value => normalizeText(value || '')).filter(Boolean))
-}
-
-function matchesCatalogReference(row: Record<string, any>, values: any[]) {
-  const keys = catalogReferenceKeys(row)
-  return values.some(value => {
-    const normalized = normalizeText(value || '')
-    return normalized && keys.has(normalized)
-  })
-}
-
-function catalogUsage(row: Record<string, any>) {
-  const names = new Set([
-    normalizeText(row.name || ''),
-    normalizeText(row.unit_code || ''),
-  ].filter(Boolean))
-
-  if (activeTab.value === 'warehouses') {
-    const importCount = importItems.value.filter(item => activeDoc(item) && matchesCatalogReference(row, [
-      item.warehouse_id,
-      item.warehouse_legacy_id,
-      item.warehouse_code,
-    ])).length
-    const exportCount = exportItems.value.filter(item => activeDoc(item) && (
-      matchesCatalogReference(row, [
-        item.from_warehouse_id,
-        item.from_warehouse_legacy_id,
-        item.from_warehouse_code,
-      ])
-      || matchesCatalogReference(row, [
-        item.to_warehouse_id,
-        item.to_warehouse_legacy_id,
-        item.to_warehouse_code,
-      ])
-    )).length
-    const balanceCount = inventoryBalances.value.filter(item => matchesCatalogReference(row, [
-      item.warehouse_id,
-      item.warehouse_legacy_id,
-      item.warehouse_code,
-    ])).length
-    const adjustmentCount = inventoryAdjustments.value.filter(item => activeDoc(item) && matchesCatalogReference(row, [
-      item.warehouse_id,
-      item.warehouse_legacy_id,
-      item.warehouse_code,
-    ])).length
-    return { total: importCount + exportCount + balanceCount + adjustmentCount, detail: `nhập ${importCount}, xuất ${exportCount}, tồn ${balanceCount}, điều chỉnh ${adjustmentCount}` }
-  }
-
-  if (activeTab.value === 'suppliers') {
-    const count = importOrders.value.filter(order => activeDoc(order) && matchesCatalogReference(row, [
-      order.supplier_id,
-      order.supplier_legacy_id,
-      order.supplier_code,
-    ])).length
-    return { total: count, detail: `${count} phiếu nhập` }
-  }
-
-  const hasUnit = (value: any) => names.has(normalizeText(value || ''))
-  const productCount = products.value.filter(product => activeDoc(product) && hasUnit(product.unit)).length
-  const importCount = importItems.value.filter(item => activeDoc(item) && hasUnit(item.unit)).length
-  const exportCount = exportItems.value.filter(item => activeDoc(item) && hasUnit(item.unit)).length
-  return { total: productCount + importCount + exportCount, detail: `sản phẩm ${productCount}, dòng nhập ${importCount}, dòng xuất ${exportCount}` }
 }
 
 function openDetail(row: Record<string, any>) {
@@ -300,28 +213,27 @@ async function saveCatalog() {
 }
 
 async function removeCatalog(row: Record<string, any>) {
-  if (!usageCheckLoaded.value) {
+  if (!canCheckReferences.value) {
     return showToast(
-      canCheckReferences.value
-        ? 'Chưa tải xong dữ liệu tham chiếu. Hãy bấm Làm mới rồi thử lại.'
-        : 'Không thể xóa an toàn vì tài khoản chưa đủ quyền kiểm tra phiếu nhập, phiếu xuất, tồn kho và sản phẩm đang tham chiếu danh mục này.',
+      'Không thể xóa an toàn vì tài khoản chưa đủ quyền kiểm tra phiếu nhập, phiếu xuất, tồn kho và sản phẩm đang tham chiếu danh mục này.',
       'error'
     )
   }
 
-  const usage = catalogUsage(row)
-  if (usage.total > 0) {
-    return showToast(`Không thể xóa ${row.name || row.id} vì đang được sử dụng: ${usage.detail}.`, 'error')
-  }
-
-  const confirmed = await askConfirm({
-    title: `Xóa ${currentLabel.value.toLowerCase()}`,
-    message: `Bạn chắc chắn muốn xóa mềm ${row.name || row.id}?`,
-    confirmLabel: 'Xóa'
-  })
-  if (!confirmed) return
   saving.value = true
   try {
+    const usage = await checkCatalogUsage(activeTab.value, row)
+    if (usage.total > 0) {
+      return showToast(`Không thể xóa ${row.name || row.id} vì đang được sử dụng: ${usage.detail}.`, 'error')
+    }
+
+    const confirmed = await askConfirm({
+      title: `Xóa ${currentLabel.value.toLowerCase()}`,
+      message: `Bạn chắc chắn muốn xóa mềm ${row.name || row.id}?`,
+      confirmLabel: 'Xóa'
+    })
+    if (!confirmed) return
+
     await updateDoc(doc(db, currentCollection.value, row.id), {
       deleted: true,
       active: false,
@@ -333,7 +245,7 @@ async function removeCatalog(row: Record<string, any>) {
     showToast(`Đã xóa ${currentLabel.value.toLowerCase()}.`, 'success')
     await loadRows(true)
   } catch (error) {
-    showToast(reportFirebaseError(error, `Không xóa được ${currentLabel.value.toLowerCase()}.`), 'error')
+    showToast(reportFirebaseError(error, `Không kiểm tra hoặc xóa được ${currentLabel.value.toLowerCase()}.`), 'error')
   } finally {
     saving.value = false
   }
@@ -341,7 +253,6 @@ async function removeCatalog(row: Record<string, any>) {
 
 async function loadRows(force = false) {
   loading.value = true
-  usageCheckLoaded.value = false
   try {
     const [warehouseRows, supplierRows, unitRows] = await Promise.all([
       loadWarehouses(force),
@@ -351,28 +262,8 @@ async function loadRows(force = false) {
     warehouses.value = warehouseRows
     suppliers.value = supplierRows
     units.value = unitRows
-
-    if (canCheckReferences.value) {
-      const [importOrderRows, importItemRows, exportOrderRows, exportItemRows, balanceRows, adjustmentRows, productRows] = await Promise.all([
-        loadImportOrders(force),
-        loadImportOrderItems(force),
-        loadExportOrders(force),
-        loadExportOrderItems(force),
-        loadInventoryBalances(force),
-        loadInventoryAdjustments(force),
-        loadProducts(force)
-      ])
-      importOrders.value = importOrderRows
-      importItems.value = importItemRows
-      exportOrders.value = exportOrderRows
-      exportItems.value = exportItemRows
-      inventoryBalances.value = balanceRows
-      inventoryAdjustments.value = adjustmentRows
-      products.value = productRows
-      usageCheckLoaded.value = true
-    }
   } catch (error) {
-    showToast(reportFirebaseError(error, 'Không tải được danh mục kho hoặc dữ liệu tham chiếu.'), 'error')
+    showToast(reportFirebaseError(error, 'Không tải được danh mục kho.'), 'error')
   } finally {
     loading.value = false
   }
@@ -400,10 +291,6 @@ onMounted(() => loadRows())
           >{{ tab.label }}</button>
         </div>
         <input v-model="search" class="input" style="max-width: 420px" placeholder="Tìm theo mã, tên, SĐT, email, địa chỉ..." />
-      </div>
-
-      <div v-if="canManageCurrentTab && !usageCheckLoaded" class="small subtle" style="margin: 8px 0 12px">
-        Nút xóa chỉ hoạt động sau khi tài khoản tải được đầy đủ dữ liệu tham chiếu để tránh xóa kho/NCC/đơn vị đang được sử dụng.
       </div>
 
       <LoadingState v-if="loading" />
@@ -464,7 +351,7 @@ onMounted(() => loadRows())
         <div v-if="activeTab === 'suppliers'" class="form-group"><label>Email</label><input v-model="form.email" class="input" /></div>
         <div v-if="activeTab === 'warehouses'" class="form-group"><label>Quản lý</label><input v-model="form.manager" class="input" /></div>
         <div v-if="activeTab !== 'units'" class="form-group"><label>Địa chỉ</label><input v-model="form.address" class="input" /></div>
-<div class="form-group"><label>Trạng thái</label><select v-model="form.status" class="select"><option value="active">Đang hoạt động</option><option value="inactive">Ngừng hoạt động</option></select></div>
+        <div class="form-group"><label>Trạng thái</label><select v-model="form.status" class="select"><option value="active">Đang hoạt động</option><option value="inactive">Ngừng hoạt động</option></select></div>
       </div>
       <div class="form-group" style="margin-top:12px"><label>Ghi chú</label><textarea v-model="form.note" class="textarea" rows="3" /></div>
     </BaseModal>
