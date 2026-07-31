@@ -396,25 +396,15 @@ export function useScopedQueries() {
 
     const task = (async () => {
       try {
-        // One OR query is much faster for scoped users than three or four
-        // independent network requests. Firestore still evaluates every
-        // branch against the same ownership rules.
-        const filter = or(...fields.map(field => where(field, '==', currentEmail)))
-        const rows = await fetchCollection<T>(name, [filter])
-        const unique = uniqueById(rows)
+        // Equality queries avoid Firestore OR-query validation failures for
+        // scoped users opening export requests.
+        const chunks = await Promise.all(
+          fields.map(field => fetchCollection<T>(name, [where(field, '==', currentEmail)]))
+        )
+        const unique = uniqueById(chunks.flat())
         writeCache(fullKey, unique, ttlMs)
         return unique
-      } catch (orError) {
-        // Older indexes/projects can reject an OR query. Fall back silently to
-        // parallel equality queries so the UI stays compatible.
-        try {
-          const chunks = await Promise.all(
-            fields.map(field => fetchCollection<T>(name, [where(field, '==', currentEmail)]))
-          )
-          const unique = uniqueById(chunks.flat())
-          writeCache(fullKey, unique, ttlMs)
-          return unique
-        } catch (fallbackError) {
+      } catch (fallbackError) {
           permissionDebug({
             module: name,
             action: 'scoped_query',
@@ -426,7 +416,6 @@ export function useScopedQueries() {
           })
           showToast(reportFirebaseError(fallbackError, `Không tải được dữ liệu ${name}.`), 'error')
           return [] as T[]
-        }
       } finally {
         inFlight.delete(fullKey)
       }
