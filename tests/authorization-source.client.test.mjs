@@ -96,6 +96,40 @@ test('useAuth không còn đọc collection roles hoặc cờ is_admin để sin
   assert.match(source, /invalidateScopedCache\(\)/)
 })
 
+test('profile users chỉ dùng snapshot đầu của listener, không đọc getDoc rồi đọc lại', () => {
+  const source = readFileSync('composables/useAuth.ts', 'utf8')
+
+  assert.doesNotMatch(source, /\bgetDoc\b/)
+  assert.match(source, /function startProfileListener\(user: User \| null\): Promise<void>/)
+  assert.match(source, /profileInitialPromise = new Promise<void>/)
+  assert.match(source, /return profileInitialPromise \|\| Promise\.resolve\(\)/)
+  assert.match(source, /applyProfileData\(email, snapshot\.exists\(\) \? snapshot\.data\(\) : null, 'onSnapshot'\)/)
+  assert.match(source, /async function loadProfile\(user: User \| null\) \{\s*await startProfileListener\(user\)/)
+})
+
+test('khởi tạo auth và đăng nhập không mở listener hồ sơ lần thứ hai', () => {
+  const source = readFileSync('composables/useAuth.ts', 'utf8')
+  const initAuth = source.match(/async function initAuth\(\) \{([\s\S]*?)\n  \}\n\n  async function loginWithGoogle/)?.[1] || ''
+  const login = source.match(/async function loginWithGoogle\(\) \{([\s\S]*?)\n  \}\n\n  async function logout/)?.[1] || ''
+
+  assert.match(initAuth, /await loadProfile\(firebaseUser\.value\)/)
+  assert.match(initAuth, /await loadProfile\(user\)/)
+  assert.doesNotMatch(initAuth, /startProfileListener\(/)
+  assert.match(login, /await loadProfile\(result\.user\)/)
+  assert.doesNotMatch(login, /startProfileListener\(/)
+})
+
+test('promise snapshot đầu luôn được giải phóng khi dừng hoặc listener lỗi', () => {
+  const source = readFileSync('composables/useAuth.ts', 'utf8')
+  const stop = source.match(/function stopProfileListener\(\) \{([\s\S]*?)\n\}/)?.[1] || ''
+  const listener = source.match(/function startProfileListener\(user: User \| null\): Promise<void> \{([\s\S]*?)\n  \}\n\n  async function loadProfile/)?.[1] || ''
+
+  assert.match(stop, /finishProfileInitial\(\)/)
+  assert.match(stop, /profileInitialPromise = null/)
+  assert.match(listener, /reportProfileListenerError\(email, error\)\s*finishProfileInitial\(\)/)
+  assert.match(listener, /\.finally\(\(\) => \{\s*if \(profileListenerEmail === email\) finishProfileInitial\(\)/)
+})
+
 test('các điểm quyết định quyền không dùng role hoặc is_admin làm nguồn thay thế', () => {
   const scopedQueries = readFileSync('composables/useScopedQueries.ts', 'utf8')
   const generalSettings = readFileSync('pages/settings/general.vue', 'utf8')

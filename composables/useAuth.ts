@@ -1,5 +1,5 @@
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth'
-import { doc, getDoc, onSnapshot, type Unsubscribe } from 'firebase/firestore'
+import { doc, onSnapshot, type Unsubscribe } from 'firebase/firestore'
 import type { AppUser, RoleDoc } from '~/types/models'
 import { normalizeEmail, isActive } from '~/utils/format'
 import { permissionDebug } from '~/utils/permissionDebug'
@@ -13,11 +13,21 @@ import {
 
 let profileUnsubscribe: Unsubscribe | null = null
 let profileListenerEmail = ''
+let profileInitialPromise: Promise<void> | null = null
+let resolveProfileInitial: (() => void) | null = null
+
+function finishProfileInitial() {
+  const resolve = resolveProfileInitial
+  resolveProfileInitial = null
+  resolve?.()
+}
 
 function stopProfileListener() {
   profileUnsubscribe?.()
   profileUnsubscribe = null
   profileListenerEmail = ''
+  finishProfileInitial()
+  profileInitialPromise = null
 }
 
 export function useAuth() {
@@ -133,49 +143,68 @@ export function useAuth() {
     if (changed && previousFingerprint) await clearAuthorizationCaches()
   }
 
-  async function loadProfile(user: User | null) {
-    if (!user?.email) {
-      await applyProfileData('', null, 'auth_state')
-      return
-    }
-
-    const email = normalizeEmail(user.email)
-    const userSnap = await getDoc(doc(db, 'users', email))
-    await applyProfileData(email, userSnap.exists() ? userSnap.data() : null, 'getDoc')
+  function reportProfileListenerError(email: string, error: any) {
+    authError.value = `Không theo dõi được thay đổi quyền của ${email}: ${String(error?.message || error)}`
+    permissionDebug({
+      module: 'auth',
+      action: 'profile_listener',
+      stage: 'listener_error',
+      userEmail: email,
+      error,
+      note: 'Giữ quyền hiện tại khi listener tạm thời mất kết nối; Firestore Rules vẫn là lớp bảo vệ cuối cùng.',
+    })
   }
 
-  function startProfileListener(user: User | null) {
+  function startProfileListener(user: User | null): Promise<void> {
     const email = normalizeEmail(user?.email || '')
     if (!email) {
       stopProfileListener()
-      return
+      return applyProfileData('', null, 'auth_state')
     }
-    if (profileUnsubscribe && profileListenerEmail === email) return
+    if (profileUnsubscribe && profileListenerEmail === email) {
+      return profileInitialPromise || Promise.resolve()
+    }
 
     stopProfileListener()
     profileListenerEmail = email
-    profileUnsubscribe = onSnapshot(
-      doc(db, 'users', email),
-      snapshot => {
-        void applyProfileData(email, snapshot.exists() ? snapshot.data() : null, 'onSnapshot')
-      },
-      error => {
-        authError.value = `Không theo dõi được thay đổi quyền của ${email}: ${String(error?.message || error)}`
-        permissionDebug({
-          module: 'auth',
-          action: 'profile_listener',
-          stage: 'listener_error',
-          userEmail: email,
-          error,
-          note: 'Giữ quyền hiện tại khi listener tạm thời mất kết nối; Firestore Rules vẫn là lớp bảo vệ cuối cùng.',
-        })
-      },
-    )
+    profileInitialPromise = new Promise<void>((resolve) => {
+      resolveProfileInitial = resolve
+    })
+    const initialPromise = profileInitialPromise
+
+    try {
+      profileUnsubscribe = onSnapshot(
+        doc(db, 'users', email),
+        snapshot => {
+          if (profileListenerEmail !== email) return
+          void applyProfileData(email, snapshot.exists() ? snapshot.data() : null, 'onSnapshot')
+            .catch(error => reportProfileListenerError(email, error))
+            .finally(() => {
+              if (profileListenerEmail === email) finishProfileInitial()
+            })
+        },
+        error => {
+          if (profileListenerEmail !== email) return
+          reportProfileListenerError(email, error)
+          finishProfileInitial()
+        },
+      )
+    } catch (error) {
+      profileUnsubscribe = null
+      reportProfileListenerError(email, error)
+      finishProfileInitial()
+    }
+
+    return initialPromise
+  }
+
+  async function loadProfile(user: User | null) {
+    await startProfileListener(user)
   }
 
   async function initAuth() {
     if (authReady.value) {
-      startProfileListener(firebaseUser.value)
+      await loadProfile(firebaseUser.value)
       return
     }
     if (authLoading.value) return
@@ -186,7 +215,6 @@ export function useAuth() {
         firebaseUser.value = user
         try {
           await loadProfile(user)
-          startProfileListener(user)
         } finally {
           authReady.value = true
           authLoading.value = false
@@ -204,7 +232,6 @@ export function useAuth() {
       const result = await signInWithPopup(auth, googleProvider)
       firebaseUser.value = result.user
       await loadProfile(result.user)
-      startProfileListener(result.user)
       return result.user
     } finally {
       authReady.value = true
