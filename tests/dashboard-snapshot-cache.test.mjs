@@ -185,26 +185,39 @@ test('dashboard cache policy and source tags are explicit and bounded', () => {
   ])
 
   const policies = read('constants/cachePolicies.ts')
-  assert.match(policies, /dashboardSnapshot:\s*\{[\s\S]*freshMs:\s*60_000,[\s\S]*staleMs:\s*5 \* 60_000/)
+  assert.match(policies, /dashboardSnapshot:\s*\{[\s\S]*freshMs:\s*5 \* 60_000,[\s\S]*staleMs:\s*30 \* 60_000/)
 })
 
-test('dashboard composable scopes cache by authorization and forces real refreshes', () => {
+test('dashboard scopes printing reads and only forces Firestore on manual refresh', () => {
   const source = read('composables/useDashboardSnapshot.ts')
   assert.match(source, /authorizationCacheKey/)
   assert.match(source, /namespace:\s*DASHBOARD_CACHE_NAMESPACE/)
-  assert.match(source, /params:\s*\{ schema: 2 \}/)
+  assert.match(source, /params:\s*\{ schema: 3 \}/)
   assert.match(source, /tags:\s*DASHBOARD_CACHE_TAGS/)
   assert.match(source, /policy:\s*QUERY_CACHE_POLICIES\.dashboardSnapshot/)
-  assert.match(source, /force,/)
-  assert.match(source, /loadScopedOrders\(true\)/)
-  assert.match(source, /loadScopedPayments\(orders, true\)/)
-  assert.match(source, /loadScopedOrderItems\(orders, true\)/)
-  assert.match(source, /loadScopedShipments\(true\)/)
-  assert.match(source, /loadPrintOrders\(true\)/)
-  assert.match(source, /loadPrintOrderItems\(true\)/)
+  assert.match(source, /fetchSnapshot\(forceSources = false\)/)
+  assert.match(source, /fetcher:\s*\(\) => fetchSnapshot\(force\)/)
+  assert.match(source, /loadScopedOrders\(forceSources\)/)
+  assert.match(source, /loadScopedPayments\(orders, forceSources\)/)
+  assert.match(source, /loadScopedOrderItems\(orders, forceSources\)/)
+  assert.match(source, /loadScopedShipments\(forceSources\)/)
+  assert.match(source, /loadPrintingDependenciesForOrders\(orders\)/)
+  assert.match(source, /loadOptionalSource/)
+  assert.doesNotMatch(source, /loadPrintOrders\(true\)/)
+  assert.doesNotMatch(source, /loadPrintOrderItems\(true\)/)
   for (const collectionName of DASHBOARD_SOURCE_COLLECTIONS) {
     assert.match(source, new RegExp(`collection:\\$\\{collectionName\\}`))
   }
+})
+
+test('printing dependency loader avoids an unbounded print item scan', () => {
+  const source = read('composables/useOrderPrintingDeleteGuard.ts')
+  const rules = read('firestore.rules')
+
+  assert.match(source, /loadPrintingDependenciesForOrders\(orders: OrderDoc\[\]\)/)
+  assert.match(source, /const printOrders = \(await loadPrintingProgressForOrders\(orders\)\)\.filter\(isActive\)/)
+  assert.match(source, /where\('print_order_id', 'in', ids\)/)
+  assert.match(rules, /match \/print_order_items\/\{docId\} \{[\s\S]*resource\.data\.print_order_id is string/)
 })
 
 test('dashboard page uses cached snapshot, period views and refresh button bypasses cache', () => {

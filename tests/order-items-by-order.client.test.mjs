@@ -99,7 +99,7 @@ test('các luồng quan hệ cần xem đơn dùng shared order_items loader', (
   const dashboardPage = readFileSync('pages/dashboard.vue', 'utf8')
   const dashboardSnapshot = readFileSync('composables/useDashboardSnapshot.ts', 'utf8')
   assert.match(dashboardPage, /useDashboardSnapshot\(\)/)
-  assert.match(dashboardSnapshot, /loadScopedOrderItems\(orders, true\)/)
+  assert.match(dashboardSnapshot, /loadScopedOrderItems\(orders, forceSources\)/)
   assert.match(dashboardSnapshot, /useScopedQueriesClient\(\)/)
 })
 
