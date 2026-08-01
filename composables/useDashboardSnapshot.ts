@@ -10,7 +10,7 @@ import {
   invalidateQueryCacheTags,
 } from '~/composables/useQueryCache'
 
-export const DASHBOARD_CACHE_NAMESPACE = 'dashboard:snapshot:v1'
+export const DASHBOARD_CACHE_NAMESPACE = 'dashboard:snapshot:v2'
 export const DASHBOARD_CACHE_TAGS = [
   'dashboard:snapshot',
   ...DASHBOARD_SOURCE_COLLECTIONS.map(collectionName => `collection:${collectionName}`),
@@ -28,6 +28,9 @@ export function useDashboardSnapshot() {
     loadScopedExportRequests,
     loadScopedCustomers,
     loadProducts,
+    loadScopedShipments,
+    loadPrintOrders,
+    loadPrintOrderItems,
   } = useScopedQueriesClient()
   const { authorizationCacheKey, hasPermission } = useAuth()
   const { computePaymentStatus } = useOrderLogic()
@@ -37,12 +40,15 @@ export function useDashboardSnapshot() {
     // of short-lived list cache. Repeated Dashboard visits are served by the
     // outer permission-scoped snapshot cache.
     const orders = (await loadScopedOrders(true)).filter(isActive)
-    const [customers, products, requests, payments, items] = await Promise.all([
+    const [customers, products, requests, payments, items, shipments, printOrders, printItems] = await Promise.all([
       hasPermission('customers.view') ? loadScopedCustomers(true) : [],
       hasPermission('products.view') ? loadProducts(true) : [],
       loadScopedExportRequests(orders, true),
       loadScopedPayments(orders, true),
       loadScopedOrderItems(orders, true),
+      loadScopedShipments(true),
+      loadPrintOrders(true),
+      loadPrintOrderItems(true),
     ])
 
     return buildDashboardSnapshot({
@@ -52,9 +58,13 @@ export function useDashboardSnapshot() {
       requests,
       payments,
       items,
+      shipments,
+      printOrders,
+      printItems,
       computePaymentStatus,
       isActive,
       toNumber,
+      now: new Date(),
     })
   }
 
@@ -62,7 +72,7 @@ export function useDashboardSnapshot() {
     return cachedQuery({
       authKey: String(authorizationCacheKey.value || 'anonymous'),
       namespace: DASHBOARD_CACHE_NAMESPACE,
-      params: { schema: 1 },
+      params: { schema: 2 },
       tags: DASHBOARD_CACHE_TAGS,
       policy: QUERY_CACHE_POLICIES.dashboardSnapshot,
       force,
