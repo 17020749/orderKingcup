@@ -77,9 +77,9 @@ test('dashboard keeps the accurate client aggregation path until a backend summa
 
   assert.match(dashboard, /async function loadDashboard/)
   assert.match(dashboard, /loadDashboardSnapshot\(force\)/)
-  assert.match(dashboardSnapshot, /loadScopedOrders\(true\)/)
-  assert.match(dashboardSnapshot, /loadScopedOrderItems\(orders, true\)/)
-  assert.match(dashboardSnapshot, /loadScopedPayments\(orders, true\)/)
+  assert.match(dashboardSnapshot, /loadScopedOrders\(forceSources\)/)
+  assert.match(dashboardSnapshot, /loadScopedOrderItems\(orders, forceSources\)/)
+  assert.match(dashboardSnapshot, /loadScopedPayments\(orders, forceSources\)/)
   assert.match(dashboardSnapshot, /buildDashboardSnapshot/)
   assert.match(snapshotBuilder, /computePaymentStatus/)
   assert.match(snapshotBuilder, /line_profit/)
