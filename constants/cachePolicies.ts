@@ -21,7 +21,11 @@ export const QUERY_CACHE_POLICIES = {
     staleMs: 24 * 60 * 60_000,
   },
   dashboardSnapshot: {
-    freshMs: 60_000,
-    staleMs: 5 * 60_000,
+    // Dashboard là dữ liệu tổng hợp nhiều collection. Giữ snapshot tươi 5 phút
+    // giúp các lần đổi route/mở lại tab không đọc lại toàn bộ Firestore.
+    // Mutation trong cùng client vẫn xóa cache theo collection tag; nút Làm mới
+    // tiếp tục bỏ qua cache khi người dùng cần số liệu tức thời.
+    freshMs: 5 * 60_000,
+    staleMs: 30 * 60_000,
   },
 } as const satisfies Record<string, QueryCachePolicy>
