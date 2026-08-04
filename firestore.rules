@@ -327,7 +327,7 @@ service cloud.firestore {
           && status == 'tu_choi'
           || type == 'warehouse_export_request_released'
           && status == 'da_xuat'
-          && requestData.get('lifecycle_status', '') == 'released'
+          && requestData.get('lifecycle_status', '') in ['released', 'released_external']
           || type == 'warehouse_export_request_cancelled'
           && status in ['da_tiep_nhan', 'cho_xuat_kho']
           && requestData.get('lifecycle_status', '') == 'release_cancelled'
@@ -1842,6 +1842,28 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && getAfter(path).data.get('operation_id', '') == request.resource.data.get('request_operation_id', '');
     }
 
+    function externalGeneratedExportCreateMatchesRequest(exportOrderId) {
+      let requestId = request.resource.data.get('source_request_id', '');
+      let path = exportRequestPath(requestId);
+      return generatedExportOrderData(request.resource.data)
+        && request.resource.data.get('lifecycle_status', '') == 'released_external'
+        && request.resource.data.get('release_mode', '') == 'external_no_inventory'
+        && request.resource.data.get('affects_inventory', true) == false
+        && request.resource.data.get('request_operation_id', '') != ''
+        && request.resource.data.get('stock_movement_ids', []) is list
+        && request.resource.data.get('stock_movement_ids', []).size() == 0
+        && exists(path)
+        && existsAfter(path)
+        && getAfter(path).data.get('status', '') == 'da_xuat'
+        && getAfter(path).data.get('lifecycle_status', '') == 'released_external'
+        && getAfter(path).data.get('release_mode', '') == 'external_no_inventory'
+        && getAfter(path).data.get('external_export_order_id', '') == exportOrderId
+        && getAfter(path).data.get('external_export_code', '') == request.resource.data.get('export_code', '')
+        && getAfter(path).data.get('release_sequence', 0) == request.resource.data.get('release_sequence', -1)
+        && request.resource.data.get('source_request_revision', -1) == get(path).data.get('revision', 0)
+        && getAfter(path).data.get('operation_id', '') == request.resource.data.get('request_operation_id', '');
+    }
+
     function generatedExportCancelMatchesRequest(exportOrderId) {
       let requestId = resource.data.get('source_request_id', '');
       let path = exportRequestPath(requestId);
@@ -1875,6 +1897,30 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           && snapshot.get('requested_quantity', 0) is number
           && exportItem.get('quantity', 0) <= snapshot.get('requested_quantity', 0)
         );
+    }
+
+    function externalGeneratedExportItemCreateAllowed() {
+      let exportOrderId = request.resource.data.get('export_order_id', '');
+      let path = exportOrderPath(exportOrderId);
+      let exportData = getAfter(path).data;
+      let requestPath = exportRequestPath(exportData.get('source_request_id', ''));
+      let requestData = getAfter(requestPath).data;
+      return exportOrderId is string
+        && exportOrderId != ''
+        && existsAfter(path)
+        && generatedExportOrderData(exportData)
+        && exportData.get('lifecycle_status', '') == 'released_external'
+        && exportData.get('release_mode', '') == 'external_no_inventory'
+        && exportData.get('affects_inventory', true) == false
+        && exportData.get('deleted', false) != true
+        && exportData.get('active', true) != false
+        && existsAfter(requestPath)
+        && requestData.get('status', '') == 'da_xuat'
+        && requestData.get('lifecycle_status', '') == 'released_external'
+        && requestData.get('external_export_order_id', '') == exportOrderId
+        && request.resource.data.get('source_order_id', '') == requestData.get('order_id', '')
+        && request.resource.data.get('release_mode', '') == 'external_no_inventory'
+        && request.resource.data.get('affects_inventory', true) == false;
     }
 
     function generatedExportItemCreateAllowed() {
@@ -2054,7 +2100,10 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
 
     function exportRequestLifecycleFieldsOnly() {
       return onlyChanged([
-        'status', 'lifecycle_status', 'release_sequence', 'active_export_order_id',
+        'status', 'lifecycle_status', 'release_mode', 'external_exported',
+        'external_export_date', 'external_exported_by', 'external_exported_at',
+        'external_export_order_id', 'external_export_code',
+        'release_sequence', 'active_export_order_id',
         'warehouse_export_code', 'warehouse_handled_by', 'warehouse_handled_at',
         'warehouse_note', 'warehouse_export_id', 'warehouse_export_order_id',
         'export_order_id', 'exported_at', 'actual_exported_at',
@@ -2074,6 +2123,90 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && hasAnyPerm(['export_requests.release', 'export_requests.process'])
         && ownEmailField(request.resource.data, 'warehouse_handled_by')
         && exportRequestReleaseLinkValid(requestId);
+    }
+
+    function exportRequestExternalOrderSummaryValid() {
+      let orderId = resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      return orderId is string
+        && orderId != ''
+        && exists(path)
+        && existsAfter(path)
+        && getAfter(path).data.get('warehouse_request_status', '') == 'da_xuat'
+        && getAfter(path).data.get('warehouse_fulfillment_status', '') in ['da_xuat_1_phan', 'da_xuat_du']
+        && getAfter(path).data.get('updated_at', null) is timestamp
+        && getAfter(path).data.get('updated_at', null) == request.time;
+    }
+
+    function externalReleaseOrderSummaryMatches() {
+      let orderId = resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      return orderId is string
+        && orderId != ''
+        && exists(path)
+        && existsAfter(path)
+        && getAfter(path).data.get('warehouse_request_status', '') == 'da_xuat'
+        && getAfter(path).data.get('warehouse_fulfillment_status', '') in ['da_xuat_1_phan', 'da_xuat_du']
+        && getAfter(path).data.get('updated_at', null) is timestamp
+        && getAfter(path).data.get('updated_at', null) == request.time;
+    }
+
+    function exportRequestExternalReleaseAllowed(requestId) {
+      let operationId = request.resource.data.get('operation_id', '');
+      let stockMovementIds = request.resource.data.get('stock_movement_ids', []);
+      let exportDate = request.resource.data.get('external_export_date', '');
+      let externalExportOrderId = request.resource.data.get('external_export_order_id', '');
+      let externalExportCode = request.resource.data.get('external_export_code', '');
+      let exportPath = exportOrderPath(externalExportOrderId);
+      return request.resource.data.get('lifecycle_status', '') == 'released_external'
+        && request.resource.data.get('status', '') == 'da_xuat'
+        && resource.data.get('status', '') in ['da_tiep_nhan', 'cho_xuat_kho', 'loi']
+        && exportRequestLifecycleFieldsOnly()
+        && hasAnyPerm(['export_requests.release', 'export_requests.process'])
+        && request.resource.data.get('release_mode', '') == 'external_no_inventory'
+        && request.resource.data.get('external_exported', false) == true
+        && exportDate is string
+        && exportDate.size() == 10
+        && request.resource.data.get('warehouse_note', '') is string
+        && request.resource.data.get('warehouse_note', '').size() >= 1
+        && request.resource.data.get('warehouse_note', '').size() <= 2000
+        && externalExportOrderId is string
+        && externalExportOrderId != ''
+        && externalExportCode is string
+        && externalExportCode != ''
+        && ownEmailField(request.resource.data, 'warehouse_handled_by')
+        && ownEmailField(request.resource.data, 'external_exported_by')
+        && request.resource.data.get('warehouse_handled_at', null) is timestamp
+        && request.resource.data.get('warehouse_handled_at', null) == request.time
+        && request.resource.data.get('external_exported_at', null) is timestamp
+        && request.resource.data.get('external_exported_at', null) == request.time
+        && request.resource.data.get('exported_at', null) is timestamp
+        && request.resource.data.get('exported_at', null) == request.time
+        && request.resource.data.get('actual_exported_at', null) is timestamp
+        && request.resource.data.get('actual_exported_at', null) == request.time
+        && request.resource.data.get('active_export_order_id', '') == ''
+        && request.resource.data.get('warehouse_export_code', '') == ''
+        && request.resource.data.get('warehouse_export_id', '') == ''
+        && request.resource.data.get('warehouse_export_order_id', '') == ''
+        && request.resource.data.get('export_order_id', '') == ''
+        && stockMovementIds is list
+        && stockMovementIds.size() == 0
+        && operationId is string
+        && operationId != ''
+        && request.resource.data.get('last_operation_id', '') == operationId
+        && request.resource.data.get('revision', 0) == resource.data.get('revision', 0) + 1
+        && request.resource.data.get('release_sequence', 0) == resource.data.get('release_sequence', 0) + 1
+        && existsAfter(exportPath)
+        && getAfter(exportPath).data.get('source_request_id', '') == requestId
+        && getAfter(exportPath).data.get('export_code', '') == externalExportCode
+        && getAfter(exportPath).data.get('lifecycle_status', '') == 'released_external'
+        && getAfter(exportPath).data.get('release_mode', '') == 'external_no_inventory'
+        && getAfter(exportPath).data.get('affects_inventory', true) == false
+        && getAfter(exportPath).data.get('request_operation_id', '') == operationId
+        && getAfter(exportPath).data.get('source_request_revision', -1) == resource.data.get('revision', 0)
+        && getAfter(exportPath).data.get('stock_movement_ids', []) is list
+        && getAfter(exportPath).data.get('stock_movement_ids', []).size() == 0
+        && externalReleaseOrderSummaryMatches();
     }
 
     function exportRequestCancelAllowed(requestId) {
@@ -2666,9 +2799,11 @@ hasAnyPerm([
         ? (exportSoftDeleteAllowed() || exportOrderCascadeDeleteAllowed())
         : request.resource.data.get('lifecycle_status', '') == 'released'
           ? exportRequestReleaseAllowed(docId)
-          : request.resource.data.get('lifecycle_status', '') == 'release_cancelled'
-            ? exportRequestCancelAllowed(docId)
-            : (exportOwnerEditAllowed() || exportWarehouseProcessAllowed() || isAdmin());
+          : request.resource.data.get('lifecycle_status', '') == 'released_external'
+            ? exportRequestExternalReleaseAllowed(docId)
+            : request.resource.data.get('lifecycle_status', '') == 'release_cancelled'
+              ? exportRequestCancelAllowed(docId)
+              : (exportOwnerEditAllowed() || exportWarehouseProcessAllowed() || isAdmin());
 
       allow delete: if isAdmin()
         || (
@@ -3077,7 +3212,7 @@ hasAnyPerm([
           request.resource.data.get('source_request_id', '') != ''
           && hasAnyPerm(['export_requests.release', 'export_requests.process'])
           && ownEmailField(request.resource.data, 'created_by')
-          && generatedExportCreateMatchesRequest(docId)
+          && (generatedExportCreateMatchesRequest(docId) || externalGeneratedExportCreateMatchesRequest(docId))
         )
         || (
           request.resource.data.get('source_request_id', '') == ''
@@ -3127,7 +3262,7 @@ hasAnyPerm([
         && quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) > 0
         && ownEmailField(request.resource.data, 'created_by')
-        && generatedExportItemCreateAllowed()
+        && (generatedExportItemCreateAllowed() || externalGeneratedExportItemCreateAllowed())
         || (
           request.resource.data.get('source', '') != 'kingcup_firestore'
           && hasAnyPerm(['export.create', 'export.edit'])
