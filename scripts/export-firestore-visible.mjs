@@ -137,6 +137,7 @@ function updateManifest(outputDirectory, statistics) {
       'active/isActive/is_active phải khác false',
       'status không thuộc deleted, inactive, đã xóa, ngừng hoạt động',
       'document thiếu các field trên vẫn được giữ để tương thích dữ liệu legacy',
+      'collection không còn bản ghi hiển thị sẽ không tạo file NDJSON',
     ],
   };
   manifest.total_scanned_records = statistics.reduce((total, item) => total + item.scanned, 0);
@@ -154,6 +155,7 @@ function updateManifest(outputDirectory, statistics) {
       scanned_records: stat.scanned,
       skipped_records: stat.skipped,
       records: stat.kept,
+      file_present: stat.filePresent,
     };
   });
 
@@ -183,9 +185,21 @@ export async function main(argv = process.argv.slice(2)) {
   const statistics = [];
 
   for (const file of files) {
-    const stat = await filterNdjsonFile(resolve(options.output, file));
-    statistics.push({ file, ...stat });
-    console.log(`${file}: giữ ${stat.kept}/${stat.scanned}, loại ${stat.skipped}`);
+    const path = resolve(options.output, file);
+    const stat = await filterNdjsonFile(path);
+    const filePresent = stat.kept > 0;
+
+    if (!filePresent) {
+      rmSync(path, { force: true });
+    }
+
+    statistics.push({ file, ...stat, filePresent });
+
+    if (filePresent) {
+      console.log(`${file}: giữ ${stat.kept}/${stat.scanned}, loại ${stat.skipped}`);
+    } else {
+      console.log(`${file}: không còn bản ghi hiển thị, đã bỏ file (${stat.scanned} bản ghi bị loại)`);
+    }
   }
 
   const manifest = updateManifest(options.output, statistics);
