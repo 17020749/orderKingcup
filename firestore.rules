@@ -327,7 +327,7 @@ service cloud.firestore {
           && status == 'tu_choi'
           || type == 'warehouse_export_request_released'
           && status == 'da_xuat'
-          && requestData.get('lifecycle_status', '') == 'released'
+          && requestData.get('lifecycle_status', '') in ['released', 'released_external']
           || type == 'warehouse_export_request_cancelled'
           && status in ['da_tiep_nhan', 'cho_xuat_kho']
           && requestData.get('lifecycle_status', '') == 'release_cancelled'
@@ -2054,7 +2054,9 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
 
     function exportRequestLifecycleFieldsOnly() {
       return onlyChanged([
-        'status', 'lifecycle_status', 'release_sequence', 'active_export_order_id',
+        'status', 'lifecycle_status', 'release_mode', 'external_exported',
+        'external_export_date', 'external_exported_by', 'external_exported_at',
+        'release_sequence', 'active_export_order_id',
         'warehouse_export_code', 'warehouse_handled_by', 'warehouse_handled_at',
         'warehouse_note', 'warehouse_export_id', 'warehouse_export_order_id',
         'export_order_id', 'exported_at', 'actual_exported_at',
@@ -2074,6 +2076,61 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && hasAnyPerm(['export_requests.release', 'export_requests.process'])
         && ownEmailField(request.resource.data, 'warehouse_handled_by')
         && exportRequestReleaseLinkValid(requestId);
+    }
+
+    function exportRequestExternalOrderSummaryValid() {
+      let orderId = resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      return orderId is string
+        && orderId != ''
+        && exists(path)
+        && existsAfter(path)
+        && getAfter(path).data.get('warehouse_request_status', '') == 'da_xuat'
+        && getAfter(path).data.get('warehouse_fulfillment_status', '') in ['da_xuat_1_phan', 'da_xuat_du']
+        && getAfter(path).data.get('updated_at', null) is timestamp
+        && getAfter(path).data.get('updated_at', null) == request.time;
+    }
+
+    function exportRequestExternalReleaseAllowed() {
+      let operationId = request.resource.data.get('operation_id', '');
+      let stockMovementIds = request.resource.data.get('stock_movement_ids', []);
+      let exportDate = request.resource.data.get('external_export_date', '');
+      return request.resource.data.get('lifecycle_status', '') == 'released_external'
+        && request.resource.data.get('status', '') == 'da_xuat'
+        && resource.data.get('status', '') in ['da_tiep_nhan', 'cho_xuat_kho', 'loi']
+        && exportRequestLifecycleFieldsOnly()
+        && hasAnyPerm(['export_requests.release', 'export_requests.process'])
+        && request.resource.data.get('release_mode', '') == 'external_no_inventory'
+        && request.resource.data.get('external_exported', false) == true
+        && request.resource.data.get('warehouse_note', '') is string
+        && request.resource.data.get('warehouse_note', '').size() > 0
+        && request.resource.data.get('warehouse_note', '').size() <= 2000
+        && request.resource.data.get('actual_export_summary_json', '') is string
+        && request.resource.data.get('request_timeline_json', '') is string
+        && exportRequestExternalOrderSummaryValid()
+        && exportDate is string
+        && exportDate.size() == 10
+        && ownEmailField(request.resource.data, 'warehouse_handled_by')
+        && ownEmailField(request.resource.data, 'external_exported_by')
+        && request.resource.data.get('warehouse_handled_at', null) is timestamp
+        && request.resource.data.get('warehouse_handled_at', null) == request.time
+        && request.resource.data.get('external_exported_at', null) is timestamp
+        && request.resource.data.get('external_exported_at', null) == request.time
+        && request.resource.data.get('exported_at', null) is timestamp
+        && request.resource.data.get('exported_at', null) == request.time
+        && request.resource.data.get('actual_exported_at', null) is timestamp
+        && request.resource.data.get('actual_exported_at', null) == request.time
+        && request.resource.data.get('active_export_order_id', '') == ''
+        && request.resource.data.get('warehouse_export_code', '') == ''
+        && request.resource.data.get('warehouse_export_id', '') == ''
+        && request.resource.data.get('warehouse_export_order_id', '') == ''
+        && request.resource.data.get('export_order_id', '') == ''
+        && stockMovementIds is list
+        && stockMovementIds.size() == 0
+        && operationId is string
+        && operationId != ''
+        && request.resource.data.get('last_operation_id', '') == operationId
+        && request.resource.data.get('revision', 0) == resource.data.get('revision', 0) + 1;
     }
 
     function exportRequestCancelAllowed(requestId) {
@@ -2666,9 +2723,11 @@ hasAnyPerm([
         ? (exportSoftDeleteAllowed() || exportOrderCascadeDeleteAllowed())
         : request.resource.data.get('lifecycle_status', '') == 'released'
           ? exportRequestReleaseAllowed(docId)
-          : request.resource.data.get('lifecycle_status', '') == 'release_cancelled'
-            ? exportRequestCancelAllowed(docId)
-            : (exportOwnerEditAllowed() || exportWarehouseProcessAllowed() || isAdmin());
+          : request.resource.data.get('lifecycle_status', '') == 'released_external'
+            ? exportRequestExternalReleaseAllowed()
+            : request.resource.data.get('lifecycle_status', '') == 'release_cancelled'
+              ? exportRequestCancelAllowed(docId)
+              : (exportOwnerEditAllowed() || exportWarehouseProcessAllowed() || isAdmin());
 
       allow delete: if isAdmin()
         || (

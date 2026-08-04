@@ -4,7 +4,13 @@ import type { ProductDoc, WarehouseDoc } from '~/types/models'
 import { formatDateTime, isActive, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared lifecycle helper is also executed by Node client tests.
-import { canCancelExportRequestRelease, canReleaseExportRequest } from '~/utils/exportLifecycle.mjs'
+import {
+  buildExternalReleasedRequestPatch,
+  canCancelExportRequestRelease,
+  canReleaseExportRequest,
+  canReleaseExportRequestExternally,
+  isExternalExportRequestRelease,
+} from '~/utils/exportLifecycle.mjs'
 import {
   buildNotificationPayload,
   resolveSaleNotificationRecipients,
@@ -34,7 +40,7 @@ const products = ref<ProductDoc[]>([])
 const warehouses = ref<WarehouseDoc[]>([])
 const selectedRequest = ref<any>(null)
 const actionRequest = ref<any>(null)
-const actionType = ref<'accept' | 'reject' | 'release' | 'cancel_release' | ''>('')
+const actionType = ref<'accept' | 'reject' | 'release' | 'external_release' | 'cancel_release' | ''>('')
 const showDetailModal = ref(false)
 const showActionModal = ref(false)
 const actionForm = reactive({ note: '', export_date: todayKey() })
@@ -156,6 +162,10 @@ function canReleaseRequest(row: any) {
   return canReleaseAction.value && canReleaseExportRequest(row) && !requestHasExported(row)
 }
 
+function canExternalReleaseRequest(row: any) {
+  return canReleaseAction.value && canReleaseExportRequestExternally(row) && !requestHasExported(row)
+}
+
 function canCancelReleasedRequest(row: any) {
   return canReleaseAction.value && canCancelExportRequestRelease(row)
 }
@@ -164,6 +174,7 @@ function actionStillValid(row: any) {
   if (actionType.value === 'accept') return canAcceptRequest(row)
   if (actionType.value === 'reject') return canRejectRequest(row)
   if (actionType.value === 'release') return canReleaseRequest(row)
+  if (actionType.value === 'external_release') return canExternalReleaseRequest(row)
   if (actionType.value === 'cancel_release') return canCancelReleasedRequest(row)
   return false
 }
@@ -186,10 +197,11 @@ function openDetail(row: any) {
   showDetailModal.value = true
 }
 
-function openAction(row: any, type: 'accept' | 'reject' | 'release' | 'cancel_release') {
+function openAction(row: any, type: 'accept' | 'reject' | 'release' | 'external_release' | 'cancel_release') {
   if (type === 'accept' && !canAcceptRequest(row)) return showToast('Yêu cầu này không còn ở trạng thái có thể tiếp nhận.', 'error')
   if (type === 'reject' && !canRejectRequest(row)) return showToast('Yêu cầu này không thể từ chối.', 'error')
   if (type === 'release' && !canReleaseRequest(row)) return showToast('Yêu cầu phải được tiếp nhận trước khi cho xuất kho.', 'error')
+  if (type === 'external_release' && !canExternalReleaseRequest(row)) return showToast('Yêu cầu này không còn ở trạng thái có thể xác nhận đã xuất ngoài hệ thống.', 'error')
   if (type === 'cancel_release' && !canCancelReleasedRequest(row)) return showToast('Yêu cầu không có phiếu xuất đang hoạt động để hủy.', 'error')
   actionRequest.value = row
   actionType.value = type
@@ -211,6 +223,7 @@ const actionTitle = computed(() => {
   if (actionType.value === 'accept') return 'Tiếp nhận yêu cầu xuất kho'
   if (actionType.value === 'reject') return 'Từ chối yêu cầu xuất kho'
   if (actionType.value === 'release') return 'Cho xuất kho'
+  if (actionType.value === 'external_release') return 'Xác nhận đã xuất ngoài hệ thống'
   if (actionType.value === 'cancel_release') return 'Hủy xuất và hoàn tồn'
   return 'Xử lý yêu cầu xuất kho'
 })
@@ -219,6 +232,7 @@ const actionSaveLabel = computed(() => {
   if (actionType.value === 'accept') return 'Xác nhận tiếp nhận'
   if (actionType.value === 'reject') return 'Xác nhận từ chối'
   if (actionType.value === 'release') return 'Cho xuất kho'
+  if (actionType.value === 'external_release') return 'Xác nhận đã xuất'
   if (actionType.value === 'cancel_release') return 'Hủy xuất và hoàn tồn'
   return 'Xác nhận'
 })
@@ -423,6 +437,71 @@ async function submitRelease(row: any) {
   }
 }
 
+async function submitExternalRelease(row: any) {
+  const note = String(actionForm.note || '').trim()
+  const exportDate = String(actionForm.export_date || '').trim()
+  if (!exportDate) return showToast('Vui lòng chọn ngày đã xuất thực tế.', 'error')
+  if (!note) return showToast('Vui lòng nhập lý do hoặc ghi chú xác nhận.', 'error')
+
+  const lines = requestLineProgress(row).filter((line: any) => toNumber(line.requested_qty) > 0)
+  if (!lines.length) return showToast('Yêu cầu xuất kho chưa có dòng hàng hợp lệ.', 'error')
+
+  const confirmed = await askConfirm({
+    title: 'Xác nhận đã xuất ngoài hệ thống',
+    message: `Yêu cầu ${row.request_id || row.id} sẽ chuyển thành Đã xuất kho nhưng KHÔNG tạo phiếu xuất, không ghi biến động và không trừ tồn. Bạn chắc chắn?`,
+    confirmLabel: 'Xác nhận đã xuất',
+  })
+  if (!confirmed) return
+
+  const operationId = `export_request_external:${row.id}:${toNumber(row.revision)}`
+  const timelineJson = appendTimeline(row, 'external_release', 'Kho xác nhận đã xuất ngoài hệ thống', 'da_xuat', note)
+  const actualSummaryJson = JSON.stringify(lines.map((line: any) => ({
+    source_order_id: row.order_id || '',
+    source_order_item_id: String(line.order_item_id || line.source_order_item_id || '').trim(),
+    product_id: line.product_id || '',
+    product_code: line.product_code || '',
+    logo: line.logo || '',
+    quantity: toNumber(line.requested_qty),
+    unit: line.unit || '',
+    release_mode: 'external_no_inventory',
+  })))
+  const externalPatch = buildExternalReleasedRequestPatch({
+    request: row,
+    actor: appUser.value?.email || '',
+    exportDate,
+    note,
+    operationId,
+    timelineJson,
+    actualSummaryJson,
+  })
+
+  const result = await updateRequestStatus(
+    row,
+    'da_xuat',
+    'external_release',
+    'Kho xác nhận đã xuất ngoài hệ thống',
+    note,
+    {
+      ...externalPatch,
+      warehouse_handled_at: serverTimestamp(),
+      external_exported_at: serverTimestamp(),
+      exported_at: serverTimestamp(),
+      actual_exported_at: serverTimestamp(),
+    },
+    {
+      type: 'warehouse_export_request_released',
+      title: 'Kho xác nhận đơn đã xuất ngoài hệ thống',
+      message: `${row.request_id || row.id} · Đơn ${row.order_code || '-'} đã xuất thực tế ngoài hệ thống và không trừ tồn kho.`,
+    },
+  )
+  showToast(
+    result.notificationCount
+      ? 'Đã xác nhận xuất ngoài hệ thống và cập nhật trạng thái đơn hàng.'
+      : 'Đã xác nhận xuất ngoài hệ thống nhưng không xác định được Sale để gửi thông báo.',
+    result.notificationCount ? 'success' : 'info',
+  )
+}
+
 async function submitCancelRelease(row: any) {
   const reason = String(actionForm.note || '').trim()
   if (!reason) return showToast('Vui lòng nhập lý do hủy xuất kho.', 'error')
@@ -457,6 +536,7 @@ async function submitAction() {
     if (actionType.value === 'accept') await submitAccept(row)
     if (actionType.value === 'reject') await submitReject(row)
     if (actionType.value === 'release') await submitRelease(row)
+    if (actionType.value === 'external_release') await submitExternalRelease(row)
     if (actionType.value === 'cancel_release') await submitCancelRelease(row)
     showActionModal.value = false
   } catch (error) {
@@ -589,16 +669,17 @@ onBeforeUnmount(() => {
               <td>{{ formatDateTime(row.requested_at || row.created_at) }}</td>
               <td>{{ row.requested_by || '-' }}</td>
               <td><span class="badge" :class="statusClass(row.status)">{{ statusLabel(row.status) }}</span></td>
-              <td>{{ row.warehouse_export_code || '-' }}</td>
+              <td><span v-if="isExternalExportRequestRelease(row)" class="badge yellow">Xuất ngoài HT</span><template v-else>{{ row.warehouse_export_code || '-' }}</template></td>
               <td>
                 <div class="action-buttons">
                   <button class="btn-sm" @click="openDetail(row)">Xem</button>
                   <WarehousePrintMenu :request="row" />
                   <button v-if="canAcceptRequest(row)" class="btn-sm btn-view" @click="openAction(row, 'accept')">Tiếp nhận</button>
                   <button v-if="canReleaseRequest(row)" class="btn-sm btn-view" @click="openAction(row, 'release')">Cho xuất kho</button>
+                  <button v-if="canExternalReleaseRequest(row)" class="btn-sm" @click="openAction(row, 'external_release')">Đã xuất ngoài HT</button>
                   <button v-if="canCancelReleasedRequest(row)" class="btn-sm btn-delete" @click="openAction(row, 'cancel_release')">Hủy xuất/Hoàn tồn</button>
                   <button v-if="canRejectRequest(row)" class="btn-sm btn-delete" @click="openAction(row, 'reject')">Từ chối</button>
-                  <button v-if="!canAcceptRequest(row) && !canReleaseRequest(row) && !canCancelReleasedRequest(row) && !canRejectRequest(row)" class="btn-sm" disabled>Khóa</button>
+                  <button v-if="!canAcceptRequest(row) && !canReleaseRequest(row) && !canExternalReleaseRequest(row) && !canCancelReleasedRequest(row) && !canRejectRequest(row)" class="btn-sm" disabled>Khóa</button>
                 </div>
               </td>
             </tr>
@@ -616,7 +697,9 @@ onBeforeUnmount(() => {
         <div class="detail-item"><label>Trạng thái</label><strong>{{ statusLabel(selectedRequest.status) }}</strong></div>
         <div class="detail-item"><label>Sale tạo yêu cầu</label><strong>{{ timelineActorText({ actor: selectedRequest.requested_by, actor_name: safeJsonParse(selectedRequest.payload_json, {}).requested_by_name || selectedRequest.sale_name }, selectedRequest) }}</strong></div>
         <div class="detail-item"><label>Ngày yêu cầu</label><strong>{{ formatDateTime(selectedRequest.requested_at || selectedRequest.created_at) }}</strong></div>
-        <div class="detail-item"><label>Phiếu kho</label><strong>{{ selectedRequest.warehouse_export_code || '-' }}</strong></div>
+        <div class="detail-item"><label>Phiếu kho</label><strong>{{ isExternalExportRequestRelease(selectedRequest) ? 'Không tạo phiếu - xuất ngoài HT' : (selectedRequest.warehouse_export_code || '-') }}</strong></div>
+        <div class="detail-item"><label>Hình thức xuất</label><strong>{{ isExternalExportRequestRelease(selectedRequest) ? 'Xuất ngoài hệ thống - không trừ tồn' : 'Xuất kho chuẩn' }}</strong></div>
+        <div v-if="isExternalExportRequestRelease(selectedRequest)" class="detail-item"><label>Ngày xuất thực tế</label><strong>{{ selectedRequest.external_export_date || '-' }}</strong></div>
         <div class="detail-item"><label>Ghi chú kho</label><strong>{{ selectedRequest.warehouse_note || '-' }}</strong></div>
         <div class="detail-item"><label>Lần xuất</label><strong>{{ selectedRequest.release_sequence || (selectedRequest.export_order_id ? 1 : 0) }}</strong></div>
         <div class="detail-item"><label>Phiếu đã hủy gần nhất</label><strong>{{ selectedRequest.last_cancelled_export_code || '-' }}</strong></div>
@@ -655,7 +738,7 @@ onBeforeUnmount(() => {
         <div class="detail-item"><label>Trạng thái</label><strong>{{ statusLabel(actionRequest.status) }}</strong></div>
       </div>
 
-      <div v-if="actionType === 'release'" class="form-grid">
+      <div v-if="actionType === 'release' || actionType === 'external_release'" class="form-grid">
         <div class="form-group"><label>Ngày xuất thực tế</label><input v-model="actionForm.export_date" class="input" type="date" /></div>
       </div>
 
@@ -684,10 +767,11 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="form-group" style="margin-top:12px">
-        <label>{{ actionType === 'reject' ? 'Lý do từ chối' : actionType === 'cancel_release' ? 'Lý do hủy xuất' : 'Ghi chú kho' }}</label>
+        <label>{{ actionType === 'reject' ? 'Lý do từ chối' : actionType === 'cancel_release' ? 'Lý do hủy xuất' : actionType === 'external_release' ? 'Lý do / ghi chú xác nhận' : 'Ghi chú kho' }}</label>
         <textarea v-model="actionForm.note" class="textarea" rows="3" />
       </div>
       <p v-if="actionType === 'release'" class="small subtle">Khi cho xuất kho, hệ thống sẽ check tồn, tạo export_orders/export_order_items, ghi stock_movements và trừ inventory_balances bằng transaction.</p>
+      <p v-if="actionType === 'external_release'" class="small" style="color:#b45309">Chỉ dùng cho hàng đã xuất thực tế trước khi quản lý tồn trên hệ thống. Yêu cầu và đơn hàng vẫn chuyển sang trạng thái đã xuất, nhưng không tạo phiếu xuất, không ghi stock_movements và không thay đổi inventory_balances.</p>
       <p v-if="actionType === 'cancel_release'" class="small subtle">Hệ thống sẽ hủy mềm phiếu xuất liên kết, hoàn inventory_balances, ghi stock_movements đảo và mở lại yêu cầu trong cùng transaction.</p>
     </BaseModal>
 
