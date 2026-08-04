@@ -2138,6 +2138,19 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && getAfter(path).data.get('updated_at', null) == request.time;
     }
 
+    function externalReleaseOrderSummaryMatches() {
+      let orderId = resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      return orderId is string
+        && orderId != ''
+        && exists(path)
+        && existsAfter(path)
+        && getAfter(path).data.get('warehouse_request_status', '') == 'da_xuat'
+        && getAfter(path).data.get('warehouse_fulfillment_status', '') in ['da_xuat_1_phan', 'da_xuat_du']
+        && getAfter(path).data.get('updated_at', null) is timestamp
+        && getAfter(path).data.get('updated_at', null) == request.time;
+    }
+
     function exportRequestExternalReleaseAllowed(requestId) {
       let operationId = request.resource.data.get('operation_id', '');
       let stockMovementIds = request.resource.data.get('stock_movement_ids', []);
