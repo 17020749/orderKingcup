@@ -4,17 +4,26 @@ on:
   push:
     branches:
       - agent/external-export-no-inventory
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: write
 
 jobs:
   apply-and-test:
+    if: github.head_ref == 'agent/external-export-no-inventory' || github.ref_name == 'agent/external-export-no-inventory'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout branch
+      - name: Checkout source branch
         uses: actions/checkout@v4
         with:
+          ref: agent/external-export-no-inventory
           fetch-depth: 0
 
       - name: Set up Node.js
@@ -32,7 +41,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "Add external export release without inventory"
-          git push
+          git push origin HEAD:agent/external-export-no-inventory
 
       - name: Install dependencies
         run: npm ci
