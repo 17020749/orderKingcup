@@ -7,7 +7,7 @@ import {
   isExternalExportRequestRelease,
 } from '../utils/exportLifecycle.mjs'
 
-test('external release dùng trạng thái cũ nhưng không tạo liên kết kho', () => {
+test('external release dùng trạng thái cũ nhưng giữ liên kết xuất chuẩn rỗng', () => {
   const patch = buildExternalReleasedRequestPatch({
     request: { status: 'da_tiep_nhan', revision: 4 },
     actor: 'Warehouse@Example.com',
@@ -37,16 +37,22 @@ test('external release chỉ mở ở cùng trạng thái với release chuẩn'
   assert.equal(canReleaseExportRequestExternally({ status: 'da_tiep_nhan', active_export_order_id: 'export-a' }), false)
 })
 
-test('client external release không gọi transaction trừ tồn', () => {
+test('client tạo phiếu ghi nhận nhưng không gọi transaction trừ tồn', () => {
   const source = readFileSync('pages/warehouse-export-requests.vue', 'utf8')
   const start = source.indexOf('async function submitExternalRelease')
   const end = source.indexOf('async function submitCancelRelease', start)
   assert.ok(start >= 0 && end > start)
   const block = source.slice(start, end)
-  assert.equal(block.includes('updateRequestStatus('), true)
+  assert.equal(block.includes("batch.set(doc(db, 'export_orders'"), true)
+  assert.equal(block.includes("batch.set(doc(db, 'export_order_items'"), true)
+  assert.equal(block.includes("affects_inventory: false"), true)
   assert.equal(block.includes('processExportRequestToExportOrder('), false)
   assert.equal(block.includes('inventory_balances'), false)
   assert.equal(block.includes('stock_movements'), false)
+
+  const exportsPage = readFileSync('pages/exports.vue', 'utf8')
+  assert.equal(exportsPage.includes('isExternalNoInventory'), true)
+  assert.equal(exportsPage.includes('Không trừ tồn'), true)
 
   const fallback = readFileSync('utils/fallbackOrderPatch.ts', 'utf8')
   assert.equal(fallback.includes("warehouse_fulfillment_status: 'da_xuat_1_phan'"), true)

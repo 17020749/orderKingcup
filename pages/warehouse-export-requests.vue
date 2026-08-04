@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore'
 import type { ProductDoc, WarehouseDoc } from '~/types/models'
-import { formatDateTime, isActive, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
+import { formatDateTime, isActive, makeCode, makeId, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared lifecycle helper is also executed by Node client tests.
 import {
@@ -284,7 +284,7 @@ function addSaleNotifications(batch: any, row: any, input: { type: string; title
   return recipients.length
 }
 
-async function updateRequestStatus(row: any, nextStatus: string, action: string, title: string, note = '', extra: Record<string, any> = {}, notification?: { type: string; title: string; message: string }) {
+async function updateRequestStatus(row: any, nextStatus: string, action: string, title: string, note = '', extra: Record<string, any> = {}, notification?: { type: string; title: string; message: string }, extendBatch?: (batch: any) => void) {
   const orderPatch = fallbackOrderPatch(nextStatus)
   const batch = writeBatch(db)
   const patch = {
@@ -315,10 +315,13 @@ async function updateRequestStatus(row: any, nextStatus: string, action: string,
     deleted: false
   })
   const notificationCount = notification ? addSaleNotifications(batch, row, notification) : 0
+  extendBatch?.(batch)
   await batch.commit()
   invalidateScopedCache('order_export_requests')
   invalidateScopedCache('orders')
   invalidateScopedCache('activity_logs')
+  invalidateScopedCache('export_orders')
+  invalidateScopedCache('export_order_items')
   return { notificationCount }
 }
 
@@ -448,12 +451,16 @@ async function submitExternalRelease(row: any) {
 
   const confirmed = await askConfirm({
     title: 'Xác nhận đã xuất ngoài hệ thống',
-    message: `Yêu cầu ${row.request_id || row.id} sẽ chuyển thành Đã xuất kho nhưng KHÔNG tạo phiếu xuất, không ghi biến động và không trừ tồn. Bạn chắc chắn?`,
+    message: `Yêu cầu ${row.request_id || row.id} sẽ chuyển thành Đã xuất kho và tạo phiếu ghi nhận trên trang Xuất kho. Phiếu này KHÔNG ghi biến động và KHÔNG trừ tồn. Bạn chắc chắn?`,
     confirmLabel: 'Xác nhận đã xuất',
   })
   if (!confirmed) return
 
+  const actor = String(appUser.value?.email || '').trim().toLowerCase()
   const operationId = `export_request_external:${row.id}:${toNumber(row.revision)}`
+  const exportOrderId = makeId('exp_external')
+  const exportCode = makeCode('PXK-NGOAI')
+  const releaseSequence = Math.max(0, Math.floor(toNumber(row.release_sequence))) + 1
   const timelineJson = appendTimeline(row, 'external_release', 'Kho xác nhận đã xuất ngoài hệ thống', 'da_xuat', note)
   const actualSummaryJson = JSON.stringify(lines.map((line: any) => ({
     source_order_id: row.order_id || '',
@@ -467,12 +474,84 @@ async function submitExternalRelease(row: any) {
   })))
   const externalPatch = buildExternalReleasedRequestPatch({
     request: row,
-    actor: appUser.value?.email || '',
+    actor,
     exportDate,
     note,
     operationId,
     timelineJson,
     actualSummaryJson,
+  })
+
+  const exportOrderPayload = {
+    id: exportOrderId,
+    code: exportCode,
+    export_code: exportCode,
+    export_date: exportDate,
+    destination_type: 'customer',
+    source_order_id: row.order_id || '',
+    source_order_code: row.order_code || '',
+    source_request_id: row.id,
+    sync_source: 'kingcup_firestore:external_no_inventory',
+    customer_name: row.customer_name || '',
+    destination_name: row.customer_name || '',
+    to_warehouse_id: '',
+    to_warehouse_name: '',
+    note,
+    status: 'completed',
+    lifecycle_status: 'released_external',
+    release_mode: 'external_no_inventory',
+    affects_inventory: false,
+    stock_movement_ids: [],
+    release_sequence: releaseSequence,
+    source_request_revision: toNumber(row.revision),
+    request_operation_id: operationId,
+    active: true,
+    deleted: false,
+    created_by: actor,
+    created_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+    operation_id: operationId,
+    last_operation_id: operationId,
+    revision: 1,
+    source: 'kingcup_firestore',
+  }
+
+  const exportItemPayloads = lines.map((line: any, index: number) => {
+    const product = findProductByCode(line.product_code)
+    const logo = String(line.logo || '').trim()
+    return {
+      id: makeId(`exp_external_item_${index + 1}`),
+      export_order_id: exportOrderId,
+      source_order_id: row.order_id || '',
+      source_order_item_id: String(line.order_item_id || line.source_order_item_id || '').trim(),
+      product_id: line.product_id || product?.id || '',
+      product_code: line.product_code || product?.product_code || '',
+      product_name: line.product_name || product?.product_name || '',
+      from_warehouse_id: '',
+      from_warehouse_name: 'Xuất ngoài hệ thống',
+      to_warehouse_id: '',
+      to_warehouse_name: '',
+      destination_name: row.customer_name || '',
+      logo,
+      source_logo: logo,
+      target_logo: logo,
+      quantity: toNumber(line.requested_qty),
+      unit: line.unit || product?.unit || '',
+      note: line.note || note,
+      status: 'completed',
+      lifecycle_status: 'released_external',
+      release_mode: 'external_no_inventory',
+      affects_inventory: false,
+      active: true,
+      deleted: false,
+      created_by: actor,
+      created_at: serverTimestamp(),
+      updated_at: serverTimestamp(),
+      operation_id: operationId,
+      last_operation_id: operationId,
+      revision: 1,
+      source: 'kingcup_firestore',
+    }
   })
 
   const result = await updateRequestStatus(
@@ -483,6 +562,9 @@ async function submitExternalRelease(row: any) {
     note,
     {
       ...externalPatch,
+      release_sequence: releaseSequence,
+      external_export_order_id: exportOrderId,
+      external_export_code: exportCode,
       warehouse_handled_at: serverTimestamp(),
       external_exported_at: serverTimestamp(),
       exported_at: serverTimestamp(),
@@ -491,13 +573,19 @@ async function submitExternalRelease(row: any) {
     {
       type: 'warehouse_export_request_released',
       title: 'Kho xác nhận đơn đã xuất ngoài hệ thống',
-      message: `${row.request_id || row.id} · Đơn ${row.order_code || '-'} đã xuất thực tế ngoài hệ thống và không trừ tồn kho.`,
+      message: `${row.request_id || row.id} · Đơn ${row.order_code || '-'} đã xuất thực tế ngoài hệ thống, đã tạo phiếu ${exportCode} và không trừ tồn kho.`,
+    },
+    batch => {
+      batch.set(doc(db, 'export_orders', exportOrderId), exportOrderPayload)
+      exportItemPayloads.forEach(item => {
+        batch.set(doc(db, 'export_order_items', item.id), item)
+      })
     },
   )
   showToast(
     result.notificationCount
-      ? 'Đã xác nhận xuất ngoài hệ thống và cập nhật trạng thái đơn hàng.'
-      : 'Đã xác nhận xuất ngoài hệ thống nhưng không xác định được Sale để gửi thông báo.',
+      ? `Đã xác nhận xuất ngoài hệ thống và tạo phiếu ghi nhận ${exportCode}.`
+      : `Đã tạo phiếu ghi nhận ${exportCode}, nhưng không xác định được Sale để gửi thông báo.`,
     result.notificationCount ? 'success' : 'info',
   )
 }
@@ -669,7 +757,7 @@ onBeforeUnmount(() => {
               <td>{{ formatDateTime(row.requested_at || row.created_at) }}</td>
               <td>{{ row.requested_by || '-' }}</td>
               <td><span class="badge" :class="statusClass(row.status)">{{ statusLabel(row.status) }}</span></td>
-              <td><span v-if="isExternalExportRequestRelease(row)" class="badge yellow">Xuất ngoài HT</span><template v-else>{{ row.warehouse_export_code || '-' }}</template></td>
+              <td><template v-if="isExternalExportRequestRelease(row)"><span class="badge yellow">Xuất ngoài HT</span><div class="small subtle">{{ row.external_export_code || '-' }}</div></template><template v-else>{{ row.warehouse_export_code || '-' }}</template></td>
               <td>
                 <div class="action-buttons">
                   <button class="btn-sm" @click="openDetail(row)">Xem</button>
@@ -697,7 +785,7 @@ onBeforeUnmount(() => {
         <div class="detail-item"><label>Trạng thái</label><strong>{{ statusLabel(selectedRequest.status) }}</strong></div>
         <div class="detail-item"><label>Sale tạo yêu cầu</label><strong>{{ timelineActorText({ actor: selectedRequest.requested_by, actor_name: safeJsonParse(selectedRequest.payload_json, {}).requested_by_name || selectedRequest.sale_name }, selectedRequest) }}</strong></div>
         <div class="detail-item"><label>Ngày yêu cầu</label><strong>{{ formatDateTime(selectedRequest.requested_at || selectedRequest.created_at) }}</strong></div>
-        <div class="detail-item"><label>Phiếu kho</label><strong>{{ isExternalExportRequestRelease(selectedRequest) ? 'Không tạo phiếu - xuất ngoài HT' : (selectedRequest.warehouse_export_code || '-') }}</strong></div>
+        <div class="detail-item"><label>Phiếu kho</label><strong>{{ isExternalExportRequestRelease(selectedRequest) ? (selectedRequest.external_export_code || 'Phiếu ghi nhận xuất ngoài HT') : (selectedRequest.warehouse_export_code || '-') }}</strong></div>
         <div class="detail-item"><label>Hình thức xuất</label><strong>{{ isExternalExportRequestRelease(selectedRequest) ? 'Xuất ngoài hệ thống - không trừ tồn' : 'Xuất kho chuẩn' }}</strong></div>
         <div v-if="isExternalExportRequestRelease(selectedRequest)" class="detail-item"><label>Ngày xuất thực tế</label><strong>{{ selectedRequest.external_export_date || '-' }}</strong></div>
         <div class="detail-item"><label>Ghi chú kho</label><strong>{{ selectedRequest.warehouse_note || '-' }}</strong></div>
@@ -771,7 +859,7 @@ onBeforeUnmount(() => {
         <textarea v-model="actionForm.note" class="textarea" rows="3" />
       </div>
       <p v-if="actionType === 'release'" class="small subtle">Khi cho xuất kho, hệ thống sẽ check tồn, tạo export_orders/export_order_items, ghi stock_movements và trừ inventory_balances bằng transaction.</p>
-      <p v-if="actionType === 'external_release'" class="small" style="color:#b45309">Chỉ dùng cho hàng đã xuất thực tế trước khi quản lý tồn trên hệ thống. Yêu cầu và đơn hàng vẫn chuyển sang trạng thái đã xuất, nhưng không tạo phiếu xuất, không ghi stock_movements và không thay đổi inventory_balances.</p>
+      <p v-if="actionType === 'external_release'" class="small" style="color:#b45309">Chỉ dùng cho hàng đã xuất thực tế trước khi quản lý tồn trên hệ thống. Hệ thống tạo một phiếu ghi nhận trên trang Xuất kho, nhưng không ghi stock_movements và không thay đổi inventory_balances.</p>
       <p v-if="actionType === 'cancel_release'" class="small subtle">Hệ thống sẽ hủy mềm phiếu xuất liên kết, hoàn inventory_balances, ghi stock_movements đảo và mở lại yêu cầu trong cùng transaction.</p>
     </BaseModal>
 
