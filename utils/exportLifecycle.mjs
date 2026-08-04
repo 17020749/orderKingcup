@@ -157,6 +157,50 @@ export function buildCancelledReleaseRequestPatch(input = {}) {
   }
 }
 
+export function isExternalExportRequestRelease(request = {}) {
+  return canonicalExportRequestStatus(request.lifecycle_status) === 'released_external'
+    || text(request.release_mode) === 'external_no_inventory'
+    || request.external_exported === true
+}
+
+export function canReleaseExportRequestExternally(request = {}) {
+  return canReleaseExportRequest(request)
+}
+
+export function buildExternalReleasedRequestPatch(input = {}) {
+  const request = input.request || {}
+  const actor = text(input.actor).toLowerCase()
+  const exportDate = text(input.exportDate)
+  const note = text(input.note)
+  const operationId = text(input.operationId)
+  if (!actor) throw new Error('Không xác định được người xác nhận xuất ngoài hệ thống.')
+  if (!exportDate) throw new Error('Vui lòng chọn ngày đã xuất thực tế.')
+  if (!note) throw new Error('Vui lòng nhập lý do hoặc ghi chú xác nhận.')
+  if (!operationId) throw new Error('Thiếu mã thao tác xuất ngoài hệ thống.')
+
+  return {
+    status: EXPORT_REQUEST_STATUSES.released,
+    lifecycle_status: 'released_external',
+    release_mode: 'external_no_inventory',
+    external_exported: true,
+    external_export_date: exportDate,
+    external_exported_by: actor,
+    active_export_order_id: '',
+    warehouse_export_code: '',
+    warehouse_export_id: '',
+    warehouse_export_order_id: '',
+    export_order_id: '',
+    warehouse_handled_by: actor,
+    warehouse_note: note,
+    actual_export_summary_json: input.actualSummaryJson || '[]',
+    stock_movement_ids: [],
+    request_timeline_json: input.timelineJson || '[]',
+    operation_id: operationId,
+    last_operation_id: operationId,
+    revision: integer(request.revision) + 1,
+  }
+}
+
 export function buildGeneratedExportLifecycleFields(input = {}) {
   return {
     lifecycle_status: input.cancelled ? 'cancelled' : 'released',
