@@ -118,3 +118,32 @@ test('external release không được gắn phiếu xuất hoặc movement gi�
     active_export_order_id: 'export-fake', export_order_id: 'export-fake', stock_movement_ids: ['move-fake'],
   })))
 })
+
+test('external release chỉ cập nhật request bị chặn để tránh lệch trạng thái đơn hàng', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  await assertFails(updateDoc(doc(db, 'order_export_requests', 'request-a'), externalPatch()))
+})
+
+test('external release cập nhật order sai trạng thái bị chặn', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  batch.update(doc(db, 'orders', 'order-a'), {
+    warehouse_fulfillment_status: 'cho_xu_ly',
+    warehouse_request_status: 'da_tiep_nhan',
+    updated_at: serverTimestamp(),
+  })
+  await assertFails(batch.commit())
+})
+
+test('external release bắt buộc có lý do xác nhận', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch({ warehouse_note: '' }))
+  batch.update(doc(db, 'orders', 'order-a'), {
+    warehouse_fulfillment_status: 'da_xuat_1_phan',
+    warehouse_request_status: 'da_xuat',
+    updated_at: serverTimestamp(),
+  })
+  await assertFails(batch.commit())
+})

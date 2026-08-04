@@ -2078,6 +2078,19 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && exportRequestReleaseLinkValid(requestId);
     }
 
+    function exportRequestExternalOrderSummaryValid() {
+      let orderId = resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      return orderId is string
+        && orderId != ''
+        && exists(path)
+        && existsAfter(path)
+        && getAfter(path).data.get('warehouse_request_status', '') == 'da_xuat'
+        && getAfter(path).data.get('warehouse_fulfillment_status', '') in ['da_xuat_1_phan', 'da_xuat_du']
+        && getAfter(path).data.get('updated_at', null) is timestamp
+        && getAfter(path).data.get('updated_at', null) == request.time;
+    }
+
     function exportRequestExternalReleaseAllowed() {
       let operationId = request.resource.data.get('operation_id', '');
       let stockMovementIds = request.resource.data.get('stock_movement_ids', []);
@@ -2089,6 +2102,12 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && hasAnyPerm(['export_requests.release', 'export_requests.process'])
         && request.resource.data.get('release_mode', '') == 'external_no_inventory'
         && request.resource.data.get('external_exported', false) == true
+        && request.resource.data.get('warehouse_note', '') is string
+        && request.resource.data.get('warehouse_note', '').size() > 0
+        && request.resource.data.get('warehouse_note', '').size() <= 2000
+        && request.resource.data.get('actual_export_summary_json', '') is string
+        && request.resource.data.get('request_timeline_json', '') is string
+        && exportRequestExternalOrderSummaryValid()
         && exportDate is string
         && exportDate.size() == 10
         && ownEmailField(request.resource.data, 'warehouse_handled_by')
