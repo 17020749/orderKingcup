@@ -40,21 +40,18 @@ jobs:
         shell: bash
         run: |
           set +e
-          {
-            echo '=== CLIENT TEST ==='
-            node --test tests/external-export-release.client.test.mjs
-            client_status=$?
-            echo "CLIENT_EXIT=$client_status"
-            echo
-            echo '=== RULES TEST ==='
-            npx --no-install firebase emulators:exec --only firestore "node --test tests/external-export-release.rules.test.mjs"
-            rules_status=$?
-            echo "RULES_EXIT=$rules_status"
-            exit $(( client_status != 0 || rules_status != 0 ))
-          } > diagnostic-external-export.log 2>&1
-          test_status=$?
-          tail -n 300 diagnostic-external-export.log
+          echo '=== CLIENT TEST ===' > diagnostic-external-export.log
+          node --test tests/external-export-release.client.test.mjs >> diagnostic-external-export.log 2>&1
+          client_status=$?
+          echo "CLIENT_EXIT=$client_status" >> diagnostic-external-export.log
+          echo >> diagnostic-external-export.log
+          echo '=== RULES TEST ===' >> diagnostic-external-export.log
+          npx --no-install firebase emulators:exec --only firestore "node --test tests/external-export-release.rules.test.mjs" >> diagnostic-external-export.log 2>&1
+          rules_status=$?
+          echo "RULES_EXIT=$rules_status" >> diagnostic-external-export.log
+          test_status=$(( client_status != 0 || rules_status != 0 ))
           echo "DIAGNOSTIC_EXIT=$test_status" >> diagnostic-external-export.log
+          tail -n 300 diagnostic-external-export.log
           exit 0
 
       - name: Commit diagnostic log
