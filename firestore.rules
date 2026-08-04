@@ -2167,6 +2167,9 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && request.resource.data.get('external_exported', false) == true
         && exportDate is string
         && exportDate.size() == 10
+        && request.resource.data.get('warehouse_note', '') is string
+        && request.resource.data.get('warehouse_note', '').size() >= 1
+        && request.resource.data.get('warehouse_note', '').size() <= 2000
         && externalExportOrderId is string
         && externalExportOrderId != ''
         && externalExportCode is string
