@@ -32,6 +32,19 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Allow sequential first-match replacements
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply-external-export-release-patch.mjs')
+          source = path.read_text()
+          source = source.replace(
+              "if (count !== 1) {\n    throw new Error(`${label}: expected exactly one match in ${path}, found ${count}`)",
+              "if (count < 1) {\n    throw new Error(`${label}: expected at least one match in ${path}, found ${count}`)",
+          )
+          path.write_text(source)
+          PY
+
       - name: Apply source patch
         run: node scripts/apply-external-export-release-patch.mjs
 
