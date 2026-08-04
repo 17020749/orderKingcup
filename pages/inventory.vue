@@ -9,7 +9,7 @@ import type {
   StockMovementDoc,
   WarehouseDoc,
 } from '~/types/models'
-import { formatDateTime, normalizeText, toNumber } from '~/utils/format'
+import { formatDateTime, makeId, normalizeText, toNumber, todayKey } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 
 type InventoryAuditRow = InventoryBalanceDoc & {
@@ -48,10 +48,12 @@ const {
   loadExportOrders,
   loadExportOrderItems,
 } = useScopedQueries()
+const { createInventoryAdjustment } = useWarehouseTransactions()
 const { hasPermission } = useAuth()
 const { showToast } = useUi()
 
 const loading = ref(false)
+const savingAdjustment = ref(false)
 const search = ref('')
 const warehouseFilter = ref('')
 const logoFilter = ref('')
@@ -67,10 +69,20 @@ const importItems = ref<ImportOrderItemDoc[]>([])
 const exportOrders = ref<ExportOrderDoc[]>([])
 const exportItems = ref<ExportOrderItemDoc[]>([])
 const selected = ref<InventoryAuditRow | null>(null)
+const adjustmentTarget = ref<InventoryAuditRow | null>(null)
 const showDetailModal = ref(false)
+const showAdjustmentModal = ref(false)
 const detailTab = ref<'lots' | 'movements'>('movements')
 
+const adjustmentForm = reactive({
+  quantity: 0,
+  reason: '',
+  note: '',
+  operation_id: makeId('op_inventory_adjust'),
+})
+
 const canViewCost = computed(() => hasPermission('*') || hasPermission('import.view'))
+const canAdjust = computed(() => hasPermission('*') || hasPermission('inventory.adjust'))
 
 const activeProductIds = computed(() => new Set(
   products.value.map(row => String(row.id || '').trim()).filter(Boolean),
@@ -460,6 +472,11 @@ const selectedLotSummary = computed(() => {
   }
 })
 
+const adjustmentDelta = computed(() => {
+  if (!adjustmentTarget.value) return 0
+  return roundQuantity(toNumber(adjustmentForm.quantity) - toNumber(adjustmentTarget.value.quantity))
+})
+
 function quantityText(value: any) {
   return toNumber(value).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
 }
@@ -532,6 +549,87 @@ function openDetail(row: InventoryAuditRow, tab?: 'lots' | 'movements') {
   showDetailModal.value = true
 }
 
+function openAdjustment(row: InventoryAuditRow) {
+  if (!canAdjust.value) return
+  adjustmentTarget.value = row
+  Object.assign(adjustmentForm, {
+    quantity: roundQuantity(row.quantity),
+    reason: '',
+    note: '',
+    operation_id: makeId('op_inventory_adjust'),
+  })
+  showAdjustmentModal.value = true
+}
+
+function closeAdjustmentModal() {
+  if (savingAdjustment.value) return
+  showAdjustmentModal.value = false
+  adjustmentTarget.value = null
+}
+
+function adjustmentProduct(row: InventoryAuditRow) {
+  return products.value.find(product => product.id === row.product_id) || {
+    id: row.product_id,
+    product_code: row.product_code,
+    product_name: row.product_name,
+    unit: row.unit || '',
+  }
+}
+
+function adjustmentWarehouse(row: InventoryAuditRow) {
+  return warehouses.value.find(warehouse => warehouse.id === row.warehouse_id) || {
+    id: row.warehouse_id,
+    name: row.warehouse_name || row.warehouse_id,
+    warehouse_code: row.warehouse_name || row.warehouse_id,
+  }
+}
+
+async function saveAdjustment() {
+  const row = adjustmentTarget.value
+  if (!row) return
+
+  const nextQuantity = roundQuantity(adjustmentForm.quantity)
+  const delta = adjustmentDelta.value
+  const reason = String(adjustmentForm.reason || '').trim()
+
+  if (nextQuantity < 0) return showToast('Số lượng tồn mới không được âm.', 'error')
+  if (Math.abs(delta) < 0.0001) return showToast('Số lượng tồn mới chưa thay đổi.', 'error')
+  if (!reason) return showToast('Vui lòng nhập lý do điều chỉnh.', 'error')
+
+  savingAdjustment.value = true
+  try {
+    const previousQuantity = roundQuantity(row.quantity)
+    const noteParts = [
+      `Điều chỉnh trực tiếp từ trang tồn kho: ${quantityText(previousQuantity)} → ${quantityText(nextQuantity)} ${row.unit || ''}`.trim(),
+      String(adjustmentForm.note || '').trim(),
+    ].filter(Boolean)
+
+    const result = await createInventoryAdjustment({
+      adjustment_date: todayKey(),
+      product: adjustmentProduct(row),
+      warehouse: adjustmentWarehouse(row),
+      logo: row.logo || '',
+      quantity: delta,
+      unit: row.unit || '',
+      reason,
+      note: noteParts.join('\n'),
+      operation_id: adjustmentForm.operation_id,
+    })
+
+    showAdjustmentModal.value = false
+    adjustmentTarget.value = null
+    showToast(
+      `Đã điều chỉnh tồn từ ${quantityText(previousQuantity)} thành ${quantityText(nextQuantity)} (${delta > 0 ? '+' : ''}${quantityText(delta)}). Mã ${result.id}.`,
+      'success',
+    )
+    await loadRows(true)
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không điều chỉnh được tồn kho.'), 'error')
+  } finally {
+    savingAdjustment.value = false
+  }
+}
+
 async function loadOptional<T>(loader: (force?: boolean) => Promise<T[]>, force: boolean) {
   try {
     return await loader(force)
@@ -598,40 +696,16 @@ onMounted(() => loadRows())
     </div>
 
     <div class="card" style="margin: 24px;">
-      <FilterToolbar v-model:search="search" search-placeholder="Tìm mã/tên sản phẩm, kho, logo..." :filters="toolbarFilters" :values="filterValues" :result-count="filtered.length" :loading="loading" @update:filter="updateFilter" @reset="resetFilters" />
-      <div v-if="false" class="toolbar">
-        <input v-model="search" class="input" style="max-width: 420px" placeholder="Tìm mã/tên sản phẩm, kho, logo..." />
-        <select v-model="warehouseFilter" class="select" style="max-width: 220px">
-          <option value="">Tất cả kho</option>
-          <option v-for="warehouse in warehouses" :key="warehouse.id" :value="warehouse.id">
-            {{ warehouse.name || warehouse.warehouse_code || warehouse.id }}
-          </option>
-        </select>
-        <select v-model="logoFilter" class="select" style="max-width: 170px">
-          <option value="">Tất cả logo</option>
-          <option value="no-logo">Không logo</option>
-          <option value="logo">Có logo</option>
-        </select>
-        <select v-model="reconcileFilter" class="select" style="max-width: 190px">
-          <option value="">Tất cả đối soát</option>
-          <option value="matched">Đã khớp</option>
-          <option value="mismatch">Đang lệch</option>
-        </select>
-        <select v-model="stockStatusFilter" class="select" style="max-width: 190px">
-          <option value="">Tất cả tình trạng tồn</option>
-          <option value="in_stock">Còn hàng</option>
-          <option value="out_of_stock">Hết hàng</option>
-          <option value="negative">Tồn âm</option>
-        </select>
-        <select v-model="sortMode" class="select" style="max-width: 220px">
-          <option value="warehouse_product">Sắp xếp kho / sản phẩm</option>
-          <option value="quantity_desc">Tồn nhiều nhất</option>
-          <option value="quantity_asc">Tồn ít nhất</option>
-          <option value="updated_desc">Cập nhật mới nhất</option>
-          <option v-if="canViewCost" value="value_desc">Giá trị tồn cao nhất</option>
-        </select>
-        <button class="btn" type="button" @click="resetFilters">Xóa lọc</button>
-      </div>
+      <FilterToolbar
+        v-model:search="search"
+        search-placeholder="Tìm mã/tên sản phẩm, kho, logo..."
+        :filters="toolbarFilters"
+        :values="filterValues"
+        :result-count="filtered.length"
+        :loading="loading"
+        @update:filter="updateFilter"
+        @reset="resetFilters"
+      />
 
       <div v-if="!canViewCost" class="small subtle" style="margin: 0 0 12px;">
         Giá nhập và chi tiết lô giá chỉ hiển thị cho người có quyền Xem phiếu nhập kho (`import.view`).
@@ -639,7 +713,7 @@ onMounted(() => loadRows())
 
       <LoadingState v-if="loading" />
       <div v-else class="table-wrap">
-        <table :style="{ minWidth: canViewCost ? '1640px' : '1540px' }">
+        <table :style="{ minWidth: canViewCost ? '1720px' : '1620px' }">
           <thead>
             <tr>
               <th>Kho</th>
@@ -678,9 +752,14 @@ onMounted(() => loadRows())
               <td><span class="badge" :class="differenceClass(row)">{{ quantityText(row.difference) }}</span></td>
               <td>{{ formatDateTime(row.last_movement_at || row.updated_at) }}</td>
               <td>
-                <button class="btn-sm btn-view" @click="openDetail(row)">
-                  {{ canViewCost ? 'Chi tiết' : 'Lịch sử' }}
-                </button>
+                <div style="display:flex; gap:8px; align-items:center; white-space:nowrap;">
+                  <button class="btn-sm btn-view" @click="openDetail(row)">
+                    {{ canViewCost ? 'Chi tiết' : 'Lịch sử' }}
+                  </button>
+                  <button v-if="canAdjust" class="btn-sm" @click="openAdjustment(row)">
+                    Sửa tồn
+                  </button>
+                </div>
               </td>
             </tr>
             <tr v-if="!filtered.length">
@@ -690,6 +769,68 @@ onMounted(() => loadRows())
         </table>
       </div>
     </div>
+
+    <BaseModal
+      v-if="showAdjustmentModal && adjustmentTarget"
+      :title="`Sửa tồn: ${adjustmentTarget.product_code || adjustmentTarget.product_name}`"
+      size="lg"
+      :loading="savingAdjustment"
+      save-label="Lưu điều chỉnh"
+      @close="closeAdjustmentModal"
+      @save="saveAdjustment"
+    >
+      <div class="detail-grid" style="margin-bottom: 16px;">
+        <div class="detail-item"><label>Kho</label><strong>{{ adjustmentTarget.warehouse_name || adjustmentTarget.warehouse_id }}</strong></div>
+        <div class="detail-item"><label>Sản phẩm</label><strong>{{ adjustmentTarget.product_code }} - {{ adjustmentTarget.product_name }}</strong></div>
+        <div class="detail-item"><label>Logo</label><strong>{{ adjustmentTarget.logo || 'Không logo' }}</strong></div>
+        <div class="detail-item"><label>Tồn hiện tại</label><strong>{{ quantityText(adjustmentTarget.quantity) }} {{ adjustmentTarget.unit || '' }}</strong></div>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Số lượng tồn mới</label>
+          <input
+            v-model.number="adjustmentForm.quantity"
+            class="input"
+            type="number"
+            min="0"
+            step="0.001"
+            placeholder="Nhập số lượng tồn thực tế"
+          />
+        </div>
+        <div class="form-group">
+          <label>Phần điều chỉnh</label>
+          <div style="padding-top: 9px;">
+            <span class="badge" :class="adjustmentDelta < 0 ? 'red' : adjustmentDelta > 0 ? 'green' : 'yellow'">
+              {{ adjustmentDelta > 0 ? '+' : '' }}{{ quantityText(adjustmentDelta) }} {{ adjustmentTarget.unit || '' }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Lý do điều chỉnh</label>
+        <input
+          v-model="adjustmentForm.reason"
+          class="input"
+          placeholder="Ví dụ: kiểm kê thực tế, hàng hỏng, lệch số lượng..."
+        />
+      </div>
+
+      <div class="form-group">
+        <label>Ghi chú</label>
+        <textarea
+          v-model="adjustmentForm.note"
+          class="textarea"
+          rows="3"
+          placeholder="Thông tin bổ sung nếu có"
+        />
+      </div>
+
+      <p class="small subtle">
+        Hệ thống tự tính chênh lệch giữa tồn hiện tại và tồn mới, sau đó ghi đúng nghiệp vụ Điều chỉnh tồn như tại trang Điều chỉnh tồn kho.
+      </p>
+    </BaseModal>
 
     <BaseModal
       v-if="showDetailModal && selected"
