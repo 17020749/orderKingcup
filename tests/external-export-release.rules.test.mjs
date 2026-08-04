@@ -110,8 +110,8 @@ function externalPatch(overrides = {}) {
   }
 }
 
-function updateOrderSummary(batch, fulfillment = 'da_xuat_1_phan', requestStatus = 'da_xuat') {
-  batch.update(doc(batch._firestore, 'orders', 'order-a'), {
+function updateOrderSummary(db, batch, fulfillment = 'da_xuat_1_phan', requestStatus = 'da_xuat') {
+  batch.update(doc(db, 'orders', 'order-a'), {
     warehouse_fulfillment_status: fulfillment,
     warehouse_request_status: requestStatus,
     updated_at: serverTimestamp(),
@@ -159,7 +159,7 @@ test('external release cập nhật request + order nhưng không sinh dữ li�
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   const batch = writeBatch(db)
   batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
-  updateOrderSummary(batch)
+  updateOrderSummary(db, batch)
   batch.set(doc(db, 'notifications', 'notification-a'), notificationData())
   await assertSucceeds(batch.commit())
 
@@ -190,7 +190,7 @@ test('external release cho phép đơn hàng chuyển thẳng sang đã xuất �
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   const batch = writeBatch(db)
   batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
-  updateOrderSummary(batch, 'da_xuat_du')
+  updateOrderSummary(db, batch, 'da_xuat_du')
   await assertSucceeds(batch.commit())
 })
 
@@ -207,7 +207,7 @@ test('không có quyền release thì external release bị chặn dù order c�
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   const batch = writeBatch(db)
   batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
-  updateOrderSummary(batch)
+  updateOrderSummary(db, batch)
   await assertFails(batch.commit())
 })
 
@@ -219,7 +219,7 @@ test('external release không được gắn phiếu xuất hoặc movement gi�
     export_order_id: 'export-fake',
     stock_movement_ids: ['move-fake'],
   }))
-  updateOrderSummary(batch)
+  updateOrderSummary(db, batch)
   await assertFails(batch.commit())
 })
 
@@ -232,7 +232,7 @@ test('external release cập nhật order sai trạng thái bị chặn', async 
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   const batch = writeBatch(db)
   batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
-  updateOrderSummary(batch, 'cho_xu_ly', 'da_tiep_nhan')
+  updateOrderSummary(db, batch, 'cho_xu_ly', 'da_tiep_nhan')
   await assertFails(batch.commit())
 })
 
@@ -240,6 +240,6 @@ test('external release bắt buộc có lý do xác nhận', async () => {
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   const batch = writeBatch(db)
   batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch({ warehouse_note: '' }))
-  updateOrderSummary(batch)
+  updateOrderSummary(db, batch)
   await assertFails(batch.commit())
 })
