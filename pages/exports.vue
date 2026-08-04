@@ -249,6 +249,12 @@ function isRequestGenerated(row: any) {
   );
 }
 
+function isExternalNoInventory(row: any) {
+  return row?.affects_inventory === false
+    || String(row?.release_mode || '') === 'external_no_inventory'
+    || String(row?.lifecycle_status || '') === 'released_external'
+}
+
 function canEditRow(row: ExportOrderDoc) {
   return canEdit.value
     && !isRequestGenerated(row)
@@ -522,7 +528,7 @@ onMounted(() => loadRows());
   <AppShell>
     <PageHeader
       title="Xuất kho thật"
-      subtitle="Quản lý phiếu xuất kho và cập nhật tồn"
+      subtitle="Quản lý phiếu xuất kho và phiếu ghi nhận xuất ngoài hệ thống"
     >
       <button v-if="canCreate" class="btn primary" @click="openCreateModal">
         + Tạo phiếu xuất
@@ -534,7 +540,7 @@ onMounted(() => loadRows());
       <div class="summary-card"><label>Số phiếu</label><strong>{{ summary.orders.toLocaleString("vi-VN") }}</strong></div>
       <div class="summary-card"><label>Số dòng hàng</label><strong>{{ summary.lines.toLocaleString("vi-VN") }}</strong></div>
       <div class="summary-card"><label>Tổng SL xuất</label><strong>{{ quantityText(summary.quantity) }}</strong></div>
-      <div class="summary-card"><label>Ghi tồn</label><strong>Transaction</strong></div>
+      <div class="summary-card"><label>Ghi tồn</label><strong>Theo loại phiếu</strong></div>
     </div>
 
     <div class="card" style="margin: 24px;">
@@ -572,14 +578,14 @@ onMounted(() => loadRows());
           <thead><tr><th>Mã phiếu</th><th>Ngày xuất</th><th>Loại xuất</th><th>Đích xuất</th><th>Số dòng</th><th>Tổng SL</th><th>Người tạo</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
-              <td><b>{{ codeOf(row) }}</b><div class="small subtle">{{ row.source_order_code || row.sync_source || row.id }}</div></td>
+              <td><b>{{ codeOf(row) }}</b><div v-if="isExternalNoInventory(row)" class="small"><span class="badge yellow">Không trừ tồn</span></div><div class="small subtle">{{ row.source_order_code || row.sync_source || row.id }}</div></td>
               <td>{{ formatDateTime(row.export_date || row.created_at) }}</td>
-              <td>{{ destinationLabel(row.destination_type) }}</td>
+              <td>{{ isExternalNoInventory(row) ? "Xuất ngoài hệ thống" : destinationLabel(row.destination_type) }}</td>
               <td>{{ row.destination_name || row.customer_name || "-" }}</td>
               <td>{{ row.item_count }}</td>
               <td><b>{{ quantityText(row.total_quantity) }}</b></td>
               <td>{{ row.created_by || "-" }}</td>
-              <td><span class="badge blue">{{ row.status || "active" }}</span></td>
+              <td><span class="badge" :class="isExternalNoInventory(row) ? 'yellow' : 'blue'">{{ isExternalNoInventory(row) ? 'Đã ghi nhận - không trừ tồn' : (row.status || 'active') }}</span></td>
               <td>
                 <div class="action-buttons">
                   <button class="btn-sm btn-view" @click="openDetail(row)">Xem chi tiết</button>
