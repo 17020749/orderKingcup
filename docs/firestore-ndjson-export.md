@@ -1,12 +1,20 @@
-# Xuất toàn bộ Firestore thành NDJSON
+# Xuất dữ liệu Firestore đang hiển thị thành NDJSON
 
-Script `scripts/export-firestore-all.mjs` tự động:
+Lệnh mặc định chỉ giữ các document còn hiển thị trong source cũ:
+
+- `deleted`, `isDeleted` hoặc `is_deleted` không phải `true`;
+- `active`, `isActive` hoặc `is_active` không phải `false`;
+- `status` không thuộc `deleted`, `inactive`, `đã xóa`, `ngừng hoạt động`;
+- document legacy thiếu các field trên vẫn được giữ.
+
+Script tự động:
 
 1. Xác thực bằng Service Account.
 2. Đọc toàn bộ collection cấp cao trong Firestore.
-3. Tạo một file NDJSON cho mỗi collection.
-4. Ghi trực tiếp vào thư mục `cms_manager_order/storage/app/legacy` nếu hai repository đặt cạnh nhau.
-5. Tạo `firestore-export-manifest.json` để đối chiếu số collection và số document.
+3. Xuất một file NDJSON cho mỗi collection.
+4. Lọc bỏ document đã xóa hoặc ngừng hoạt động.
+5. Ghi trực tiếp vào `cms_manager_order/storage/app/legacy` nếu hai repository đặt cạnh nhau.
+6. Tạo `firestore-export-manifest.json` ghi số bản ghi đã đọc, giữ lại và loại bỏ.
 
 Script dùng Firestore REST API và Node.js có sẵn trong dự án, không cần cài thêm `firebase-admin`.
 
@@ -24,19 +32,12 @@ npm run export:firestore:ndjson -- --credentials "C:\Users\Administrator\Downloa
 C:\Users\Administrator\Desktop\cms_manager_order\storage\app\legacy
 ```
 
-Kết quả ví dụ:
+## Xóa file cũ trước khi xuất lại
 
-```text
-customers.ndjson
-products.ndjson
-warehouses.ndjson
-orders.ndjson
-order_items.ndjson
-payments.ndjson
-firestore-export-manifest.json
+```powershell
+Remove-Item "C:\Users\Administrator\Desktop\cms_manager_order\storage\app\legacy\*.ndjson" -Force -ErrorAction SilentlyContinue
+Remove-Item "C:\Users\Administrator\Desktop\cms_manager_order\storage\app\legacy\firestore-export-manifest.json" -Force -ErrorAction SilentlyContinue
 ```
-
-Mỗi dòng trong file NDJSON là một Firestore REST document hoàn chỉnh, có `_collection`, `document_id`, `name`, `fields`, `createTime` và `updateTime`. Định dạng này dùng trực tiếp được với pipeline `legacy:stage` của Laravel.
 
 ## Chọn thư mục đầu ra khác
 
@@ -62,11 +63,18 @@ npm run export:firestore:ndjson -- `
   --exclude customer_codes,activity_logs
 ```
 
-## Dùng biến môi trường
+## Xuất toàn bộ, kể cả document đã xóa
+
+Chỉ dùng khi cần bản sao lưu đầy đủ:
 
 ```powershell
-$env:GOOGLE_APPLICATION_CREDENTIALS="C:\keys\firebase-service-account.json"
-npm run export:firestore:ndjson
+npm run export:firestore:all -- --credentials "C:\Users\Administrator\Downloads\firebase-service-account.json"
+```
+
+## Kiểm thử bộ lọc
+
+```powershell
+npm run test:firestore-export
 ```
 
 ## Sau khi xuất xong
@@ -78,8 +86,8 @@ cd ..\cms_manager_order
 php artisan legacy:migrate-all storage/app/legacy --dry-run --replace
 ```
 
-Chỉ các collection đã có importer sẽ được ghi vào bảng nghiệp vụ. Các file NDJSON còn lại được giữ sẵn để phát triển importer tiếp theo.
+Chỉ các collection đã có importer mới được ghi vào bảng nghiệp vụ.
 
 ## Bảo mật
 
-Không commit Service Account JSON lên GitHub. `.gitignore` của dự án đã chặn các tên khóa thông dụng như `service-account*.json` và `*-firebase-adminsdk-*.json`.
+Không commit Service Account JSON lên GitHub. `.gitignore` đã chặn các tên khóa thông dụng như `service-account*.json` và `*-firebase-adminsdk-*.json`.
