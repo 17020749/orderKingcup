@@ -1,6 +1,8 @@
 name: Diagnose external export record
 
 on:
+  pull_request:
+    types: [opened, reopened, synchronize]
   push:
     branches:
       - agent/external-export-record
@@ -10,7 +12,7 @@ permissions:
 
 jobs:
   diagnose:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.head_ref == 'agent/external-export-record')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
