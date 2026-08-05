@@ -4,17 +4,19 @@ Lệnh mặc định chỉ giữ các document còn hiển thị trong source c�
 
 - `deleted`, `isDeleted` hoặc `is_deleted` không phải `true`;
 - `active`, `isActive` hoặc `is_active` không phải `false`;
-- `status` không thuộc `deleted`, `inactive`, `đã xóa`, `ngừng hoạt động`;
+- `status`, `lifecycleStatus` hoặc `lifecycle_status` không thuộc `deleted`, `inactive`, `đã xóa`, `ngừng hoạt động`;
 - document legacy thiếu các field trên vẫn được giữ.
 
 Script tự động:
 
-1. Xác thực bằng Service Account.
-2. Đọc toàn bộ collection cấp cao trong Firestore.
-3. Xuất một file NDJSON cho mỗi collection.
-4. Lọc bỏ document đã xóa hoặc ngừng hoạt động.
-5. Ghi trực tiếp vào `cms_manager_order/storage/app/legacy` nếu hai repository đặt cạnh nhau.
-6. Tạo `firestore-export-manifest.json` ghi số bản ghi đã đọc, giữ lại và loại bỏ.
+1. Xóa toàn bộ file `.ndjson`, file tạm và manifest của lần xuất trước trong thư mục đích.
+2. Xác thực bằng Service Account.
+3. Đọc toàn bộ collection cấp cao trong Firestore.
+4. Xuất một file NDJSON cho mỗi collection.
+5. Lọc bỏ document đã xóa hoặc ngừng hoạt động.
+6. Xóa file collection nếu collection đó không còn bản ghi đang hiển thị.
+7. Ghi trực tiếp vào `cms_manager_order/storage/app/legacy` nếu hai repository đặt cạnh nhau.
+8. Tạo `firestore-export-manifest.json` ghi số bản ghi đã đọc, giữ lại và loại bỏ.
 
 Script dùng Firestore REST API và Node.js có sẵn trong dự án, không cần cài thêm `firebase-admin`.
 
@@ -32,12 +34,7 @@ npm run export:firestore:ndjson -- --credentials "C:\Users\Administrator\Downloa
 C:\Users\Administrator\Desktop\cms_manager_order\storage\app\legacy
 ```
 
-## Xóa file cũ trước khi xuất lại
-
-```powershell
-Remove-Item "C:\Users\Administrator\Desktop\cms_manager_order\storage\app\legacy\*.ndjson" -Force -ErrorAction SilentlyContinue
-Remove-Item "C:\Users\Administrator\Desktop\cms_manager_order\storage\app\legacy\firestore-export-manifest.json" -Force -ErrorAction SilentlyContinue
-```
+Không cần xóa file cũ thủ công. Script visible-only tự dọn thư mục export trước mỗi lần chạy để collection đã hết dữ liệu không bị sót file từ lần trước.
 
 ## Chọn thư mục đầu ra khác
 
@@ -65,7 +62,7 @@ npm run export:firestore:ndjson -- `
 
 ## Xuất toàn bộ, kể cả document đã xóa
 
-Chỉ dùng khi cần bản sao lưu đầy đủ:
+Chỉ dùng để sao lưu hoặc đối soát. Không dùng file này để import MySQL:
 
 ```powershell
 npm run export:firestore:all -- --credentials "C:\Users\Administrator\Downloads\firebase-service-account.json"
@@ -77,14 +74,19 @@ npm run export:firestore:all -- --credentials "C:\Users\Administrator\Downloads\
 npm run test:firestore-export
 ```
 
-## Sau khi xuất xong
+## Import lại dữ liệu hiển thị trong Laravel
 
 Trong repository Laravel:
 
 ```powershell
 cd ..\cms_manager_order
+php artisan legacy:reset-imported --preview
+php artisan legacy:reset-imported --force
 php artisan legacy:migrate-all storage/app/legacy --dry-run --replace
+php artisan legacy:migrate-all storage/app/legacy --replace
 ```
+
+Lệnh reset chỉ xóa dữ liệu có `legacy_id`; tài khoản, vai trò, quyền và dữ liệu tạo trực tiếp trên Laravel được giữ nguyên.
 
 Chỉ các collection đã có importer mới được ghi vào bảng nghiệp vụ.
 
