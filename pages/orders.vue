@@ -10,6 +10,8 @@ import { reportFirebaseError, reportPermissionError } from '~/utils/firebaseErro
 import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
 import { toDateKey } from '~/utils/listFilters'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { LOGO_FILTER_OPTIONS, matchesLogoPresenceFilter, rowsHaveLogo } from '~/utils/logoFilter.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import { printingDeleteBlocker } from '~/utils/orderPrintingDeleteLock.mjs'
@@ -63,6 +65,7 @@ const orderStatusFilter = ref('')
 const paymentStatusFilter = ref('')
 const invoiceStatusFilter = ref('')
 const classificationFilter = ref('')
+const logoFilter = ref('')
 const dateFrom = ref('')
 const dateTo = ref('')
 const ownerFilter = ref('')
@@ -94,6 +97,14 @@ let relationReconciledForUser = ''
 
 const ownerOptions = computed(() => Array.from(new Set(rows.value.flatMap(row => [row.owner_email, row.sale_email, row.created_by]).map(value => String(value || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')))
 
+function orderHasLogo(orderId: string) {
+  return rowsHaveLogo(itemsByOrder.value[orderId] || [], item => [
+    (item as any).logo,
+    (item as any).source_logo,
+    parseLogoLines((item as any).logo_json).map((line: any) => line?.logo),
+  ])
+}
+
 const filtered = computed(() => {
   const keyword = normalizeText(search.value)
   return rows.value.filter(row => {
@@ -102,11 +113,12 @@ const filtered = computed(() => {
     const matchedPaymentStatus = !paymentStatusFilter.value || row.payment_status === paymentStatusFilter.value
     const matchedInvoiceStatus = !invoiceStatusFilter.value || row.invoice_status === invoiceStatusFilter.value
     const matchedClassification = !classificationFilter.value || row.order_classification === classificationFilter.value
+    const matchedLogo = matchesLogoPresenceFilter(orderHasLogo(row.id), logoFilter.value)
     const rowDate = toDateKey(row.order_date || row.created_at)
     const matchedDateFrom = !dateFrom.value || (!!rowDate && rowDate >= dateFrom.value)
     const matchedDateTo = !dateTo.value || (!!rowDate && rowDate <= dateTo.value)
     const matchedOwner = !ownerFilter.value || [row.owner_email, row.sale_email, row.created_by].includes(ownerFilter.value)
-    return matchedText && matchedOrderStatus && matchedPaymentStatus && matchedInvoiceStatus && matchedClassification && matchedDateFrom && matchedDateTo && matchedOwner
+    return matchedText && matchedOrderStatus && matchedPaymentStatus && matchedInvoiceStatus && matchedClassification && matchedLogo && matchedDateFrom && matchedDateTo && matchedOwner
   })
 })
 
@@ -116,6 +128,7 @@ function resetFilters() {
   paymentStatusFilter.value = ''
   invoiceStatusFilter.value = ''
   classificationFilter.value = ''
+  logoFilter.value = ''
   dateFrom.value = ''
   dateTo.value = ''
   ownerFilter.value = ''
@@ -1197,6 +1210,27 @@ onMounted(loadRows)
         :value="value"
       >
         {{ value }}
+      </option>
+    </select>
+  </div>
+
+  <div class="filter-field">
+    <label class="filter-label" for="logo-filter">
+      Logo
+    </label>
+
+    <select
+      id="logo-filter"
+      v-model="logoFilter"
+      class="select"
+    >
+      <option value="">Tất cả logo</option>
+      <option
+        v-for="option in LOGO_FILTER_OPTIONS"
+        :key="option.value"
+        :value="option.value"
+      >
+        {{ option.label }}
       </option>
     </select>
   </div>

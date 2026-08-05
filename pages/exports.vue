@@ -13,6 +13,8 @@ import {
   todayKey,
 } from "~/utils/format";
 import { reportFirebaseError, reportPermissionError } from "~/utils/firebaseErrors";
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { LOGO_FILTER_OPTIONS, matchesLogoPresenceFilter, rowsHaveLogo } from "~/utils/logoFilter.mjs";
 
 const { loadExportOrdersPage, loadExportOrderItemsForOrders, loadProducts, loadWarehouses } =
   useScopedQueries();
@@ -29,6 +31,7 @@ const dateTo = ref("");
 const fromWarehouseFilter = ref("");
 const statusFilter = ref("");
 const destinationFilter = ref("");
+const logoFilter = ref("");
 const rows = ref<ExportOrderDoc[]>([]);
 const PAGE_SIZE = 50;
 const pageCursor = shallowRef<any>(null);
@@ -83,11 +86,12 @@ const warehouseOptions = computed(() =>
   })),
 );
 
-const filterValues = computed(() => ({ destination: destinationFilter.value, warehouse: fromWarehouseFilter.value, status: statusFilter.value, from: dateFrom.value, to: dateTo.value }));
+const filterValues = computed(() => ({ destination: destinationFilter.value, warehouse: fromWarehouseFilter.value, status: statusFilter.value, logo: logoFilter.value, from: dateFrom.value, to: dateTo.value }));
 const toolbarFilters = computed(() => [
   { key: 'destination', label: 'Nơi nhận', allLabel: 'Tất cả nơi nhận', options: [{ label: 'Khách hàng', value: 'customer' }, { label: 'Kho khác', value: 'warehouse' }] },
   { key: 'warehouse', label: 'Kho xuất', allLabel: 'Tất cả kho', options: warehouseOptions.value.map(row => ({ label: row.label, value: row.value })) },
   { key: 'status', label: 'Trạng thái', allLabel: 'Tất cả trạng thái', options: [{ label: 'Đang hoạt động', value: 'active' }, { label: 'Đã khóa', value: 'inactive' }] },
+  { key: 'logo', label: 'Logo', allLabel: 'Tất cả logo', options: LOGO_FILTER_OPTIONS },
   { key: 'from', label: 'Từ ngày', type: 'date' as const },
   { key: 'to', label: 'Đến ngày', type: 'date' as const },
 ]);
@@ -95,6 +99,7 @@ function updateFilter(key: string, value: string) {
   if (key === 'destination') destinationFilter.value = value;
   if (key === 'warehouse') fromWarehouseFilter.value = value;
   if (key === 'status') statusFilter.value = value;
+  if (key === 'logo') logoFilter.value = value;
   if (key === 'from') dateFrom.value = value;
   if (key === 'to') dateTo.value = value;
 }
@@ -121,6 +126,11 @@ const enrichedRows = computed(() =>
         (sum, item) => sum + toNumber(item.quantity),
         0,
       ),
+      has_logo: rowsHaveLogo(orderItems, item =>
+        Object.prototype.hasOwnProperty.call(item, "source_logo")
+          ? (item as any).source_logo
+          : (item as any).logo,
+      ),
       product_search_text: orderItems
         .map((item) => `${item.product_code || ""} ${item.product_name || ""} ${item.logo || ""} ${item.unit || ""}`)
         .join(" "),
@@ -140,6 +150,7 @@ const filtered = computed(() => {
     const matchedDestination =
       !destinationFilter.value ||
       row.destination_type === destinationFilter.value;
+    const matchedLogo = matchesLogoPresenceFilter(row.has_logo, logoFilter.value);
     const matchedText =
       !keyword ||
       normalizeText(
@@ -156,7 +167,7 @@ const filtered = computed(() => {
           row.product_search_text,
         ].join(" "),
       ).includes(keyword);
-    return matchedDateFrom && matchedDateTo && matchedFromWarehouse && matchedStatus && matchedDestination && matchedText;
+    return matchedDateFrom && matchedDateTo && matchedFromWarehouse && matchedStatus && matchedDestination && matchedLogo && matchedText;
   });
 });
 
@@ -167,6 +178,7 @@ function resetFilters() {
   fromWarehouseFilter.value = "";
   statusFilter.value = "";
   destinationFilter.value = "";
+  logoFilter.value = "";
 }
 
 const summary = computed(() => ({

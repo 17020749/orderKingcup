@@ -16,6 +16,8 @@ import {
 import { reportFirebaseError, reportPermissionError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { appendUniqueRows } from '~/utils/cursorPagination.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { LOGO_FILTER_OPTIONS, matchesLogoPresenceFilter, rowsHaveLogo } from '~/utils/logoFilter.mjs'
 
 const {
   loadImportOrdersPage,
@@ -37,6 +39,7 @@ const dateTo = ref('')
 const supplierFilter = ref('')
 const warehouseFilter = ref('')
 const statusFilter = ref('')
+const logoFilter = ref('')
 const rows = ref<ImportOrderDoc[]>([])
 const PAGE_SIZE = 50
 const pageCursor = shallowRef<any>(null)
@@ -99,11 +102,12 @@ const warehouseOptions = computed(() => warehouses.value.map(row => ({
   search: `${row.name || ''} ${row.warehouse_code || ''} ${row.address || ''}`,
 })))
 
-const filterValues = computed(() => ({ supplier: supplierFilter.value, warehouse: warehouseFilter.value, status: statusFilter.value, from: dateFrom.value, to: dateTo.value }))
+const filterValues = computed(() => ({ supplier: supplierFilter.value, warehouse: warehouseFilter.value, status: statusFilter.value, logo: logoFilter.value, from: dateFrom.value, to: dateTo.value }))
 const toolbarFilters = computed(() => [
   { key: 'supplier', label: 'Nhà cung cấp', allLabel: 'Tất cả nhà cung cấp', options: supplierOptions.value.map(row => ({ label: row.label, value: row.value })) },
   { key: 'warehouse', label: 'Kho', allLabel: 'Tất cả kho', options: warehouseOptions.value.map(row => ({ label: row.label, value: row.value })) },
   { key: 'status', label: 'Trạng thái', allLabel: 'Tất cả trạng thái', options: [{ label: 'Đang hoạt động', value: 'active' }, { label: 'Đã khóa', value: 'inactive' }] },
+  { key: 'logo', label: 'Logo', allLabel: 'Tất cả logo', options: LOGO_FILTER_OPTIONS },
   { key: 'from', label: 'Từ ngày', type: 'date' as const },
   { key: 'to', label: 'Đến ngày', type: 'date' as const },
 ])
@@ -111,6 +115,7 @@ function updateFilter(key: string, value: string) {
   if (key === 'supplier') supplierFilter.value = value
   if (key === 'warehouse') warehouseFilter.value = value
   if (key === 'status') statusFilter.value = value
+  if (key === 'logo') logoFilter.value = value
   if (key === 'from') dateFrom.value = value
   if (key === 'to') dateTo.value = value
 }
@@ -160,6 +165,7 @@ const enrichedRows = computed(() => rows.value.map(row => {
     total_quantity: orderItems.reduce((sum, item) => sum + toNumber(item.quantity), 0),
     total_cost: toNumber((row as any).total_cost) || orderItems.reduce((sum, item) => sum + lineCost(item), 0),
     warehouse_ids: orderItems.map(item => String(item.warehouse_id || '')).filter(Boolean),
+    has_logo: rowsHaveLogo(orderItems, item => (item as any).logo),
     product_search_text: orderItems
       .map(item => `${item.product_code || ''} ${item.product_name || ''} ${item.logo || ''} ${item.unit || ''}`)
       .join(' '),
@@ -175,6 +181,7 @@ const filtered = computed(() => {
     const matchedSupplier = !supplierFilter.value || row.supplier_id === supplierFilter.value
     const matchedWarehouse = !warehouseFilter.value || row.warehouse_ids.includes(warehouseFilter.value)
     const matchedStatus = !statusFilter.value || String(row.status || 'active') === statusFilter.value
+    const matchedLogo = matchesLogoPresenceFilter(row.has_logo, logoFilter.value)
     const matchedText = !keyword || normalizeText([
       row.code,
       row.import_code,
@@ -184,7 +191,7 @@ const filtered = computed(() => {
       row.note,
       row.product_search_text,
     ].join(' ')).includes(keyword)
-    return matchedDateFrom && matchedDateTo && matchedSupplier && matchedWarehouse && matchedStatus && matchedText
+    return matchedDateFrom && matchedDateTo && matchedSupplier && matchedWarehouse && matchedStatus && matchedLogo && matchedText
   })
 })
 
@@ -195,6 +202,7 @@ function resetFilters() {
   supplierFilter.value = ''
   warehouseFilter.value = ''
   statusFilter.value = ''
+  logoFilter.value = ''
 }
 
 const summary = computed(() => ({
