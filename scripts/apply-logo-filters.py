@@ -1,0 +1,331 @@
+from pathlib import Path
+
+
+def replace_once(path: str, old: str, new: str) -> None:
+    file = Path(path)
+    text = file.read_text()
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{path}: expected 1 match, found {count}: {old[:120]!r}")
+    file.write_text(text.replace(old, new, 1))
+
+
+Path("utils/logoFilter.mjs").write_text(
+    """export const LOGO_FILTER_VALUES = Object.freeze({
+  withLogo: 'with_logo',
+  withoutLogo: 'without_logo',
+})
+
+export const LOGO_FILTER_OPTIONS = Object.freeze([
+  { label: 'Có logo', value: LOGO_FILTER_VALUES.withLogo },
+  { label: 'Không có logo', value: LOGO_FILTER_VALUES.withoutLogo },
+])
+
+const EMPTY_LOGO_VALUES = new Set([
+  '',
+  '-',
+  'khong logo',
+  'no logo',
+  'none',
+  'null',
+  'undefined',
+])
+
+function normalizeLogoText(value) {
+  return String(value ?? '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\\u0300-\\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\\s+/g, ' ')
+}
+
+export function hasMeaningfulLogo(value) {
+  if (Array.isArray(value)) return value.some(item => hasMeaningfulLogo(item))
+  if (value && typeof value === 'object') {
+    return Object.values(value).some(item => hasMeaningfulLogo(item))
+  }
+  return !EMPTY_LOGO_VALUES.has(normalizeLogoText(value))
+}
+
+export function rowsHaveLogo(rows = [], resolveLogo = row => row?.logo) {
+  const values = Array.isArray(rows) ? rows : []
+  return values.some(row => hasMeaningfulLogo(resolveLogo(row)))
+}
+
+export function matchesLogoPresenceFilter(hasLogo, filterValue) {
+  if (!filterValue) return true
+  if (filterValue === LOGO_FILTER_VALUES.withLogo) return Boolean(hasLogo)
+  if (filterValue === LOGO_FILTER_VALUES.withoutLogo) return !hasLogo
+  return true
+}
+"""
+)
+
+# pages/orders.vue
+replace_once(
+    "pages/orders.vue",
+    "import { toDateKey } from '~/utils/listFilters'\n",
+    "import { toDateKey } from '~/utils/listFilters'\n// @ts-ignore Shared ESM helper is executed directly by Node client tests.\nimport { LOGO_FILTER_OPTIONS, matchesLogoPresenceFilter, rowsHaveLogo } from '~/utils/logoFilter.mjs'\n",
+)
+replace_once(
+    "pages/orders.vue",
+    "const classificationFilter = ref('')\nconst dateFrom = ref('')",
+    "const classificationFilter = ref('')\nconst logoFilter = ref('')\nconst dateFrom = ref('')",
+)
+replace_once(
+    "pages/orders.vue",
+    "const ownerOptions = computed(() => Array.from(new Set(rows.value.flatMap(row => [row.owner_email, row.sale_email, row.created_by]).map(value => String(value || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')))\n\nconst filtered = computed(() => {",
+    "const ownerOptions = computed(() => Array.from(new Set(rows.value.flatMap(row => [row.owner_email, row.sale_email, row.created_by]).map(value => String(value || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')))\n\nfunction orderHasLogo(orderId: string) {\n  return rowsHaveLogo(itemsByOrder.value[orderId] || [], item => [\n    (item as any).logo,\n    (item as any).source_logo,\n    parseLogoLines((item as any).logo_json).map((line: any) => line?.logo),\n  ])\n}\n\nconst filtered = computed(() => {",
+)
+replace_once(
+    "pages/orders.vue",
+    "    const matchedClassification = !classificationFilter.value || row.order_classification === classificationFilter.value\n    const rowDate = toDateKey(row.order_date || row.created_at)",
+    "    const matchedClassification = !classificationFilter.value || row.order_classification === classificationFilter.value\n    const matchedLogo = matchesLogoPresenceFilter(orderHasLogo(row.id), logoFilter.value)\n    const rowDate = toDateKey(row.order_date || row.created_at)",
+)
+replace_once(
+    "pages/orders.vue",
+    "    return matchedText && matchedOrderStatus && matchedPaymentStatus && matchedInvoiceStatus && matchedClassification && matchedDateFrom && matchedDateTo && matchedOwner",
+    "    return matchedText && matchedOrderStatus && matchedPaymentStatus && matchedInvoiceStatus && matchedClassification && matchedLogo && matchedDateFrom && matchedDateTo && matchedOwner",
+)
+replace_once(
+    "pages/orders.vue",
+    "  classificationFilter.value = ''\n  dateFrom.value = ''",
+    "  classificationFilter.value = ''\n  logoFilter.value = ''\n  dateFrom.value = ''",
+)
+replace_once(
+    "pages/orders.vue",
+    """  <div class=\"filter-field\">\n    <label class=\"filter-label\" for=\"date-from\">\n      Từ ngày\n    </label>""",
+    """  <div class=\"filter-field\">\n    <label class=\"filter-label\" for=\"logo-filter\">\n      Logo\n    </label>\n\n    <select\n      id=\"logo-filter\"\n      v-model=\"logoFilter\"\n      class=\"select\"\n    >\n      <option value=\"\">Tất cả logo</option>\n      <option\n        v-for=\"option in LOGO_FILTER_OPTIONS\"\n        :key=\"option.value\"\n        :value=\"option.value\"\n      >\n        {{ option.label }}\n      </option>\n    </select>\n  </div>\n\n  <div class=\"filter-field\">\n    <label class=\"filter-label\" for=\"date-from\">\n      Từ ngày\n    </label>""",
+)
+
+# pages/export-requests.vue
+replace_once(
+    "pages/export-requests.vue",
+    'import { isDateInRange, matchesKeyword, uniqueOptions } from "~/utils/listFilters";\n',
+    'import { isDateInRange, matchesKeyword, uniqueOptions } from "~/utils/listFilters";\n// @ts-ignore Shared ESM helper is executed directly by Node client tests.\nimport { LOGO_FILTER_OPTIONS, matchesLogoPresenceFilter, rowsHaveLogo } from "~/utils/logoFilter.mjs";\n',
+)
+replace_once(
+    "pages/export-requests.vue",
+    'const statusFilter = ref("");\nconst dateFrom = ref("");',
+    'const statusFilter = ref("");\nconst logoFilter = ref("");\nconst dateFrom = ref("");',
+)
+replace_once(
+    "pages/export-requests.vue",
+    'const filterValues = computed(() => ({ status: statusFilter.value, from: dateFrom.value, to: dateTo.value, requestedBy: requestedByFilter.value }));',
+    'const filterValues = computed(() => ({ status: statusFilter.value, logo: logoFilter.value, from: dateFrom.value, to: dateTo.value, requestedBy: requestedByFilter.value }));',
+)
+replace_once(
+    "pages/export-requests.vue",
+    '  { key: "status", label: "Trạng thái", allLabel: "Tất cả trạng thái", width: "200px", options: statusOptions.value.map(status => ({ label: statusLabel(status), value: status })) },\n  { key: "requestedBy",',
+    '  { key: "status", label: "Trạng thái", allLabel: "Tất cả trạng thái", width: "200px", options: statusOptions.value.map(status => ({ label: statusLabel(status), value: status })) },\n  { key: "logo", label: "Logo", allLabel: "Tất cả logo", width: "180px", options: LOGO_FILTER_OPTIONS },\n  { key: "requestedBy",',
+)
+replace_once(
+    "pages/export-requests.vue",
+    '  if (key === "status") statusFilter.value = value;\n  if (key === "requestedBy")',
+    '  if (key === "status") statusFilter.value = value;\n  if (key === "logo") logoFilter.value = value;\n  if (key === "requestedBy")',
+)
+replace_once(
+    "pages/export-requests.vue",
+    "const filtered = computed(() => {",
+    "function requestHasLogo(row: any) {\n  return rowsHaveLogo(requestLineProgress(row), line => [line?.logo, line?.source_logo])\n}\n\nconst filtered = computed(() => {",
+)
+replace_once(
+    "pages/export-requests.vue",
+    '    const matchedStatus = !statusFilter.value || String(row.status || "") === statusFilter.value;\n    const matchedDate =',
+    '    const matchedStatus = !statusFilter.value || String(row.status || "") === statusFilter.value;\n    const matchedLogo = matchesLogoPresenceFilter(requestHasLogo(row), logoFilter.value);\n    const matchedDate =',
+)
+replace_once(
+    "pages/export-requests.vue",
+    "    return matchedText && matchedStatus && matchedDate && matchedRequester;",
+    "    return matchedText && matchedStatus && matchedLogo && matchedDate && matchedRequester;",
+)
+replace_once(
+    "pages/export-requests.vue",
+    '  statusFilter.value = "";\n  dateFrom.value = "";',
+    '  statusFilter.value = "";\n  logoFilter.value = "";\n  dateFrom.value = "";',
+)
+
+# pages/imports.vue
+replace_once(
+    "pages/imports.vue",
+    "import { appendUniqueRows } from '~/utils/cursorPagination.mjs'\n",
+    "import { appendUniqueRows } from '~/utils/cursorPagination.mjs'\n// @ts-ignore Shared ESM helper is executed directly by Node client tests.\nimport { LOGO_FILTER_OPTIONS, matchesLogoPresenceFilter, rowsHaveLogo } from '~/utils/logoFilter.mjs'\n",
+)
+replace_once(
+    "pages/imports.vue",
+    "const statusFilter = ref('')\nconst rows = ref<ImportOrderDoc[]>([])",
+    "const statusFilter = ref('')\nconst logoFilter = ref('')\nconst rows = ref<ImportOrderDoc[]>([])",
+)
+replace_once(
+    "pages/imports.vue",
+    "const filterValues = computed(() => ({ supplier: supplierFilter.value, warehouse: warehouseFilter.value, status: statusFilter.value, from: dateFrom.value, to: dateTo.value }))",
+    "const filterValues = computed(() => ({ supplier: supplierFilter.value, warehouse: warehouseFilter.value, status: statusFilter.value, logo: logoFilter.value, from: dateFrom.value, to: dateTo.value }))",
+)
+replace_once(
+    "pages/imports.vue",
+    "  { key: 'status', label: 'Trạng thái', allLabel: 'Tất cả trạng thái', options: [{ label: 'Đang hoạt động', value: 'active' }, { label: 'Đã khóa', value: 'inactive' }] },\n  { key: 'from',",
+    "  { key: 'status', label: 'Trạng thái', allLabel: 'Tất cả trạng thái', options: [{ label: 'Đang hoạt động', value: 'active' }, { label: 'Đã khóa', value: 'inactive' }] },\n  { key: 'logo', label: 'Logo', allLabel: 'Tất cả logo', options: LOGO_FILTER_OPTIONS },\n  { key: 'from',",
+)
+replace_once(
+    "pages/imports.vue",
+    "  if (key === 'status') statusFilter.value = value\n  if (key === 'from')",
+    "  if (key === 'status') statusFilter.value = value\n  if (key === 'logo') logoFilter.value = value\n  if (key === 'from')",
+)
+replace_once(
+    "pages/imports.vue",
+    "    warehouse_ids: orderItems.map(item => String(item.warehouse_id || '')).filter(Boolean),\n    product_search_text:",
+    "    warehouse_ids: orderItems.map(item => String(item.warehouse_id || '')).filter(Boolean),\n    has_logo: rowsHaveLogo(orderItems, item => (item as any).logo),\n    product_search_text:",
+)
+replace_once(
+    "pages/imports.vue",
+    "    const matchedStatus = !statusFilter.value || String(row.status || 'active') === statusFilter.value\n    const matchedText =",
+    "    const matchedStatus = !statusFilter.value || String(row.status || 'active') === statusFilter.value\n    const matchedLogo = matchesLogoPresenceFilter(row.has_logo, logoFilter.value)\n    const matchedText =",
+)
+replace_once(
+    "pages/imports.vue",
+    "    return matchedDateFrom && matchedDateTo && matchedSupplier && matchedWarehouse && matchedStatus && matchedText",
+    "    return matchedDateFrom && matchedDateTo && matchedSupplier && matchedWarehouse && matchedStatus && matchedLogo && matchedText",
+)
+replace_once(
+    "pages/imports.vue",
+    "  statusFilter.value = ''\n}",
+    "  statusFilter.value = ''\n  logoFilter.value = ''\n}",
+)
+
+# pages/warehouse-export-requests.vue
+replace_once(
+    "pages/warehouse-export-requests.vue",
+    "import { reportFirebaseError } from '~/utils/firebaseErrors'\n",
+    "import { reportFirebaseError } from '~/utils/firebaseErrors'\n// @ts-ignore Shared ESM helper is executed directly by Node client tests.\nimport { LOGO_FILTER_OPTIONS, matchesLogoPresenceFilter, rowsHaveLogo } from '~/utils/logoFilter.mjs'\n",
+)
+replace_once(
+    "pages/warehouse-export-requests.vue",
+    "const statusFilter = ref('')\nconst rows = ref<any[]>([])",
+    "const statusFilter = ref('')\nconst logoFilter = ref('')\nconst rows = ref<any[]>([])",
+)
+replace_once(
+    "pages/warehouse-export-requests.vue",
+    "const filtered = computed(() => {",
+    "function requestHasLogo(row: any) {\n  return rowsHaveLogo(requestLineProgress(row), line => [line?.logo, line?.source_logo])\n}\n\nconst filtered = computed(() => {",
+)
+replace_once(
+    "pages/warehouse-export-requests.vue",
+    "    const statusOk = !statusFilter.value || row.status === statusFilter.value\n    const textOk =",
+    "    const statusOk = !statusFilter.value || row.status === statusFilter.value\n    const logoOk = matchesLogoPresenceFilter(requestHasLogo(row), logoFilter.value)\n    const textOk =",
+)
+replace_once(
+    "pages/warehouse-export-requests.vue",
+    "    return statusOk && textOk",
+    "    return statusOk && logoOk && textOk",
+)
+replace_once(
+    "pages/warehouse-export-requests.vue",
+    """        </select>\n      </div>\n\n      <LoadingState v-if=\"loading\" />""",
+    """        </select>\n        <select v-model=\"logoFilter\" class=\"input\" style=\"max-width:200px\">\n          <option value=\"\">Tất cả logo</option>\n          <option v-for=\"option in LOGO_FILTER_OPTIONS\" :key=\"option.value\" :value=\"option.value\">{{ option.label }}</option>\n        </select>\n      </div>\n\n      <LoadingState v-if=\"loading\" />""",
+)
+
+# pages/exports.vue
+replace_once(
+    "pages/exports.vue",
+    'import { reportFirebaseError, reportPermissionError } from "~/utils/firebaseErrors";\n',
+    'import { reportFirebaseError, reportPermissionError } from "~/utils/firebaseErrors";\n// @ts-ignore Shared ESM helper is executed directly by Node client tests.\nimport { LOGO_FILTER_OPTIONS, matchesLogoPresenceFilter, rowsHaveLogo } from "~/utils/logoFilter.mjs";\n',
+)
+replace_once(
+    "pages/exports.vue",
+    'const destinationFilter = ref("");\nconst rows = ref<ExportOrderDoc[]>([]);',
+    'const destinationFilter = ref("");\nconst logoFilter = ref("");\nconst rows = ref<ExportOrderDoc[]>([]);',
+)
+replace_once(
+    "pages/exports.vue",
+    'const filterValues = computed(() => ({ destination: destinationFilter.value, warehouse: fromWarehouseFilter.value, status: statusFilter.value, from: dateFrom.value, to: dateTo.value }));',
+    'const filterValues = computed(() => ({ destination: destinationFilter.value, warehouse: fromWarehouseFilter.value, status: statusFilter.value, logo: logoFilter.value, from: dateFrom.value, to: dateTo.value }));',
+)
+replace_once(
+    "pages/exports.vue",
+    "  { key: 'status', label: 'Trạng thái', allLabel: 'Tất cả trạng thái', options: [{ label: 'Đang hoạt động', value: 'active' }, { label: 'Đã khóa', value: 'inactive' }] },\n  { key: 'from',",
+    "  { key: 'status', label: 'Trạng thái', allLabel: 'Tất cả trạng thái', options: [{ label: 'Đang hoạt động', value: 'active' }, { label: 'Đã khóa', value: 'inactive' }] },\n  { key: 'logo', label: 'Logo', allLabel: 'Tất cả logo', options: LOGO_FILTER_OPTIONS },\n  { key: 'from',",
+)
+replace_once(
+    "pages/exports.vue",
+    "  if (key === 'status') statusFilter.value = value;\n  if (key === 'from')",
+    "  if (key === 'status') statusFilter.value = value;\n  if (key === 'logo') logoFilter.value = value;\n  if (key === 'from')",
+)
+replace_once(
+    "pages/exports.vue",
+    "      total_quantity: orderItems.reduce(\n        (sum, item) => sum + toNumber(item.quantity),\n        0,\n      ),\n      product_search_text:",
+    "      total_quantity: orderItems.reduce(\n        (sum, item) => sum + toNumber(item.quantity),\n        0,\n      ),\n      has_logo: rowsHaveLogo(orderItems, item =>\n        Object.prototype.hasOwnProperty.call(item, \"source_logo\")\n          ? (item as any).source_logo\n          : (item as any).logo,\n      ),\n      product_search_text:",
+)
+replace_once(
+    "pages/exports.vue",
+    "    const matchedDestination =\n      !destinationFilter.value ||\n      row.destination_type === destinationFilter.value;\n    const matchedText =",
+    "    const matchedDestination =\n      !destinationFilter.value ||\n      row.destination_type === destinationFilter.value;\n    const matchedLogo = matchesLogoPresenceFilter(row.has_logo, logoFilter.value);\n    const matchedText =",
+)
+replace_once(
+    "pages/exports.vue",
+    "    return matchedDateFrom && matchedDateTo && matchedFromWarehouse && matchedStatus && matchedDestination && matchedText;",
+    "    return matchedDateFrom && matchedDateTo && matchedFromWarehouse && matchedStatus && matchedDestination && matchedLogo && matchedText;",
+)
+replace_once(
+    "pages/exports.vue",
+    '  destinationFilter.value = "";\n}',
+    '  destinationFilter.value = "";\n  logoFilter.value = "";\n}',
+)
+
+Path("tests/logo-filter.client.test.mjs").write_text(
+    """import test from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import {
+  hasMeaningfulLogo,
+  matchesLogoPresenceFilter,
+  rowsHaveLogo,
+} from '../utils/logoFilter.mjs'
+
+test('nhận diện logo thực và loại trừ giá trị rỗng', () => {
+  assert.equal(hasMeaningfulLogo('Logo Kingcup'), true)
+  assert.equal(hasMeaningfulLogo('   '), false)
+  assert.equal(hasMeaningfulLogo('-'), false)
+  assert.equal(hasMeaningfulLogo('Không logo'), false)
+  assert.equal(hasMeaningfulLogo(['', { logo: 'Bazan' }]), true)
+})
+
+test('lọc có logo và không có logo theo toàn bộ dòng chứng từ', () => {
+  const noLogoRows = [{ logo: '' }, { logo: 'Không logo' }]
+  const mixedRows = [{ logo: '' }, { logo: 'KC' }]
+  assert.equal(rowsHaveLogo(noLogoRows), false)
+  assert.equal(rowsHaveLogo(mixedRows), true)
+  assert.equal(matchesLogoPresenceFilter(true, 'with_logo'), true)
+  assert.equal(matchesLogoPresenceFilter(false, 'with_logo'), false)
+  assert.equal(matchesLogoPresenceFilter(false, 'without_logo'), true)
+  assert.equal(matchesLogoPresenceFilter(true, 'without_logo'), false)
+})
+
+test('orders chỉ xét order_items và hỗ trợ logo_json', () => {
+  const source = readFileSync('pages/orders.vue', 'utf8')
+  assert.match(source, /function orderHasLogo\\(orderId: string\\)/)
+  assert.match(source, /itemsByOrder\\.value\\[orderId\\]/)
+  assert.match(source, /parseLogoLines\\(\\(item as any\\)\\.logo_json\\)/)
+  assert.match(source, /orderHasLogo\\(row\\.id\\)/)
+})
+
+test('hai page yêu cầu xuất chỉ xét dòng trong chính phiếu', () => {
+  for (const path of ['pages/export-requests.vue', 'pages/warehouse-export-requests.vue']) {
+    const source = readFileSync(path, 'utf8')
+    assert.match(source, /function requestHasLogo\\(row: any\\)/)
+    assert.match(source, /rowsHaveLogo\\(requestLineProgress\\(row\\)/)
+    assert.match(source, /matchesLogoPresenceFilter\\(requestHasLogo\\(row\\), logoFilter\\.value\\)/)
+  }
+})
+
+test('imports và exports xét logo từ các dòng chứng từ', () => {
+  const imports = readFileSync('pages/imports.vue', 'utf8')
+  const exportsPage = readFileSync('pages/exports.vue', 'utf8')
+  assert.match(imports, /has_logo: rowsHaveLogo\\(orderItems/)
+  assert.match(imports, /matchesLogoPresenceFilter\\(row\\.has_logo, logoFilter\\.value\\)/)
+  assert.match(exportsPage, /has_logo: rowsHaveLogo\\(orderItems/)
+  assert.match(exportsPage, /Object\\.prototype\\.hasOwnProperty\\.call\\(item, \"source_logo\"\\)/)
+  assert.match(exportsPage, /matchesLogoPresenceFilter\\(row\\.has_logo, logoFilter\\.value\\)/)
+})
+"""
+)
