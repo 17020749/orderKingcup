@@ -9,12 +9,18 @@ const props = withDefaults(defineProps<{
   moneyFields?: string[]
   dateFields?: string[]
   hiddenFields?: string[]
+  includeUnlistedFields?: boolean
+  columns?: 2 | 3 | 4
+  linkFields?: string[]
 }>(), {
   fieldOrder: () => [],
   labels: () => ({}),
   moneyFields: () => [],
   dateFields: () => [],
-  hiddenFields: () => ['search_text']
+  hiddenFields: () => ['search_text'],
+  includeUnlistedFields: true,
+  columns: 2,
+  linkFields: () => []
 })
 
 defineEmits<{ close: [] }>()
@@ -92,9 +98,14 @@ const orderedEntries = computed(() => {
   const record = props.record || {}
   const hidden = new Set(props.hiddenFields)
   const keys = Object.keys(record).filter(key => !hidden.has(key))
-  const order = [...props.fieldOrder, ...keys.filter(key => !props.fieldOrder.includes(key)).sort()]
+  const order = props.includeUnlistedFields
+    ? [...props.fieldOrder, ...keys.filter(key => !props.fieldOrder.includes(key)).sort()]
+    : [...props.fieldOrder]
   return Array.from(new Set(order))
-    .filter(key => Object.prototype.hasOwnProperty.call(record, key) && !hidden.has(key))
+    .filter(key => !hidden.has(key) && (
+      !props.includeUnlistedFields
+      || Object.prototype.hasOwnProperty.call(record, key)
+    ))
     .map(key => ({ key, label: props.labels[key] || commonLabels[key] || key, value: record[key] }))
 })
 
@@ -124,11 +135,21 @@ function isLongValue(key: string, value: any) {
   const text = displayValue(key, value)
   return key.endsWith('_json') || key === 'note' || key.includes('address') || text.length > 100 || text.includes('\n')
 }
+
+function normalizedLink(key: string, value: any) {
+  if (!props.linkFields.includes(key)) return ''
+  const text = String(value || '').trim()
+  if (!/^https?:\/\//i.test(text)) return ''
+  return text
+}
 </script>
 
 <template>
   <BaseModal :title="title" size="xl" :show-footer="false" @close="$emit('close')">
-    <div class="record-detail-grid">
+    <template v-if="$slots.actions" #header-actions>
+      <slot name="actions" />
+    </template>
+    <div class="record-detail-grid" :class="`columns-${props.columns}`">
       <div
         v-for="entry in orderedEntries"
         :key="entry.key"
@@ -136,7 +157,13 @@ function isLongValue(key: string, value: any) {
         :class="{ wide: isLongValue(entry.key, entry.value) }"
       >
         <label>{{ entry.label }}</label>
-        <pre v-if="isLongValue(entry.key, entry.value)">{{ displayValue(entry.key, entry.value) }}</pre>
+        <a
+          v-if="normalizedLink(entry.key, entry.value)"
+          :href="normalizedLink(entry.key, entry.value)"
+          target="_blank"
+          rel="noopener noreferrer"
+        >Mở liên kết</a>
+        <pre v-else-if="isLongValue(entry.key, entry.value)">{{ displayValue(entry.key, entry.value) }}</pre>
         <strong v-else>{{ displayValue(entry.key, entry.value) }}</strong>
       </div>
     </div>
@@ -147,9 +174,11 @@ function isLongValue(key: string, value: any) {
 <style scoped>
 .record-detail-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
+.record-detail-grid.columns-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.record-detail-grid.columns-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.record-detail-grid.columns-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .record-detail-item {
   border: 1px solid #e5e7eb;
   border-radius: 10px;
@@ -165,7 +194,8 @@ function isLongValue(key: string, value: any) {
   margin-bottom: 5px;
 }
 .record-detail-item strong,
-.record-detail-item pre {
+.record-detail-item pre,
+.record-detail-item a {
   margin: 0;
   color: #0f172a;
   font-size: 14px;
@@ -173,8 +203,20 @@ function isLongValue(key: string, value: any) {
   overflow-wrap: anywhere;
   font-family: inherit;
 }
+.record-detail-item a {
+  color: #2563eb;
+  font-weight: 600;
+  text-decoration: underline;
+}
+@media (max-width: 1100px) {
+  .record-detail-grid.columns-3,
+  .record-detail-grid.columns-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 720px) {
-  .record-detail-grid { grid-template-columns: 1fr; }
+  .record-detail-grid,
+  .record-detail-grid.columns-2,
+  .record-detail-grid.columns-3,
+  .record-detail-grid.columns-4 { grid-template-columns: 1fr; }
   .record-detail-item.wide { grid-column: auto; }
 }
 </style>
