@@ -134,6 +134,21 @@ async function loadRows(force = false, append = false) {
 
 async function loadMoreRows() { await loadRows(false, true) }
 
+const invoiceDetailLabels: Record<string, string> = {
+  order_code: 'Mã đơn hàng',
+  invoice_number: 'Số hóa đơn',
+  invoice_date: 'Ngày hóa đơn',
+  invoice_amount: 'Giá trị hóa đơn',
+  invoice_status: 'Trạng thái hóa đơn',
+  tax_code: 'Mã số thuế',
+  company_name: 'Tên công ty',
+  billing_address: 'Địa chỉ hóa đơn',
+  note: 'Ghi chú',
+  created_by: 'Người tạo',
+  created_at: 'Ngày giờ tạo',
+  updated_at: 'Ngày giờ cập nhật',
+}
+
 function openDetail(row: InvoiceDoc) {
   selectedDetail.value = row
   showDetailModal.value = true
@@ -260,8 +275,14 @@ onMounted(() => loadRows())
       v-if="showDetailModal && selectedDetail"
       title="Chi tiết hóa đơn"
       :record="selectedDetail"
-      :field-order="['id','order_id','order_code','invoice_number','invoice_date','invoice_amount','invoice_status','tax_code','company_name','billing_address','note','created_by','created_at','updated_at','order_owner_email','order_created_by','order_sale_email','relation_revision','last_operation_id','status','active','deleted']"
+      :labels="invoiceDetailLabels"
+      :field-order="[
+        'order_code','invoice_number','invoice_date','invoice_amount','invoice_status',
+        'tax_code','company_name','billing_address','note','created_by','created_at','updated_at'
+      ]"
       :money-fields="['invoice_amount']"
+      :include-unlisted-fields="false"
+      :columns="3"
       @close="showDetailModal = false"
     />
 

@@ -84,6 +84,7 @@ const printingProgress = ref<PrintOrderDoc[]>([])
 const printingProgressItems = ref<PrintOrderItemDoc[]>([])
 const showModal = ref(false)
 const showDetailModal = ref(false)
+const showOrderBreakdownModal = ref(false)
 const selectedDetail = ref<OrderDoc | null>(null)
 const selectedPrintOrder = ref<OrderDoc | null>(null)
 const showCustomerModal = ref(false)
@@ -202,6 +203,16 @@ const selectedDetailExportLineRows = computed(() => selectedDetailRequests.value
     warehouse_note: request.warehouse_note || ''
   }))
 ))
+const orderDetailRecord = computed(() => {
+  const row: any = selectedDetail.value
+  if (!row) return {}
+  return {
+    ...row,
+    warehouse_fulfillment_status: fulfillmentLabel(row.warehouse_fulfillment_status),
+    shipment_status: shipmentStatusLabel(row.shipment_status),
+  }
+})
+
 const customerOptions = computed(() => customers.value.map(customer => ({
   value: customer.id,
   label: `${customer.customer_code ? `[${customer.customer_code}] ` : ''}${customer.customer_name || 'Khách chưa tên'}${customer.phone ? ` - ${customer.phone}` : ''}`,
@@ -216,18 +227,33 @@ const productOptions = computed(() => products.value.map(product => ({
 })))
 
 const orderDetailLabels: Record<string, string> = {
-  order_code: 'Mã đơn hàng', order_date: 'Ngày giờ đơn', customer_id: 'ID khách hàng',
-  order_sequence: 'Số thứ tự theo khách hàng', user_code: 'Mã người dùng', customer_code: 'Mã khách hàng',
+  order_code: 'Mã đơn hàng',
+  customer_code: 'Mã khách hàng',
+  user_code: 'Mã người dùng',
   order_classification: 'Phân loại đơn',
-  customer_name: 'Khách hàng', phone: 'Số điện thoại', sale_name: 'Sale phụ trách',
-  order_status: 'Trạng thái đơn', operation_status: 'Trạng thái vận hành',
-  expected_delivery_date: 'Ngày giao dự kiến', completed_date: 'Ngày hoàn thành',
-  subtotal_no_vat: 'Tạm tính chưa VAT', vat_rate: 'VAT (%)', vat_amount: 'Tiền VAT',
-  total_vat: 'Tổng sau VAT', discount_amount: 'Số tiền giảm giá', payable_amount: 'Giá trị sau giảm giá',
-  actual_revenue: 'Tổng tiền đơn', paid_amount: 'Đã thu',
-  debt_amount: 'Công nợ', payment_status: 'Trạng thái thanh toán', invoice_status: 'Trạng thái hóa đơn',
-  warehouse_fulfillment_status: 'Trạng thái xuất kho', warehouse_request_status: 'Trạng thái yêu cầu kho',
-  items_count: 'Số dòng sản phẩm'
+  customer_name: 'Khách hàng',
+  phone: 'Số điện thoại',
+  sale_name: 'Sale phụ trách',
+  created_by: 'Người tạo đơn',
+  created_at: 'Ngày giờ tạo',
+  order_status: 'Trạng thái đơn',
+  subtotal_no_vat: 'Tạm tính chưa VAT',
+  vat_rate: 'VAT (%)',
+  vat_amount: 'Tiền VAT',
+  total_vat: 'Tổng sau VAT',
+  discount_amount: 'Số tiền giảm giá',
+  payable_amount: 'Giá trị sau giảm giá',
+  actual_revenue: 'Tổng tiền đơn',
+  paid_amount: 'Đã thu',
+  debt_amount: 'Công nợ',
+  payment_status: 'Trạng thái thanh toán',
+  invoice_status: 'Trạng thái hóa đơn',
+  warehouse_fulfillment_status: 'Trạng thái xuất kho',
+  cod_amount_total: 'Tổng tiền COD',
+  computed_payment_status: 'Trạng thái thanh toán tự động',
+  shipping_fee: 'Phí vận chuyển',
+  shipment_status: 'Trạng thái vận chuyển',
+  shipping_fee_total: 'Tổng phí vận chuyển',
 }
 
 function warehouseStatusLabel(status: any) {
@@ -240,6 +266,27 @@ function warehouseStatusLabel(status: any) {
     tu_choi: 'Từ chối',
     loi: 'Lỗi xử lý'
   } as any)[status] || status || '-'
+}
+
+function shipmentStatusLabel(status: any) {
+  const value = String(status || '').trim()
+  const normalized = normalizeText(value).replace(/\s+/g, '_')
+  return ({
+    pending: 'Chờ giao',
+    cho_giao: 'Chờ giao',
+    ready: 'Sẵn sàng giao',
+    in_transit: 'Đang giao',
+    dang_giao: 'Đang giao',
+    shipped: 'Đã gửi',
+    delivered: 'Đã giao',
+    da_giao: 'Đã giao',
+    failed: 'Giao thất bại',
+    giao_that_bai: 'Giao thất bại',
+    returned: 'Hoàn hàng',
+    hoan_hang: 'Hoàn hàng',
+    cancelled: 'Đã hủy',
+    canceled: 'Đã hủy',
+  } as Record<string, string>)[normalized] || value || '-'
 }
 
 async function loadRows(force = false, append = false) {
@@ -678,6 +725,7 @@ function validateOrderItems() {
 
 function openDetail(row: OrderDoc) {
   selectedDetail.value = row
+  showOrderBreakdownModal.value = false
   showDetailModal.value = true
 }
 
@@ -1481,19 +1529,44 @@ onMounted(loadRows)
 
     <RecordDetailModal
       v-if="showDetailModal && selectedDetail"
-      title="Chi tiết đơn hàng"
-      :record="selectedDetail"
+      title="Tổng quan đơn hàng"
+      :record="orderDetailRecord"
       :labels="orderDetailLabels"
       :field-order="[
-        'id','order_code','order_sequence','user_code','customer_code','order_classification','order_date','customer_id','customer_name','phone','sale_name','sale_email',
-        'owner_email','created_by','created_at','updated_at','order_status','operation_status',
-        'expected_delivery_date','completed_date','items_count','subtotal_no_vat','vat_rate','vat_amount',
-        'total_vat','discount_amount','payable_amount','actual_revenue','paid_amount','debt_amount','payment_status','invoice_status',
-        'warehouse_fulfillment_status','warehouse_request_status','note','status','active','deleted'
+        'order_code','customer_code','user_code','order_classification','customer_name','phone','sale_name',
+        'created_by','created_at','order_status','subtotal_no_vat','vat_rate','vat_amount','total_vat',
+        'discount_amount','payable_amount','actual_revenue','paid_amount','debt_amount','payment_status',
+        'invoice_status','warehouse_fulfillment_status','cod_amount_total','computed_payment_status',
+        'shipping_fee','shipment_status','shipping_fee_total'
       ]"
-      :money-fields="['subtotal_no_vat','vat_amount','total_vat','discount_amount','payable_amount','actual_revenue','paid_amount','debt_amount']"
-      @close="showDetailModal = false"
+      :money-fields="[
+        'subtotal_no_vat','vat_amount','total_vat','discount_amount','payable_amount','actual_revenue',
+        'paid_amount','debt_amount','cod_amount_total','shipping_fee','shipping_fee_total'
+      ]"
+      :include-unlisted-fields="false"
+      :columns="3"
+      @close="showDetailModal = false; showOrderBreakdownModal = false"
     >
+      <template #actions>
+        <button class="btn primary" type="button" @click="showOrderBreakdownModal = true">
+          Chi tiết đơn hàng
+        </button>
+      </template>
+    </RecordDetailModal>
+
+    <BaseModal
+      v-if="showOrderBreakdownModal && selectedDetail"
+      :title="`Chi tiết đơn hàng ${selectedDetail.order_code || ''}`"
+      size="full"
+      :show-footer="false"
+      @close="showOrderBreakdownModal = false"
+    >
+      <div class="detail-grid" style="margin-bottom:16px">
+        <div class="detail-item"><label>Mã đơn hàng</label><strong>{{ selectedDetail.order_code || '-' }}</strong></div>
+        <div class="detail-item"><label>Khách hàng</label><strong>{{ selectedDetail.customer_name || '-' }}</strong></div>
+        <div class="detail-item"><label>Trạng thái đơn</label><strong>{{ selectedDetail.order_status || '-' }}</strong></div>
+        <div class="detail-item"><label>Tổng tiền đơn</label><strong>{{ money(selectedDetail.actual_revenue || selectedDetail.total_vat) }}</strong></div>
+      </div>
       <h3 style="margin-top:20px">Chi tiết sản phẩm và tiến độ xuất</h3>
       <div class="table-wrap">
         <table style="min-width:980px">
@@ -1576,7 +1649,7 @@ onMounted(loadRows)
           </tbody>
         </table>
       </div>
-    </RecordDetailModal>
+    </BaseModal>
 
     <OrderPrintModal
       v-if="selectedPrintOrder"

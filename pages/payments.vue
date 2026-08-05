@@ -333,6 +333,22 @@ function chooseOrder() {
   form.order_code = order.order_code
 }
 
+const paymentDetailLabels: Record<string, string> = {
+  order_code: 'Mã đơn hàng',
+  payment_date: 'Ngày thanh toán',
+  payment_type: 'Loại thanh toán',
+  amount: 'Số tiền',
+  method: 'Phương thức',
+  recipient_name: 'Tài khoản người nhận',
+  recipient_account_number: 'STK người nhận',
+  recipient_bank_name: 'Ngân hàng người nhận',
+  sender_image_url: 'Link ảnh nhận tiền',
+  payment_status: 'Trạng thái thanh toán',
+  created_by: 'Người tạo',
+  created_at: 'Ngày giờ tạo',
+  updated_at: 'Ngày giờ cập nhật',
+}
+
 function openDetail(row: PaymentRow) {
   selectedDetail.value = row
   showDetailModal.value = true
@@ -616,8 +632,16 @@ onMounted(() => {
       v-if="showDetailModal && selectedDetail"
       title="Chi tiết thanh toán"
       :record="selectedDetail"
-      :field-order="['id','order_id','order_code','payment_date','payment_type','amount','method','recipient_account_id','recipient_name','recipient_account_number','recipient_bank_name','sender_image_url','payment_status','cod_status','note','created_by','created_at','updated_at','order_owner_email','order_created_by','order_sale_email','relation_revision','last_operation_id','status','active','deleted']"
+      :labels="paymentDetailLabels"
+      :field-order="[
+        'order_code','payment_date','payment_type','amount','method','recipient_name',
+        'recipient_account_number','recipient_bank_name','sender_image_url','payment_status',
+        'created_by','created_at','updated_at'
+      ]"
       :money-fields="['amount']"
+      :link-fields="['sender_image_url']"
+      :include-unlisted-fields="false"
+      :columns="3"
       @close="showDetailModal = false"
     />
 
