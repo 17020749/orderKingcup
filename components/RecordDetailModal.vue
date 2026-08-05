@@ -102,7 +102,10 @@ const orderedEntries = computed(() => {
     ? [...props.fieldOrder, ...keys.filter(key => !props.fieldOrder.includes(key)).sort()]
     : [...props.fieldOrder]
   return Array.from(new Set(order))
-    .filter(key => Object.prototype.hasOwnProperty.call(record, key) && !hidden.has(key))
+    .filter(key => !hidden.has(key) && (
+      !props.includeUnlistedFields
+      || Object.prototype.hasOwnProperty.call(record, key)
+    ))
     .map(key => ({ key, label: props.labels[key] || commonLabels[key] || key, value: record[key] }))
 })
 
@@ -143,7 +146,7 @@ function normalizedLink(key: string, value: any) {
 
 <template>
   <BaseModal :title="title" size="xl" :show-footer="false" @close="$emit('close')">
-    <template #header-actions>
+    <template v-if="$slots.actions" #header-actions>
       <slot name="actions" />
     </template>
     <div class="record-detail-grid" :class="`columns-${props.columns}`">
@@ -199,6 +202,11 @@ function normalizedLink(key: string, value: any) {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: inherit;
+}
+.record-detail-item a {
+  color: #2563eb;
+  font-weight: 600;
+  text-decoration: underline;
 }
 @media (max-width: 1100px) {
   .record-detail-grid.columns-3,
