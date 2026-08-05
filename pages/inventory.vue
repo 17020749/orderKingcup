@@ -495,6 +495,33 @@ function movementClass(row: StockMovementDoc) {
   return 'green'
 }
 
+function movementTypeLabel(row: StockMovementDoc) {
+  const type = String(row.movement_type || '').trim().toLowerCase()
+  const exact: Record<string, string> = {
+    import: 'Nhập kho',
+    import_update_reverse: 'Đảo nhập cũ khi sửa phiếu',
+    import_update_apply: 'Ghi nhận nhập mới khi sửa phiếu',
+    import_delete_reverse: 'Đảo nhập do xóa phiếu',
+    export_customer: 'Xuất cho khách hàng',
+    export_transfer_out: 'Xuất chuyển kho',
+    export_transfer_in: 'Nhập chuyển kho',
+    export_update_reverse_source: 'Hoàn tồn kho nguồn do sửa phiếu xuất',
+    export_update_reverse_destination: 'Đảo tồn kho nhận do sửa phiếu xuất',
+    export_cancel_reverse_source: 'Hoàn tồn kho nguồn do hủy phiếu xuất',
+    export_cancel_reverse_destination: 'Đảo tồn kho nhận do hủy phiếu xuất',
+    export_request_cancel_reverse: 'Hoàn tồn do hủy xuất từ yêu cầu',
+    adjustment: 'Điều chỉnh tồn kho',
+  }
+  if (exact[type]) return exact[type]
+  if (type.includes('transfer_in')) return 'Nhập chuyển kho'
+  if (type.includes('transfer_out')) return 'Xuất chuyển kho'
+  if (type.includes('reverse') || type.includes('cancel')) return 'Đảo / hoàn tồn'
+  if (type.includes('adjust') || row.direction === 'adjust') return 'Điều chỉnh tồn kho'
+  if (row.direction === 'in' || toNumber(row.quantity) > 0) return 'Nhập kho'
+  if (row.direction === 'out' || toNumber(row.quantity) < 0) return 'Xuất kho'
+  return type || 'Không xác định'
+}
+
 function differenceClass(row: InventoryAuditRow) {
   return Math.abs(row.difference) < 0.0001 ? 'green' : 'red'
 }
@@ -926,7 +953,7 @@ onMounted(() => loadRows())
             <tbody>
               <tr v-for="movement in selectedMovements" :key="movement.id">
                 <td>{{ formatDateTime(movement.movement_date || movement.created_at) }}</td>
-                <td><span class="badge" :class="movementClass(movement)">{{ movement.movement_type || movement.direction }}</span></td>
+                <td><span class="badge" :class="movementClass(movement)">{{ movementTypeLabel(movement) }}</span></td>
                 <td><b>{{ movement.source_code || movement.source_doc_id }}</b><div class="small subtle">{{ movement.source_collection }}</div></td>
                 <td><b>{{ quantityText(movement.quantity) }}</b></td>
                 <td>{{ movementDetail(movement) }}</td>
