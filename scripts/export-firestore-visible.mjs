@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import {
   createReadStream,
   createWriteStream,
+  mkdirSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -23,6 +24,11 @@ const HIDDEN_STATUSES = new Set([
   'inactive',
   'da xoa',
   'ngung hoat dong',
+]);
+
+const GENERATED_MANIFESTS = new Set([
+  'firestore-export-manifest.json',
+  'visible-export-manifest.json',
 ]);
 
 function normalizeText(value) {
@@ -64,7 +70,11 @@ export function isVisibleFirestoreDocument(document) {
   const fields = document?.fields ?? {};
   const deleted = firestoreBoolean(fields, ['deleted', 'isDeleted', 'is_deleted']);
   const active = firestoreBoolean(fields, ['active', 'isActive', 'is_active']);
-  const status = normalizeText(firestoreString(fields, ['status']));
+  const status = normalizeText(firestoreString(fields, [
+    'status',
+    'lifecycleStatus',
+    'lifecycle_status',
+  ]));
 
   if (deleted === true) {
     return false;
@@ -79,6 +89,27 @@ export function isVisibleFirestoreDocument(document) {
   }
 
   return true;
+}
+
+export function clearGeneratedExportFiles(outputDirectory) {
+  mkdirSync(outputDirectory, { recursive: true });
+  const removed = [];
+
+  for (const file of readdirSync(outputDirectory)) {
+    const lower = file.toLowerCase();
+    const generated = lower.endsWith('.ndjson')
+      || lower.endsWith('.ndjson.visible.tmp')
+      || GENERATED_MANIFESTS.has(lower);
+
+    if (!generated) {
+      continue;
+    }
+
+    rmSync(resolve(outputDirectory, file), { force: true, recursive: true });
+    removed.push(file);
+  }
+
+  return removed.sort((left, right) => left.localeCompare(right));
 }
 
 async function filterNdjsonFile(path) {
@@ -125,19 +156,21 @@ async function filterNdjsonFile(path) {
   return { scanned, kept, skipped };
 }
 
-function updateManifest(outputDirectory, statistics) {
+function updateManifest(outputDirectory, statistics, removedFiles) {
   const manifestPath = resolve(outputDirectory, 'firestore-export-manifest.json');
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   const byFile = new Map(statistics.map(item => [item.file, item]));
 
   manifest.filter = {
     mode: 'visible_records_only',
+    cleared_previous_export_files: removedFiles,
     rules: [
       'deleted/isDeleted/is_deleted phải khác true',
       'active/isActive/is_active phải khác false',
-      'status không thuộc deleted, inactive, đã xóa, ngừng hoạt động',
+      'status/lifecycle_status không thuộc deleted, inactive, đã xóa, ngừng hoạt động',
       'document thiếu các field trên vẫn được giữ để tương thích dữ liệu legacy',
       'collection không còn bản ghi hiển thị sẽ không tạo file NDJSON',
+      'file NDJSON và manifest của lần xuất trước được xóa trước khi bắt đầu',
     ],
   };
   manifest.total_scanned_records = statistics.reduce((total, item) => total + item.scanned, 0);
@@ -170,8 +203,14 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.help) {
     await exportAllFirestore(argv);
     console.log('');
-    console.log('Lệnh này xuất dữ liệu rồi tự loại các document không còn hiển thị.');
+    console.log('Lệnh này xóa file export cũ, xuất lại và chỉ giữ document đang hiển thị.');
     return;
+  }
+
+  const removedFiles = clearGeneratedExportFiles(options.output);
+
+  if (removedFiles.length > 0) {
+    console.log(`Đã xóa ${removedFiles.length} file export cũ trong ${options.output}.`);
   }
 
   await exportAllFirestore(argv);
@@ -202,7 +241,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
   }
 
-  const manifest = updateManifest(options.output, statistics);
+  const manifest = updateManifest(options.output, statistics, removedFiles);
 
   console.log('');
   console.log(
