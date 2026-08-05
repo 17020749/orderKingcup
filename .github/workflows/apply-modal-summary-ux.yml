@@ -1,0 +1,51 @@
+name: Apply modal summary UX
+
+on:
+  push:
+    branches:
+      - agent/modal-summary-ux
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-modal-summary-ux-agent
+  cancel-in-progress: false
+
+jobs:
+  patch-test-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/modal-summary-ux
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply source changes
+        run: node scripts/apply-modal-summary-ux.mjs
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run modal UX regression tests
+        run: node --test tests/modal-detail-ux.client.test.mjs
+
+      - name: Build application
+        run: npm run build
+
+      - name: Commit changes and remove temporary files
+        run: |
+          rm scripts/apply-modal-summary-ux.mjs
+          rm .github/workflows/apply-modal-summary-ux.yml
+          git config user.name "OpenAI Agent"
+          git config user.email "agent@openai.com"
+          git add components/BaseModal.vue components/RecordDetailModal.vue pages/orders.vue pages/payments.vue pages/invoices.vue pages/inventory.vue tests/modal-detail-ux.client.test.mjs scripts/apply-modal-summary-ux.mjs .github/workflows/apply-modal-summary-ux.yml
+          git commit -m "Tinh gọn modal xem chi tiết nghiệp vụ"
+          git push origin HEAD:agent/modal-summary-ux
