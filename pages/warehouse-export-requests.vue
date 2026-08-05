@@ -3,6 +3,8 @@ import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore
 import type { ProductDoc, WarehouseDoc } from '~/types/models'
 import { formatDateTime, isActive, makeCode, makeId, normalizeText, safeJsonParse, todayKey, toNumber } from '~/utils/format'
 import { reportFirebaseError } from '~/utils/firebaseErrors'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { LOGO_FILTER_OPTIONS, matchesLogoPresenceFilter, rowsHaveLogo } from '~/utils/logoFilter.mjs'
 // @ts-ignore Shared lifecycle helper is also executed by Node client tests.
 import {
   buildExternalReleasedRequestPatch,
@@ -35,6 +37,7 @@ const loading = computed(() => supportingLoading.value || realtimeLoading.value)
 const saving = ref(false)
 const search = ref('')
 const statusFilter = ref('')
+const logoFilter = ref('')
 const rows = ref<any[]>([])
 const products = ref<ProductDoc[]>([])
 const warehouses = ref<WarehouseDoc[]>([])
@@ -60,10 +63,15 @@ const warehouseOptions = computed(() => warehouses.value.map(warehouse => ({
   search: `${warehouse.name || ''} ${warehouse.warehouse_code || ''} ${warehouse.address || ''}`
 })))
 
+function requestHasLogo(row: any) {
+  return rowsHaveLogo(requestLineProgress(row), line => [line?.logo, line?.source_logo])
+}
+
 const filtered = computed(() => {
   const keyword = normalizeText(search.value)
   return rows.value.filter(row => {
     const statusOk = !statusFilter.value || row.status === statusFilter.value
+    const logoOk = matchesLogoPresenceFilter(requestHasLogo(row), logoFilter.value)
     const textOk = !keyword || normalizeText([
       row.request_id,
       row.order_code,
@@ -73,7 +81,7 @@ const filtered = computed(() => {
       row.warehouse_export_code,
       row.warehouse_note
     ].join(' ')).includes(keyword)
-    return statusOk && textOk
+    return statusOk && logoOk && textOk
   })
 })
 
@@ -737,6 +745,10 @@ onBeforeUnmount(() => {
           <option value="da_xuat">Đã xuất kho</option>
           <option value="tu_choi">Từ chối</option>
           <option value="loi">Lỗi xử lý</option>
+        </select>
+        <select v-model="logoFilter" class="input" style="max-width:200px">
+          <option value="">Tất cả logo</option>
+          <option v-for="option in LOGO_FILTER_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>
       </div>
 

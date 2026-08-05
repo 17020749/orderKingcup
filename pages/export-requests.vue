@@ -28,6 +28,8 @@ import {
   permissionDecisionMessage,
 } from "~/utils/permissionDecisions.mjs";
 import { isDateInRange, matchesKeyword, uniqueOptions } from "~/utils/listFilters";
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { LOGO_FILTER_OPTIONS, matchesLogoPresenceFilter, rowsHaveLogo } from "~/utils/logoFilter.mjs";
 import {
   buildNotificationPayload,
   WAREHOUSE_NOTIFICATION_PERMISSIONS,
@@ -56,6 +58,7 @@ const loading = computed(() => supportingLoading.value || realtimeLoading.value)
 const saving = ref(false);
 const search = ref("");
 const statusFilter = ref("");
+const logoFilter = ref("");
 const dateFrom = ref("");
 const dateTo = ref("");
 const requestedByFilter = ref("");
@@ -76,9 +79,10 @@ let lastRealtimeError = "";
 
 const requestedByOptions = computed(() => uniqueOptions(rows.value, "requested_by"));
 const statusOptions = computed(() => uniqueOptions(rows.value, "status"));
-const filterValues = computed(() => ({ status: statusFilter.value, from: dateFrom.value, to: dateTo.value, requestedBy: requestedByFilter.value }));
+const filterValues = computed(() => ({ status: statusFilter.value, logo: logoFilter.value, from: dateFrom.value, to: dateTo.value, requestedBy: requestedByFilter.value }));
 const toolbarFilters = computed(() => [
   { key: "status", label: "Trạng thái", allLabel: "Tất cả trạng thái", width: "200px", options: statusOptions.value.map(status => ({ label: statusLabel(status), value: status })) },
+  { key: "logo", label: "Logo", allLabel: "Tất cả logo", width: "180px", options: LOGO_FILTER_OPTIONS },
   { key: "requestedBy", label: "Người yêu cầu", allLabel: "Tất cả người yêu cầu", width: "240px", options: requestedByOptions.value.map(user => ({ label: user, value: normalizeText(user) })) },
   { key: "from", type: "date" as const, label: "Từ ngày" },
   { key: "to", type: "date" as const, label: "Đến ngày" },
@@ -86,9 +90,14 @@ const toolbarFilters = computed(() => [
 
 function updateFilter(key: string, value: string) {
   if (key === "status") statusFilter.value = value;
+  if (key === "logo") logoFilter.value = value;
   if (key === "requestedBy") requestedByFilter.value = value;
   if (key === "from") dateFrom.value = value;
   if (key === "to") dateTo.value = value;
+}
+
+function requestHasLogo(row: any) {
+  return rowsHaveLogo(requestLineProgress(row), line => [line?.logo, line?.source_logo])
 }
 
 const filtered = computed(() => {
@@ -96,9 +105,10 @@ const filtered = computed(() => {
   return rows.value.filter((row) => {
     const matchedText = matchesKeyword([row.request_id, row.order_code, row.customer_name, row.status, statusLabel(row.status), row.requested_by], keyword);
     const matchedStatus = !statusFilter.value || String(row.status || "") === statusFilter.value;
+    const matchedLogo = matchesLogoPresenceFilter(requestHasLogo(row), logoFilter.value);
     const matchedDate = isDateInRange(row.requested_at || row.created_at, dateFrom.value, dateTo.value);
     const matchedRequester = !requestedByFilter.value || normalizeText(row.requested_by) === requestedByFilter.value;
-    return matchedText && matchedStatus && matchedDate && matchedRequester;
+    return matchedText && matchedStatus && matchedLogo && matchedDate && matchedRequester;
   });
 });
 
@@ -168,6 +178,7 @@ function timestampKey(value: any) {
 function resetFilters() {
   search.value = "";
   statusFilter.value = "";
+  logoFilter.value = "";
   dateFrom.value = "";
   dateTo.value = "";
   requestedByFilter.value = "";
