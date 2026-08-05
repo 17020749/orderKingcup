@@ -115,8 +115,26 @@ export default defineNuxtPlugin(nuxtApp => {
       && rect.height > 0
   }
 
+  function observeMain(nextMain: HTMLElement | null) {
+    if (mainElement === nextMain) return
+    mutationObserver?.disconnect()
+    mainResizeObserver?.disconnect()
+    mainElement = nextMain
+
+    if (!mainElement) return
+    mutationObserver = new MutationObserver(scheduleRefresh)
+    mutationObserver.observe(mainElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden'],
+    })
+    mainResizeObserver = new ResizeObserver(scheduleRefresh)
+    mainResizeObserver.observe(mainElement)
+  }
+
   function collectCandidates(): TableCandidate[] {
-    mainElement = document.querySelector<HTMLElement>('.app-layout > .main')
+    observeMain(document.querySelector<HTMLElement>('.app-layout > .main'))
     if (!mainElement || document.querySelector('.modal-backdrop')) return []
 
     return Array.from(mainElement.querySelectorAll<HTMLElement>('.table-wrap'))
@@ -221,19 +239,7 @@ export default defineNuxtPlugin(nuxtApp => {
     started = true
     ensureStyle()
     ensureProxy()
-    mainElement = document.querySelector<HTMLElement>('.app-layout > .main')
-
-    if (mainElement) {
-      mutationObserver = new MutationObserver(scheduleRefresh)
-      mutationObserver.observe(mainElement, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class', 'style', 'hidden'],
-      })
-      mainResizeObserver = new ResizeObserver(scheduleRefresh)
-      mainResizeObserver.observe(mainElement)
-    }
+    observeMain(document.querySelector<HTMLElement>('.app-layout > .main'))
 
     window.addEventListener('resize', scheduleRefresh, { passive: true })
     window.addEventListener('scroll', scheduleRefresh, { passive: true, capture: true })
