@@ -17,6 +17,7 @@ export const APP_ACCESS_MODULES = [
   { key: 'imports', path: '/imports', label: 'Nhập kho', permission: 'page.imports', navSection: 'warehouse', navOrder: 10 },
   { key: 'warehouse_export_requests', path: '/warehouse-export-requests', label: 'Xử lý yêu cầu xuất', permission: 'page.warehouse_export_requests', navSection: 'warehouse', navOrder: 20 },
   { key: 'exports', path: '/exports', label: 'Phiếu xuất kho', permission: 'page.exports', navSection: 'warehouse', navOrder: 30 },
+  { key: 'warehouse_export_history', path: '/warehouse-export-history', label: 'Lịch sử xuất kho', permission: 'page.exports', navSection: 'warehouse', navOrder: 35 },
   { key: 'inventory_adjustments', path: '/inventory-adjustments', label: 'Điều chỉnh tồn', permission: 'page.inventory_adjustments', navSection: 'warehouse', navOrder: 40 },
   { key: 'inventory', path: '/inventory', label: 'Tồn kho', permission: 'page.inventory', navSection: 'warehouse', navOrder: 50 },
   { key: 'warehouse_settings', path: '/warehouse-settings', label: 'Danh mục kho', permission: 'page.warehouse_settings', navSection: 'warehouse', navOrder: 60 },

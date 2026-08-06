@@ -92,7 +92,7 @@ export function buildWarehouseExportHistoryRows(input = {}) {
   const exportOrderMap = uniqueMap(exportOrders)
   const requestMap = uniqueMap((Array.isArray(input.requests) ? input.requests : []).filter(isActive))
   const orderMap = uniqueMap((Array.isArray(input.orders) ? input.orders : []).filter(isActive))
-  const orderByCode = orderCodeMap(orderMap.values())
+  const orderByCode = orderCodeMap(Array.from(orderMap.values()))
 
   return (Array.isArray(input.exportItems) ? input.exportItems : [])
     .filter(isActive)

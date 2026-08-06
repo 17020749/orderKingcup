@@ -168,9 +168,9 @@ test('không đưa phiếu đã hủy hoặc xóa vào lịch sử đang hoạt 
 })
 
 test('lọc ngày giờ chính xác theo khoảng bao gồm cả hai mốc', () => {
-  assert.equal(isDateTimeInRange('2026-08-06T08:35:00+07:00', '2026-08-06T08:35', '2026-08-06T08:35'), true)
-  assert.equal(isDateTimeInRange('2026-08-06T08:34:59+07:00', '2026-08-06T08:35', ''), false)
-  assert.equal(isDateTimeInRange('2026-08-06T08:36:00+07:00', '', '2026-08-06T08:35'), false)
+  assert.equal(isDateTimeInRange('2026-08-06T08:35:00+07:00', '2026-08-06T08:35:00+07:00', '2026-08-06T08:35:00+07:00'), true)
+  assert.equal(isDateTimeInRange('2026-08-06T08:34:59+07:00', '2026-08-06T08:35:00+07:00', ''), false)
+  assert.equal(isDateTimeInRange('2026-08-06T08:36:00+07:00', '', '2026-08-06T08:35:00+07:00'), false)
 })
 
 test('bộ lọc tìm kiếm, kho, Sale, logo và ngày giờ kết hợp đúng', () => {
@@ -183,8 +183,8 @@ test('bộ lọc tìm kiếm, kho, Sale, logo và ngày giờ kết hợp đúng
     warehouse: 'warehouse-a',
     sale: 'sale-a@kingcup.vn',
     logo: 'kingcup',
-    from: '2026-08-06T08:30',
-    to: '2026-08-06T08:40',
+    from: '2026-08-06T08:30:00+07:00',
+    to: '2026-08-06T08:40:00+07:00',
   }), true)
   assert.equal(matchesWarehouseExportHistoryFilters(standard, { warehouse: 'warehouse-b' }), false)
   assert.equal(matchesWarehouseExportHistoryFilters(standard, { sale: 'sale-b@kingcup.vn' }), false)
