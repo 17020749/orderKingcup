@@ -52,7 +52,9 @@ export function buildFulfilledOrderMetadataPatch(input = {}) {
   const operationId = text(input.operationId ?? input.last_operation_id)
 
   if (!operationId) throw new Error('Thiếu mã thao tác cập nhật đơn.')
-  if (input.updatedAt === undefined) throw new Error('Thiếu thời gian cập nhật đơn.')
+  if (input.updatedAt === undefined || input.updatedAt === null) {
+    throw new Error('Thiếu thời gian cập nhật đơn.')
+  }
 
   return {
     ...normalized,
