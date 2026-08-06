@@ -21,6 +21,10 @@ const firestoreRulesSource = fs.readFileSync(
   new URL('../firestore.rules', import.meta.url),
   'utf8',
 )
+const warehouseRequestsSource = fs.readFileSync(
+  new URL('../pages/warehouse-export-requests.vue', import.meta.url),
+  'utf8',
+)
 
 test('recognizes only fully exported orders as fulfilled', () => {
   assert.equal(isFulfilledOrder({ warehouse_fulfillment_status: 'da_xuat_du' }), true)
@@ -149,4 +153,24 @@ test('firestore rules allow only the fulfilled metadata whitelist', () => {
     firestoreRulesSource,
     /request\.resource\.data\.get\('revision', -1\)\s*== resource\.data\.get\('revision', 0\) \+ 1/,
   )
+})
+
+
+test('revalidates and repairs a stale fulfilled summary before metadata save', () => {
+  assert.equal(ordersPageSource.includes('loadPersistedOrder(currentOrder.id)'), true)
+  assert.equal(ordersPageSource.includes('loadScopedExportRequests([persistedOrder], true)'), true)
+  assert.equal(ordersPageSource.includes('const latestSummary = orderSummary('), true)
+  assert.equal(ordersPageSource.includes('if (!isFulfilledOrder(latestSummary))'), true)
+  assert.equal(ordersPageSource.includes("hasPermission('orders.warehouse_export')"), true)
+  assert.equal(ordersPageSource.includes('warehouse_fulfillment_status: latestSummary.warehouse_fulfillment_status'), true)
+  assert.equal(ordersPageSource.includes('expectedRevision: toNumber(persistedOrder.revision)'), true)
+})
+
+test('warehouse release persists an exact order summary instead of a permanent partial fallback', () => {
+  assert.equal(warehouseRequestsSource.includes('async function deriveOrderSummaryPatch('), true)
+  assert.equal(warehouseRequestsSource.includes('loadPersistedOrder(orderId)'), true)
+  assert.equal(warehouseRequestsSource.includes('loadScopedExportRequests([order], true)'), true)
+  assert.equal(warehouseRequestsSource.includes('orderSummary(buildFulfillmentRows(items, nextRequests), nextRequests)'), true)
+  assert.equal(warehouseRequestsSource.includes("orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_xuat')"), true)
+  assert.equal(warehouseRequestsSource.includes("orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_tiep_nhan')"), true)
 })

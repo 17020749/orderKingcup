@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { collection, doc, getDoc, serverTimestamp, writeBatch } from 'firebase/firestore'
+import { collection, doc, getDoc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore'
 import { INVOICE_STATUS_OPTIONS, ORDER_CLASSIFICATION_OPTIONS, ORDER_STATUS_OPTIONS, VAT_RATE_OPTIONS } from '~/constants/permissions'
 import type { CustomerDoc, InvoiceDoc, OrderDoc, OrderItemDoc, PaymentDoc, PrintOrderDoc, PrintOrderItemDoc, ProductDoc } from '~/types/models'
 import { dateTimeLocal, formatDateTime, isActive, makeId, money, normalizeText, nowDateTimeLocal, round2, safeJsonParse, toNumber } from '~/utils/format'
@@ -775,9 +775,32 @@ async function saveFulfilledMetadataOnly() {
   saving.value = true
   let commitSucceeded = false
   await withLoading(async () => {
+    const { order: persistedOrder, items: persistedItems } = await loadPersistedOrder(currentOrder.id)
+    const latestRequests = await loadScopedExportRequests([persistedOrder], true)
+    const latestSummary = orderSummary(
+      buildFulfillmentRows(persistedItems, latestRequests),
+      latestRequests,
+    )
+
+    if (!isFulfilledOrder(latestSummary)) {
+      await synchronizePersistedOrder(currentOrder.id).catch(() => null)
+      throw new Error('Đơn hàng hiện chưa xuất đủ. Dữ liệu đã được làm mới, vui lòng kiểm tra lại.')
+    }
+
+    if (!isFulfilledOrder(persistedOrder)) {
+      if (!hasPermission('orders.warehouse_export')) {
+        throw new Error('Đơn đã xuất đủ nhưng trạng thái tổng hợp chưa đồng bộ. Vui lòng nhờ người có quyền xuất kho mở và lưu lại đơn.')
+      }
+      await updateDoc(doc(db, 'orders', currentOrder.id), {
+        warehouse_fulfillment_status: latestSummary.warehouse_fulfillment_status,
+        warehouse_request_status: latestSummary.warehouse_request_status,
+        updated_at: serverTimestamp(),
+      })
+    }
+
     await saveFulfilledOrderMetadata({
       orderId: currentOrder.id,
-      expectedRevision: toNumber(currentOrder.revision),
+      expectedRevision: toNumber(persistedOrder.revision),
       orderDate: form.order_date,
       orderStatus: form.order_status,
     })
