@@ -1,0 +1,41 @@
+name: Patch Fulfilled Order Summary Sync
+
+on:
+  push:
+    branches:
+      - feat/edit-fulfilled-order-metadata
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/edit-fulfilled-order-metadata
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate patch script
+        run: node --check scripts/patch-fulfilled-order-summary-sync.mjs
+
+      - name: Apply source fix
+        run: node scripts/patch-fulfilled-order-summary-sync.mjs
+
+      - name: Run focused regression tests
+        run: node --test tests/order-fulfilled-metadata-edit.client.test.mjs tests/external-export-release.client.test.mjs
+
+      - name: Commit clean fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/patch-fulfilled-order-summary-sync.yml scripts/patch-fulfilled-order-summary-sync.mjs
+          git add pages/orders.vue pages/warehouse-export-requests.vue tests/order-fulfilled-metadata-edit.client.test.mjs
+          git commit -m "fix: synchronize fulfilled order warehouse status"
+          git push origin HEAD:feat/edit-fulfilled-order-metadata
