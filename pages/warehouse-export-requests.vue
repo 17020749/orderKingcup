@@ -5,6 +5,8 @@ import { formatDateTime, isActive, makeCode, makeId, normalizeText, safeJsonPars
 import { reportFirebaseError } from '~/utils/firebaseErrors'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { LOGO_FILTER_OPTIONS, matchesLogoPresenceFilter, rowsHaveLogo } from '~/utils/logoFilter.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { isDateTimeInRange } from '~/utils/warehouseExportHistory.mjs'
 // @ts-ignore Shared lifecycle helper is also executed by Node client tests.
 import {
   buildExternalReleasedRequestPatch,
@@ -38,6 +40,8 @@ const saving = ref(false)
 const search = ref('')
 const statusFilter = ref('')
 const logoFilter = ref('')
+const dateTimeFrom = ref('')
+const dateTimeTo = ref('')
 const rows = ref<any[]>([])
 const products = ref<ProductDoc[]>([])
 const warehouses = ref<WarehouseDoc[]>([])
@@ -72,6 +76,11 @@ const filtered = computed(() => {
   return rows.value.filter(row => {
     const statusOk = !statusFilter.value || row.status === statusFilter.value
     const logoOk = matchesLogoPresenceFilter(requestHasLogo(row), logoFilter.value)
+    const dateTimeOk = isDateTimeInRange(
+      row.requested_at || row.created_at,
+      dateTimeFrom.value,
+      dateTimeTo.value,
+    )
     const textOk = !keyword || normalizeText([
       row.request_id,
       row.order_code,
@@ -81,9 +90,17 @@ const filtered = computed(() => {
       row.warehouse_export_code,
       row.warehouse_note
     ].join(' ')).includes(keyword)
-    return statusOk && logoOk && textOk
+    return statusOk && logoOk && dateTimeOk && textOk
   })
 })
+
+function resetFilters() {
+  search.value = ''
+  statusFilter.value = ''
+  logoFilter.value = ''
+  dateTimeFrom.value = ''
+  dateTimeTo.value = ''
+}
 
 const summary = computed(() => filtered.value.reduce((out, row) => {
   out.total++
@@ -750,6 +767,15 @@ onBeforeUnmount(() => {
           <option value="">Tất cả logo</option>
           <option v-for="option in LOGO_FILTER_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>
+        <div class="filter-field" style="min-width:220px">
+          <label class="filter-label" for="warehouse-request-from">Từ ngày giờ</label>
+          <input id="warehouse-request-from" v-model="dateTimeFrom" class="input" type="datetime-local" />
+        </div>
+        <div class="filter-field" style="min-width:220px">
+          <label class="filter-label" for="warehouse-request-to">Đến ngày giờ</label>
+          <input id="warehouse-request-to" v-model="dateTimeTo" class="input" type="datetime-local" />
+        </div>
+        <button class="btn ghost" type="button" @click="resetFilters">Xóa lọc</button>
       </div>
 
       <LoadingState v-if="loading" />
