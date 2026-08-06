@@ -34,6 +34,11 @@ import {
 } from '~/utils/orderWarehouseDeleteLock.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { validateOrderItemEdit } from '~/utils/orderItemDependencies.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import {
+  fulfilledOrderMetadataChanged,
+  isFulfilledOrder,
+} from '~/utils/orderFulfilledMetadataEdit.mjs'
 
 const { db } = useFirebaseServices()
 const { appUser, permissions, hasPermission, isAdmin } = useAuth()
@@ -52,6 +57,7 @@ const {
   loadProducts,
 } = useScopedQueries()
 const { saveOrderAtomic } = useAtomicOrderSave()
+const { saveFulfilledOrderMetadata } = useFulfilledOrderMetadataSave()
 const { reconcileOrderRelationLocks } = useAtomicOrderRelations()
 const { loadPrintingDependenciesForOrders, loadPrintingProgressForOrder } = useOrderPrintingDeleteGuard()
 const { showToast, withLoading } = useUi()
@@ -138,6 +144,7 @@ function resetFilters() {
 const itemCount = computed(() => `${formItems.value.length} dòng`)
 const saleInvoiceStatusOptions = SALE_INVOICE_STATUSES
 const invoiceStatusLocked = computed(() => normalizeInvoiceStatus(editing.value?.invoice_status || form.invoice_status) === 'Đã xuất')
+const editingFulfilledOrder = computed(() => isFulfilledOrder(editing.value || {}))
 const modalTotals = computed(() => calcItems(formItems.value, form))
 const selectedDetailItems = computed(() => selectedDetail.value ? (itemsByOrder.value[selectedDetail.value.id] || []) : [])
 const selectedDetailRequests = computed(() => selectedDetail.value
@@ -557,11 +564,7 @@ function canEditRow(row: OrderDoc) {
 }
 
 function orderActionDecision(action: 'edit' | 'delete', row: OrderDoc) {
-  const blocker = action === 'delete'
-    ? orderDeleteBlocker(row)
-    : String(row.warehouse_fulfillment_status || '') === 'da_xuat_du'
-      ? 'order_fulfilled'
-      : ''
+  const blocker = action === 'delete' ? orderDeleteBlocker(row) : ''
   return moduleActionDecision({
     actionPermission: `orders.${action}`,
     viewAllPermission: 'orders.view_all',
@@ -746,11 +749,101 @@ function closePrint() {
   selectedPrintOrder.value = null
 }
 
+async function saveFulfilledMetadataOnly() {
+  const currentOrder = editing.value
+  if (!currentOrder) return
+
+  const currentMetadata = {
+    order_date: dateTimeLocal(currentOrder.order_date) || String(currentOrder.order_date || ''),
+    order_status: String(currentOrder.order_status || ''),
+  }
+  const nextMetadata = {
+    order_date: form.order_date,
+    order_status: form.order_status,
+  }
+
+  try {
+    if (!fulfilledOrderMetadataChanged(currentMetadata, nextMetadata)) {
+      showToast('Ngày giờ và trạng thái đơn chưa thay đổi.', 'info')
+      return
+    }
+  } catch (error) {
+    showToast((error as Error)?.message || 'Thông tin cập nhật không hợp lệ.', 'error')
+    return
+  }
+
+  saving.value = true
+  let commitSucceeded = false
+  await withLoading(async () => {
+    await saveFulfilledOrderMetadata({
+      orderId: currentOrder.id,
+      expectedRevision: toNumber(currentOrder.revision),
+      orderDate: form.order_date,
+      orderStatus: form.order_status,
+    })
+    commitSucceeded = true
+
+    invalidateScopedCache('orders')
+    invalidateScopedCache('activity_logs')
+
+    markOrderSyncPending(currentOrder.id, true)
+    let synchronized = false
+    try {
+      await synchronizePersistedOrder(currentOrder.id)
+      synchronized = true
+    } catch (syncError) {
+      reportFirebaseError(syncError, 'Không đồng bộ được đơn hàng vừa lưu.', {
+        module: 'orders',
+        operation: 'sync_after_fulfilled_metadata_save',
+        stage: 'post_commit_sync',
+        record: currentOrder.id,
+        actionPermission: 'orders.view',
+        scopePermission: 'orders.view_all',
+        scopeSatisfied: true,
+        context: {
+          collections: ['orders'],
+          commit_succeeded: true,
+        },
+      })
+      synchronized = await loadRows(true)
+        && rows.value.some(row => row.id === currentOrder.id)
+      if (synchronized) markOrderSyncPending(currentOrder.id, false)
+    }
+
+    showModal.value = false
+    showToast('Đã cập nhật ngày giờ và trạng thái đơn hàng', 'success')
+    if (!synchronized) {
+      showToast('Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.', 'warning')
+    }
+  }).catch(error => showToast(
+    commitSucceeded
+      ? 'Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.'
+      : reportFirebaseError(error, 'Không cập nhật được ngày giờ và trạng thái đơn.', {
+          module: 'orders',
+          operation: 'orders.edit_fulfilled_metadata',
+          stage: 'metadata_transaction',
+          record: currentOrder.id,
+          status: currentOrder.warehouse_fulfillment_status || '',
+          actionPermission: 'orders.edit',
+          scopePermission: 'orders.view_all',
+          scopeSatisfied: orderActionDecision('edit', currentOrder).allowed,
+          context: {
+            collection: 'orders',
+            editable_fields: ['order_date', 'order_status'],
+          },
+        }),
+    'error',
+  )).finally(() => {
+    saving.value = false
+  })
+}
+
 async function saveOrder() {
   if (editing.value && isOrderSyncPending(editing.value)) {
     return showToast('Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.', 'warning')
   }
   if (editing.value && !canEditRow(editing.value)) return showToast(orderActionError('edit', editing.value), 'error')
+  if (editing.value && editingFulfilledOrder.value) return saveFulfilledMetadataOnly()
   if (!editing.value && !hasPermission('orders.create')) return showToast(reportPermissionError({
     module: 'orders',
     operation: 'create',
@@ -1401,13 +1494,25 @@ onMounted(loadRows)
 
     <BaseModal
       v-if="showModal"
-      :title="editing ? 'Sửa đơn hàng' : 'Tạo đơn hàng'"
+      :title="editingFulfilledOrder ? 'Sửa ngày giờ / trạng thái đơn' : editing ? 'Sửa đơn hàng' : 'Tạo đơn hàng'"
       size="xl"
       save-label="Lưu đơn"
       :loading="saving"
       @close="showModal=false"
       @save="saveOrder"
     >
+      <div v-if="editingFulfilledOrder" class="card" style="padding:16px; margin-bottom:16px;">
+        <div class="small subtle" style="margin-bottom:12px;">
+          Đơn đã xuất đủ. Hệ thống chỉ cho phép cập nhật ngày giờ và trạng thái đơn; sản phẩm, giá, hóa đơn và dữ liệu kho được giữ nguyên.
+        </div>
+        <div class="form-row-3">
+          <div class="form-group"><label>Mã đơn</label><input v-model="form.order_code" class="input readonly-field" readonly /></div>
+          <div class="form-group"><label>Ngày giờ đơn</label><input v-model="form.order_date" class="input" type="datetime-local" /></div>
+          <div class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
+        </div>
+      </div>
+
+      <fieldset :disabled="editingFulfilledOrder" style="border:0; padding:0; margin:0; min-width:0;">
       <div class="form-row-3">
         <div class="form-group">
           <label>Mã đơn</label>
@@ -1419,7 +1524,7 @@ onMounted(loadRows)
           />
           <div v-if="!editing" class="small subtle">Mã Người dùng - Mã khách - số thứ tự riêng của khách, bắt đầu từ 0001.</div>
         </div>
-        <div class="form-group"><label>Ngày giờ đơn</label><input v-model="form.order_date" class="input" type="datetime-local" /></div>
+        <div v-if="!editingFulfilledOrder" class="form-group"><label>Ngày giờ đơn</label><input v-model="form.order_date" class="input" type="datetime-local" /></div>
         <div class="form-group"><label>Sale phụ trách</label><input v-model="form.sale_name" class="input" /></div>
         <div class="form-group">
           <label>Khách hàng</label>
@@ -1434,7 +1539,7 @@ onMounted(loadRows)
         </div>
         <div class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
         <div class="form-group"><label>Phân loại đơn</label><select v-model="form.order_classification" class="select"><option v-for="s in ORDER_CLASSIFICATION_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
-        <div class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
+        <div v-if="!editingFulfilledOrder" class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div class="form-group">
           <label>Hóa đơn</label>
           <select v-model="form.invoice_status" class="select" :disabled="invoiceStatusLocked">
@@ -1498,6 +1603,7 @@ onMounted(loadRows)
       <div class="order-grand-total"><span>Tổng sau VAT</span><span>{{ money(modalTotals.actual_revenue) }}</span></div>
       <div class="order-grand-total"><span>Giảm giá</span><span>-{{ money(modalTotals.discount_amount) }}</span></div>
       <div class="order-grand-total"><span>Giá trị sau giảm giá</span><span>{{ money(modalTotals.payable_amount) }}</span></div>
+      </fieldset>
     </BaseModal>
 
     <BaseModal
