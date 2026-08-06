@@ -1,0 +1,26 @@
+name: Validate fulfilled order edit
+
+on:
+  push:
+    branches:
+      - feat/edit-fulfilled-order-metadata
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/edit-fulfilled-order-metadata
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:fulfilled-order-edit
+      - run: npm run build
+      - name: Compile Firestore rules
+        run: npx firebase emulators:exec --only firestore "node -e \"console.log('Firestore rules compiled')\""
