@@ -78,6 +78,9 @@ jobs:
       - name: Prepare Nuxt
         run: npx --no-install nuxi prepare
 
+      - name: Validate Firestore Rules REST fallback
+        run: node --check scripts/deploy-firestore-rules-rest.mjs
+
       - name: Build
         run: npm run build
 
@@ -256,8 +259,9 @@ jobs:
 
             rm -f "$log_file"
             if [ "$attempt" -eq 4 ]; then
-              echo "::error::Firestore Rules deployment failed after 4 transient attempts."
-              exit "$status"
+              echo "::warning::Firebase CLI vẫn lỗi tạm thời sau 4 lần. Chuyển sang Firestore Rules REST fallback."
+              node scripts/deploy-firestore-rules-rest.mjs
+              exit $?
             fi
 
             delay=$((attempt * 20))
@@ -485,8 +489,9 @@ jobs:
 
             rm -f "$log_file"
             if [ "$attempt" -eq 4 ]; then
-              echo "::error::Firestore Rules deployment failed after 4 transient attempts."
-              exit "$status"
+              echo "::warning::Firebase CLI vẫn lỗi tạm thời sau 4 lần. Chuyển sang Firestore Rules REST fallback."
+              node scripts/deploy-firestore-rules-rest.mjs
+              exit $?
             fi
 
             delay=$((attempt * 20))
