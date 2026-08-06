@@ -96,6 +96,9 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: firebase-rules-staging
+      cancel-in-progress: false
     environment:
       name: dev
     permissions:
@@ -245,7 +248,7 @@ jobs:
             fi
 
             if ! grep -Eq \
-              'HTTP Error: (429|500|502|503|504)|service is currently unavailable|temporarily unavailable' \
+              'HTTP Error: (429|500|502|503|504)|HTTP Error: 409, Requested entity already exists|service is currently unavailable|temporarily unavailable' \
               "$log_file"; then
               rm -f "$log_file"
               exit "$status"
@@ -281,6 +284,9 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: firebase-rules-${{ ((github.event_name == 'workflow_dispatch' && inputs.target == 'production') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'production' || 'staging' }}
+      cancel-in-progress: false
     environment:
       name: ${{ ((github.event_name == 'workflow_dispatch' && inputs.target == 'production') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'production' || 'dev' }}
     env:
@@ -471,7 +477,7 @@ jobs:
             fi
 
             if ! grep -Eq \
-              'HTTP Error: (429|500|502|503|504)|service is currently unavailable|temporarily unavailable' \
+              'HTTP Error: (429|500|502|503|504)|HTTP Error: 409, Requested entity already exists|service is currently unavailable|temporarily unavailable' \
               "$log_file"; then
               rm -f "$log_file"
               exit "$status"
