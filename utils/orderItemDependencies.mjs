@@ -90,6 +90,7 @@ export function expandOrderItemLines(items = []) {
         product_code: text(item.product_code),
         product_name: text(item.product_name),
         logo: text(row.logo),
+        logo_color: text(row.logo_color ?? row.color),
         quantity: quantity(row.quantity ?? row.qty),
         identity: productIdentity(item),
       }))
@@ -146,6 +147,27 @@ function matchingLegacyLines(lines, reference) {
   ))
 }
 
+function aggregateReferenceMatches(matches = []) {
+  if (!matches.length) return null
+  const first = matches[0]
+  const sameLogicalLine = matches.every(line => (
+    line.order_item_id === first.order_item_id
+    && line.identity === first.identity
+    && normalizedIdentity(line.logo) === normalizedIdentity(first.logo)
+  ))
+  if (!sameLogicalLine) return null
+
+  return {
+    ...first,
+    // Tham chiếu kho/in hiện nhận diện theo dòng sản phẩm + tên logo.
+    // Các màu vẫn là các row riêng để chăm sóc, nhưng cùng dùng một tổng
+    // số lượng cho đến khi nghiệp vụ kho hỗ trợ đối chiếu theo màu.
+    quantity: matches.reduce((sum, line) => sum + quantity(line.quantity), 0),
+    logo_color: '',
+    logo_colors: Array.from(new Set(matches.map(line => text(line.logo_color)).filter(Boolean))),
+  }
+}
+
 function resolveReference(lines, reference = {}) {
   const sourceId = referenceOrderItemId(reference)
   if (sourceId) {
@@ -154,13 +176,23 @@ function resolveReference(lines, reference = {}) {
       line.order_item_id === sourceId
       && normalizedIdentity(line.logo) === logo
     ))
-    return matches.length === 1
-      ? { line: matches[0], error: '' }
-      : { line: null, error: `Không tìm thấy dòng đơn hàng được tham chiếu (${sourceId}${logo ? ` / ${logo}` : ''}).` }
+    const aggregated = aggregateReferenceMatches(matches)
+    if (aggregated) return { line: aggregated, error: '' }
+    if (matches.length) {
+      return {
+        line: null,
+        error: `Dòng đơn hàng được tham chiếu (${sourceId}${logo ? ` / ${logo}` : ''}) không thể đối chiếu an toàn.`,
+      }
+    }
+    return {
+      line: null,
+      error: `Không tìm thấy dòng đơn hàng được tham chiếu (${sourceId}${logo ? ` / ${logo}` : ''}).`,
+    }
   }
 
   const matches = matchingLegacyLines(lines, reference)
-  if (matches.length === 1) return { line: matches[0], error: '' }
+  const aggregated = aggregateReferenceMatches(matches)
+  if (aggregated) return { line: aggregated, error: '' }
   if (matches.length > 1) {
     return { line: null, error: `${lineLabel(reference)} bị trùng trong đơn hàng cũ; không thể đối chiếu tham chiếu an toàn.` }
   }
