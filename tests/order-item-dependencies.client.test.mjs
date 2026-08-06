@@ -157,3 +157,138 @@ test('chốt chặn cuối chỉ cho xuất khi dòng, sản phẩm, logo và s�
     releaseLines: [validLine],
   }), /không đủ để xuất 4/)
 })
+
+test('nhiều row cùng logo khác màu được đối chiếu theo tổng logo khi sửa đơn', () => {
+  const colorItem = {
+    id: 'item-color',
+    product_id: 'product-color',
+    product_code: 'COLOR',
+    product_name: 'Cốc logo màu',
+    logo_json: JSON.stringify([
+      { logo: 'Kingcup', logo_color: 'Đỏ', quantity: 4 },
+      { logo: 'Kingcup', logo_color: '', quantity: 6 },
+    ]),
+  }
+  const dependency = request('da_tiep_nhan', [{
+    order_item_id: 'item-color',
+    product_id: 'product-color',
+    product_code: 'COLOR',
+    logo: 'Kingcup',
+    export_quantity: 8,
+  }])
+
+  const keepOneColor = [{
+    ...colorItem,
+    logo_json: JSON.stringify([
+      { logo: 'Kingcup', logo_color: 'Đỏ', quantity: 10 },
+    ]),
+  }]
+  assert.equal(validateOrderItemEdit({
+    order,
+    previousItems: [colorItem],
+    nextItems: keepOneColor,
+    exportRequests: [dependency],
+  }), '')
+
+  const belowCommitted = [{
+    ...colorItem,
+    logo_json: JSON.stringify([
+      { logo: 'Kingcup', logo_color: 'Đỏ', quantity: 7 },
+    ]),
+  }]
+  assert.match(validateOrderItemEdit({
+    order,
+    previousItems: [colorItem],
+    nextItems: belowCommitted,
+    exportRequests: [dependency],
+  }), /không thể giảm số lượng xuống 7/)
+})
+
+test('tiến độ in cùng logo khác màu không còn báo không tìm thấy tham chiếu', () => {
+  const colorItem = {
+    id: 'item-color-print',
+    product_id: 'product-color',
+    product_code: 'COLOR',
+    product_name: 'Cốc logo màu',
+    logo_json: JSON.stringify([
+      { logo: 'Kingcup', logo_color: 'Đỏ', quantity: 4 },
+      { logo: 'Kingcup', logo_color: 'Xanh', quantity: 6 },
+    ]),
+  }
+  const printing = printData([{
+    source_order_item_id: 'item-color-print',
+    product_id: 'product-color',
+    product_code: 'COLOR',
+    logo: 'Kingcup',
+  }])
+  const keepOneColor = [{
+    ...colorItem,
+    logo_json: JSON.stringify([
+      { logo: 'Kingcup', logo_color: 'Đỏ', quantity: 10 },
+    ]),
+  }]
+  assert.equal(validateOrderItemEdit({
+    order,
+    previousItems: [colorItem],
+    nextItems: keepOneColor,
+    ...printing,
+  }), '')
+})
+
+test('chốt xuất kho dùng tổng số lượng các row cùng logo khác màu', () => {
+  const colorItem = {
+    id: 'item-color-release',
+    product_id: 'product-color',
+    product_code: 'COLOR',
+    product_name: 'Cốc logo màu',
+    logo_json: JSON.stringify([
+      { logo: 'Kingcup', logo_color: 'Đỏ', quantity: 4 },
+      { logo: 'Kingcup', logo_color: '', quantity: 6 },
+    ]),
+  }
+  const exportRequest = request('da_tiep_nhan', [{
+    order_item_id: 'item-color-release',
+    product_id: 'product-color',
+    product_code: 'COLOR',
+    logo: 'Kingcup',
+    export_quantity: 8,
+  }])
+  const releaseLine = {
+    source_order_id: order.id,
+    source_order_item_id: 'item-color-release',
+    product: { id: 'product-color', product_code: 'COLOR' },
+    logo: 'Kingcup',
+    quantity: 8,
+  }
+  assert.equal(validateWarehouseReleaseSources({
+    request: exportRequest,
+    order,
+    orderItems: [colorItem],
+    releaseLines: [releaseLine],
+  }), '')
+})
+
+test('dữ liệu cũ không có order_item_id vẫn gộp được nhiều màu nếu cùng một dòng sản phẩm và logo', () => {
+  const colorItem = {
+    id: 'item-color-legacy',
+    product_id: 'product-color',
+    product_code: 'COLOR',
+    product_name: 'Cốc logo màu',
+    logo_json: JSON.stringify([
+      { logo: 'Kingcup', logo_color: 'Đỏ', quantity: 4 },
+      { logo: 'Kingcup', logo_color: 'Xanh', quantity: 6 },
+    ]),
+  }
+  const legacy = request('cho_xu_ly', [{
+    product_id: 'product-color',
+    product_code: 'COLOR',
+    logo: 'Kingcup',
+    export_quantity: 5,
+  }])
+  assert.equal(validateOrderItemEdit({
+    order,
+    previousItems: [colorItem],
+    nextItems: [colorItem],
+    exportRequests: [legacy],
+  }), '')
+})
