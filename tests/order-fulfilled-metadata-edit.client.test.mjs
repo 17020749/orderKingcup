@@ -155,7 +155,6 @@ test('firestore rules allow only the fulfilled metadata whitelist', () => {
   )
 })
 
-
 test('revalidates and repairs a stale fulfilled summary before metadata save', () => {
   assert.equal(ordersPageSource.includes('loadPersistedOrder(currentOrder.id)'), true)
   assert.equal(ordersPageSource.includes('loadScopedExportRequests([persistedOrder], true)'), true)
