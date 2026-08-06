@@ -157,22 +157,22 @@ const warehouseRequestsSource = fs.readFileSync(
 tests += `
 
 test('revalidates and repairs a stale fulfilled summary before metadata save', () => {
-  assert.match(ordersPageSource, /loadPersistedOrder\(currentOrder\.id\)/)
-  assert.match(ordersPageSource, /loadScopedExportRequests\(\[persistedOrder\], true\)/)
-  assert.match(ordersPageSource, /const latestSummary = orderSummary\(/)
-  assert.match(ordersPageSource, /if \(!isFulfilledOrder\(latestSummary\)\)/)
-  assert.match(ordersPageSource, /hasPermission\('orders\.warehouse_export'\)/)
-  assert.match(ordersPageSource, /warehouse_fulfillment_status: latestSummary\.warehouse_fulfillment_status/)
-  assert.match(ordersPageSource, /expectedRevision: toNumber\(persistedOrder\.revision\)/)
+  assert.equal(ordersPageSource.includes('loadPersistedOrder(currentOrder.id)'), true)
+  assert.equal(ordersPageSource.includes('loadScopedExportRequests([persistedOrder], true)'), true)
+  assert.equal(ordersPageSource.includes('const latestSummary = orderSummary('), true)
+  assert.equal(ordersPageSource.includes('if (!isFulfilledOrder(latestSummary))'), true)
+  assert.equal(ordersPageSource.includes("hasPermission('orders.warehouse_export')"), true)
+  assert.equal(ordersPageSource.includes('warehouse_fulfillment_status: latestSummary.warehouse_fulfillment_status'), true)
+  assert.equal(ordersPageSource.includes('expectedRevision: toNumber(persistedOrder.revision)'), true)
 })
 
 test('warehouse release persists an exact order summary instead of a permanent partial fallback', () => {
-  assert.match(warehouseRequestsSource, /async function deriveOrderSummaryPatch\(/)
-  assert.match(warehouseRequestsSource, /loadPersistedOrder\(orderId\)/)
-  assert.match(warehouseRequestsSource, /loadScopedExportRequests\(\[order\], true\)/)
-  assert.match(warehouseRequestsSource, /orderSummary\(buildFulfillmentRows\(items, nextRequests\), nextRequests\)/)
-  assert.match(warehouseRequestsSource, /orderSummaryPatch: await deriveOrderSummaryPatch\(row, 'da_xuat'\)/)
-  assert.match(warehouseRequestsSource, /orderSummaryPatch: await deriveOrderSummaryPatch\(row, 'da_tiep_nhan'\)/)
+  assert.equal(warehouseRequestsSource.includes('async function deriveOrderSummaryPatch('), true)
+  assert.equal(warehouseRequestsSource.includes('loadPersistedOrder(orderId)'), true)
+  assert.equal(warehouseRequestsSource.includes('loadScopedExportRequests([order], true)'), true)
+  assert.equal(warehouseRequestsSource.includes('orderSummary(buildFulfillmentRows(items, nextRequests), nextRequests)'), true)
+  assert.equal(warehouseRequestsSource.includes("orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_xuat')"), true)
+  assert.equal(warehouseRequestsSource.includes("orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_tiep_nhan')"), true)
 })
 `
 
