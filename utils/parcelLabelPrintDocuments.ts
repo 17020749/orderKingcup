@@ -3,11 +3,15 @@ export type ParcelLabelType = 'post_office' | 'bus_carrier'
 export type ParcelLabelRow = {
   productName?: string
   productCode?: string
+  packageCount?: string
   logo?: string
 }
 
 export type ParcelLabelData = {
   type: ParcelLabelType
+  senderCode?: string
+  senderName?: string
+  senderPhone?: string
   receiverName?: string
   receiverPhone?: string
   receiverAddress?: string
@@ -65,7 +69,7 @@ function itemRows(rows: ParcelLabelRow[]) {
         <strong>${displayValue(row.productName)}</strong>
         ${row.productCode ? `<div class="subtle">${escapeHtml(row.productCode)}</div>` : ''}
       </td>
-      <td class="center package-cell">&nbsp;</td>
+      <td class="center package-cell">${displayValue(row.packageCount)}</td>
       <td class="center logo-cell">${displayValue(row.logo)}</td>
     </tr>
   `).join('')
@@ -126,7 +130,7 @@ export function buildParcelLabelPrintHtml(data: ParcelLabelData) {
     <div class="sender-receiver">
       <div class="party">
         <div class="party-title">NGƯỜI GỬI</div>
-        <div class="party-body"><strong>T019564009</strong>\nCÔNG TY TNHH KINGCUP VIỆT NAM\n039 5571728</div>
+        <div class="party-body"><strong>${displayValue(data.senderCode)}</strong>\n${displayValue(data.senderName)}\n${displayValue(data.senderPhone)}</div>
       </div>
       <div class="party">
         <div class="party-title">NGƯỜI NHẬN - TRẢ CƯỚC</div>
@@ -152,7 +156,6 @@ export function buildParcelLabelPrintHtml(data: ParcelLabelData) {
     ${data.note ? `<div class="note"><strong>Ghi chú:</strong> ${escapeHtml(data.note)}</div>` : ''}
     ${bottomBanner}
   </section>
-  <script>window.addEventListener('load', () => { window.focus(); setTimeout(() => window.print(), 250); });<\/script>
 </body>
 </html>`
 }
