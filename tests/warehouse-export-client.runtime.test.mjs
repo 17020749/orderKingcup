@@ -8,6 +8,10 @@ import {
   sourceLogoOf,
   targetLogoOf,
 } from '../utils/warehouseExportPreflight.mjs'
+import {
+  alignExportRequestLineProduct,
+  requestProductIdentityForLine,
+} from '../utils/warehouseExportRequestIdentity.mjs'
 
 const product = {
   id: 'product-cup-500',
@@ -111,6 +115,70 @@ test('thông báo nói rõ không có tồn khi số lượng bằng 0', () => {
   assert.match(buildStockShortageMessage(requirement, 0), /Sản phẩm có tồn ở kho này: Không/)
 })
 
+test('xuất từ yêu cầu dùng product_id trong snapshot thay vì product cùng mã được UI tìm nhầm', () => {
+  const request = {
+    source_items: {
+      'order-item-12oz': {
+        product_id: 'product-correct-12oz',
+        product_code: 'LNPET93-12OZ',
+        product_name: 'Ly nhựa PET 93 - 12/14oz (T)',
+      },
+    },
+  }
+  const line = {
+    source_order_item_id: 'order-item-12oz',
+    product: {
+      id: 'product-duplicate-wrong',
+      product_code: 'LNPET93-12OZ',
+      product_name: 'Ly nhựa PET 93 - 12/14oz (T)',
+    },
+    fromWarehouse: { id: 'a9d45209-25ae-4b76-8c61-e37ec086e8c9', name: 'HÀNG IN' },
+    logo: 'Ghiền',
+    quantity: 1000,
+  }
+
+  const identity = requestProductIdentityForLine(request, line)
+  assert.equal(identity.productId, 'product-correct-12oz')
+
+  const aligned = alignExportRequestLineProduct(request, line)
+  assert.equal(aligned.product.id, 'product-correct-12oz')
+  assert.equal(aligned.product.firestore_id, 'product-correct-12oz')
+  assert.equal(aligned.product.product_code, 'LNPET93-12OZ')
+  assert.equal(aligned.fromWarehouse.id, 'a9d45209-25ae-4b76-8c61-e37ec086e8c9')
+  assert.equal(aligned.logo, 'Ghiền')
+  assert.equal(aligned.quantity, 1000)
+})
+
+test('product_id cũ trong payload_json vẫn được dùng để căn đúng tồn kho', () => {
+  const request = {
+    payload_json: JSON.stringify({
+      items: [{
+        source_order_item_id: 'order-item-16oz',
+        product_id: 'product-correct-16oz',
+        product_code: 'LNPET93-16OZ',
+        logo: 'Ghiền',
+      }],
+    }),
+  }
+  const line = {
+    source_order_item_id: 'order-item-16oz',
+    product: { id: 'wrong-id', product_code: 'LNPET93-16OZ' },
+    logo: 'Ghiền',
+  }
+
+  const aligned = alignExportRequestLineProduct(request, line)
+  assert.equal(aligned.product.id, 'product-correct-16oz')
+})
+
+test('dữ liệu yêu cầu cũ không có product_id giữ nguyên product hiện tại', () => {
+  const line = {
+    source_order_item_id: 'legacy-item',
+    product: { id: 'legacy-product', product_code: 'LEGACY' },
+  }
+  const aligned = alignExportRequestLineProduct({}, line)
+  assert.equal(aligned.product.id, 'legacy-product')
+})
+
 test('Nuxt auto-import dùng wrapper có preflight trước cost transaction', async () => {
   const { readFileSync } = await import('node:fs')
   const moduleSource = readFileSync('modules/warehouse-cost.ts', 'utf8')
@@ -119,5 +187,7 @@ test('Nuxt auto-import dùng wrapper có preflight trước cost transaction', a
   assert.match(moduleSource, /as: 'useWarehouseTransactions'/)
   assert.match(wrapperSource, /await checkExportStock\(input\)/)
   assert.match(wrapperSource, /return await base\.createExportOrder\(input\)/)
+  assert.match(wrapperSource, /alignExportRequestLineProducts\(input\?\.request \|\| \{\}, linesWithWarehouse\)/)
   assert.match(wrapperSource, /await checkExportStock\(preflightInput, 'customer'\)/)
+  assert.match(wrapperSource, /return await base\.processExportRequestToExportOrder\(preflightInput\)/)
 })
