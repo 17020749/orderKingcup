@@ -130,7 +130,7 @@ export function buildParcelLabelPrintHtml(data: ParcelLabelData) {
     <div class="sender-receiver">
       <div class="party">
         <div class="party-title">NGƯỜI GỬI</div>
-        <div class="party-body"><strong>${displayValue(data.senderCode || 'T019564009')}</strong>\n${displayValue(data.senderName || 'CÔNG TY TNHH KINGCUP VIỆT NAM')}\n${displayValue(data.senderPhone || '039 5571728')}</div>
+        <div class="party-body"><strong>${displayValue(data.senderCode)}</strong>\n${displayValue(data.senderName)}\n${displayValue(data.senderPhone)}</div>
       </div>
       <div class="party">
         <div class="party-title">NGƯỜI NHẬN - TRẢ CƯỚC</div>
