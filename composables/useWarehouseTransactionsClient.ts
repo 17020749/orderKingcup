@@ -5,6 +5,8 @@ import {
   inventoryBalanceId,
   preflightExportStock,
 } from '~/utils/warehouseExportPreflight.mjs'
+// @ts-ignore Shared ESM helper is also executed directly by Node client tests.
+import { alignExportRequestLineProducts } from '~/utils/warehouseExportRequestIdentity.mjs'
 
 export function useWarehouseTransactionsClient() {
   const base = useWarehouseCostTransactions()
@@ -39,7 +41,7 @@ export function useWarehouseTransactionsClient() {
 
   async function processExportRequestToExportOrder(input: any) {
     const fallbackWarehouse = input?.warehouse || null
-    const lines = (input?.lines || []).map((line: any) => ({
+    const linesWithWarehouse = (input?.lines || []).map((line: any) => ({
       ...line,
       fromWarehouse:
         line?.fromWarehouse
@@ -48,10 +50,11 @@ export function useWarehouseTransactionsClient() {
         || line?.warehouse_id
         || fallbackWarehouse,
     }))
+    const lines = alignExportRequestLineProducts(input?.request || {}, linesWithWarehouse)
     const preflightInput = { ...input, lines, warehouse: fallbackWarehouse }
     await checkExportStock(preflightInput, 'customer')
     try {
-      return await base.processExportRequestToExportOrder(input)
+      return await base.processExportRequestToExportOrder(preflightInput)
     } catch (error: any) {
       if (String(error?.message || '').includes('Không đủ tồn theo lô')) {
         await checkExportStock(preflightInput, 'customer')
