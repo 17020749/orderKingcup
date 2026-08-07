@@ -1765,6 +1765,51 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         ]);
     }
 
+    function fulfilledOrderMetadataUpdateAllowed() {
+      let orderDate = request.resource.data.get('order_date', null);
+      return fulfillmentStatus() == 'da_xuat_du'
+        && hasPerm('orders.edit')
+        && (
+          ownsOrderData(resource.data)
+          || hasPerm('orders.view_all')
+        )
+        && orderIdentityUnchanged()
+        && changedAny([
+          'order_date',
+          'order_status'
+        ])
+        && onlyChanged([
+          'order_date',
+          'order_status',
+          'revision',
+          'last_operation_id',
+          'updated_at'
+        ])
+        && (
+          orderDate is timestamp
+          || (
+            orderDate is string
+            && orderDate.size() >= 1
+            && orderDate.size() <= 40
+          )
+        )
+        && validBoundedString(
+          request.resource.data.get('order_status', ''),
+          1,
+          200
+        )
+        && request.resource.data.get('revision', -1) is int
+        && request.resource.data.get('revision', -1)
+          == resource.data.get('revision', 0) + 1
+        && validBoundedString(
+          request.resource.data.get('last_operation_id', ''),
+          1,
+          200
+        )
+        && request.resource.data.get('updated_at', null) is timestamp
+        && request.resource.data.get('updated_at', null) == request.time;
+    }
+
     function orderWarehouseSummaryUpdateAllowed() {
       return onlyWarehouseSummaryChanged()
         && (
@@ -2562,11 +2607,14 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
                 || orderPrintingSummaryUpdateAllowed(docId)
               )
               : (
-                hasPerm('orders.edit')
-                && (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
-                && orderIdentityUnchanged()
-                && normalOrderEditKeepsSystemFields()
-                && fulfillmentStatus() != 'da_xuat_du'
+                fulfilledOrderMetadataUpdateAllowed()
+                || (
+                  hasPerm('orders.edit')
+                  && (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
+                  && orderIdentityUnchanged()
+                  && normalOrderEditKeepsSystemFields()
+                  && fulfillmentStatus() != 'da_xuat_du'
+                )
               );
 
       allow delete: if isAdmin()

@@ -33,6 +33,11 @@ function orderData(overrides = {}) {
     owner_email: OWNER,
     created_by: OWNER,
     sale_email: OWNER,
+    order_date: '2026-07-21T08:00',
+    order_status: 'Mới tạo',
+    note: '',
+    revision: 0,
+    last_operation_id: 'seed-order-delete',
     warehouse_fulfillment_status: 'chua_xuat',
     warehouse_request_status: '',
     printing_lock_version: 1,
@@ -48,6 +53,7 @@ function orderData(overrides = {}) {
     deleted: false,
     status: 'active',
     created_at: '2026-07-21T00:00:00.000Z',
+    updated_at: '2026-07-21T00:00:00.000Z',
     ...overrides,
   }
 }
@@ -83,7 +89,7 @@ async function seed(orderOverrides = {}, requestStatus = '') {
       email: OWNER,
       active: true,
       deleted: false,
-      permissions_flat: ['page.orders', 'orders.view', 'orders.delete'],
+      permissions_flat: ['page.orders', 'orders.view', 'orders.edit', 'orders.delete'],
     })
     await setDoc(doc(db, 'orders', 'order-delete'), orderData(orderOverrides))
     if (requestStatus) {
@@ -113,6 +119,71 @@ test('orders.delete đọc được yêu cầu kho thuộc đơn của chính m�
     where('order_id', '==', 'order-delete'),
   )))
   assert.equal(snapshot.size, 1)
+})
+
+test('đơn chỉ có trạng thái nghiệp vụ Hoàn thành vẫn sửa đầy đủ được', async () => {
+  await seed({
+    order_status: 'Hoàn thành',
+    warehouse_fulfillment_status: 'chua_xuat',
+  })
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+
+  await assertSucceeds(updateDoc(doc(db, 'orders', 'order-delete'), {
+    note: 'Đã kiểm tra lại nội dung đơn',
+  }))
+})
+
+test('đơn chỉ có trạng thái nghiệp vụ Hoàn thành vẫn xóa được khi không có khóa liên quan', async () => {
+  await seed({
+    order_status: 'Hoàn thành',
+    warehouse_fulfillment_status: 'chua_xuat',
+  })
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+
+  await assertSucceeds(updateDoc(doc(db, 'orders', 'order-delete'), {
+    deleted: true,
+    active: false,
+    status: 'deleted',
+    deleted_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  }))
+})
+
+test('đơn đã xuất đủ chỉ cho sửa ngày giờ và trạng thái đơn', async () => {
+  await seed({
+    order_status: 'Hoàn thành',
+    warehouse_fulfillment_status: 'da_xuat_du',
+    revision: 4,
+  })
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+
+  await assertSucceeds(updateDoc(doc(db, 'orders', 'order-delete'), {
+    order_date: '2026-07-22T09:00',
+    order_status: 'Đã bàn giao',
+    revision: 5,
+    last_operation_id: 'fulfilled-order-edit:test',
+    updated_at: serverTimestamp(),
+  }))
+
+  await assertFails(updateDoc(doc(db, 'orders', 'order-delete'), {
+    note: 'Không được phép sửa nội dung đơn đã xuất đủ',
+  }))
+})
+
+test('đơn đã xuất đủ vẫn bị khóa xóa', async () => {
+  await seed({
+    order_status: 'Hoàn thành',
+    warehouse_fulfillment_status: 'da_xuat_du',
+  })
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+
+  await assertFails(updateDoc(doc(db, 'orders', 'order-delete'), {
+    deleted: true,
+    active: false,
+    status: 'deleted',
+    deleted_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  }))
 })
 
 test('khóa xóa đơn khi yêu cầu đã tiếp nhận dù child chưa được ghi trong batch', async () => {

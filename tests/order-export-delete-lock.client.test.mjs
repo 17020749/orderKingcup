@@ -28,6 +28,23 @@ test('khóa xóa khi đơn đã cho xuất hoặc có mã phiếu Warehouse', ()
   )
 })
 
+test('trạng thái nghiệp vụ Hoàn thành không bị coi là đã xuất đủ', () => {
+  const completedOrder = {
+    order_status: 'Hoàn thành',
+    warehouse_fulfillment_status: 'chua_xuat',
+    warehouse_request_status: '',
+  }
+
+  assert.equal(warehouseOrderDeleteBlocker(completedOrder, []), '')
+  assert.match(
+    warehouseOrderDeleteBlocker({
+      ...completedOrder,
+      warehouse_fulfillment_status: 'da_xuat_du',
+    }, []),
+    /đã xuất/i,
+  )
+})
+
 test('yêu cầu bị từ chối không còn ràng buộc và được cascade khi xóa đơn', () => {
   const rejected = [{ id: 'req-rejected', status: 'tu_choi', active: true, deleted: false }]
   assert.equal(warehouseOrderDeleteBlocker({ warehouse_request_status: 'co_tu_choi' }, rejected), '')
@@ -43,7 +60,7 @@ test('yêu cầu đang chờ vẫn được cascade, nhưng yêu cầu đã ti�
   assert.match(warehouseOrderDeleteBlocker({}, requests), /đã tiếp nhận|chờ xuất/i)
 })
 
-test('page đơn hàng dùng preflight mới nhất và không thay đổi luồng save/edit', () => {
+test('page đơn hàng dùng preflight mới nhất và giữ nguyên luồng sửa/xóa thông thường', () => {
   const page = readFileSync('pages/orders.vue', 'utf8')
   const scopedQueries = readFileSync('composables/useScopedQueries.ts', 'utf8')
 
@@ -51,7 +68,9 @@ test('page đơn hàng dùng preflight mới nhất và không thay đổi luồ
   assert.match(page, /warehouseRequestsForDeleteCascade/)
   assert.match(page, /loadScopedExportRequests\(\[row\], true\)/)
   assert.match(scopedQueries, /hasPermission\('orders\.delete'\)/)
+  assert.match(page, /const blocker = action === 'delete' \? orderDeleteBlocker\(row\) : ''/)
 
   assert.match(page, /async function saveOrder\(\)/)
+  assert.match(page, /if \(editing\.value && editingFulfilledOrder\.value\) return saveFulfilledMetadataOnly\(\)/)
   assert.match(page, /saveOrderAtomic\(/)
 })

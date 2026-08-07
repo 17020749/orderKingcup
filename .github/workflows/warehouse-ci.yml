@@ -78,6 +78,9 @@ jobs:
       - name: Prepare Nuxt
         run: npx --no-install nuxi prepare
 
+      - name: Validate Firestore Rules REST fallback
+        run: node --check scripts/deploy-firestore-rules-rest.mjs
+
       - name: Build
         run: npm run build
 
@@ -96,6 +99,9 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: firebase-rules-staging
+      cancel-in-progress: false
     environment:
       name: dev
     permissions:
@@ -226,11 +232,42 @@ jobs:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
       - name: Deploy Firestore Rules to staging
-        run: >-
-          npx --no-install firebase deploy
-          --only firestore:rules
-          --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID"
-          --non-interactive
+        shell: bash
+        run: |
+          set -o pipefail
+          for attempt in 1 2 3 4; do
+            log_file="$(mktemp)"
+            set +e
+            npx --no-install firebase deploy \
+              --only firestore:rules \
+              --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID" \
+              --non-interactive 2>&1 | tee "$log_file"
+            status=${PIPESTATUS[0]}
+            set -e
+
+            if [ "$status" -eq 0 ]; then
+              rm -f "$log_file"
+              exit 0
+            fi
+
+            if ! grep -Eq \
+              'HTTP Error: (429|500|502|503|504)|HTTP Error: 409, Requested entity already exists|service is currently unavailable|temporarily unavailable' \
+              "$log_file"; then
+              rm -f "$log_file"
+              exit "$status"
+            fi
+
+            rm -f "$log_file"
+            if [ "$attempt" -eq 4 ]; then
+              echo "::warning::Firebase CLI vẫn lỗi tạm thời sau 4 lần. Chuyển sang Firestore Rules REST fallback."
+              node scripts/deploy-firestore-rules-rest.mjs
+              exit $?
+            fi
+
+            delay=$((attempt * 20))
+            echo "::warning::Transient Firebase Rules API failure. Retrying in ${delay}s (attempt $((attempt + 1))/4)."
+            sleep "$delay"
+          done
 
       - name: Deploy Hosting Preview Channel
         uses: FirebaseExtended/action-hosting-deploy@v0
@@ -251,6 +288,9 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: firebase-rules-${{ ((github.event_name == 'workflow_dispatch' && inputs.target == 'production') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'production' || 'staging' }}
+      cancel-in-progress: false
     environment:
       name: ${{ ((github.event_name == 'workflow_dispatch' && inputs.target == 'production') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'production' || 'dev' }}
     env:
@@ -422,11 +462,42 @@ jobs:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
       - name: Deploy Firestore Rules
-        run: >-
-          npx --no-install firebase deploy
-          --only firestore:rules
-          --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID"
-          --non-interactive
+        shell: bash
+        run: |
+          set -o pipefail
+          for attempt in 1 2 3 4; do
+            log_file="$(mktemp)"
+            set +e
+            npx --no-install firebase deploy \
+              --only firestore:rules \
+              --project "$NUXT_PUBLIC_FIREBASE_PROJECT_ID" \
+              --non-interactive 2>&1 | tee "$log_file"
+            status=${PIPESTATUS[0]}
+            set -e
+
+            if [ "$status" -eq 0 ]; then
+              rm -f "$log_file"
+              exit 0
+            fi
+
+            if ! grep -Eq \
+              'HTTP Error: (429|500|502|503|504)|HTTP Error: 409, Requested entity already exists|service is currently unavailable|temporarily unavailable' \
+              "$log_file"; then
+              rm -f "$log_file"
+              exit "$status"
+            fi
+
+            rm -f "$log_file"
+            if [ "$attempt" -eq 4 ]; then
+              echo "::warning::Firebase CLI vẫn lỗi tạm thời sau 4 lần. Chuyển sang Firestore Rules REST fallback."
+              node scripts/deploy-firestore-rules-rest.mjs
+              exit $?
+            fi
+
+            delay=$((attempt * 20))
+            echo "::warning::Transient Firebase Rules API failure. Retrying in ${delay}s (attempt $((attempt + 1))/4)."
+            sleep "$delay"
+          done
 
       - name: Deploy Hosting live channel
         uses: FirebaseExtended/action-hosting-deploy@v0

@@ -43,13 +43,17 @@ test('request and parcel print modals use snapshot recipient data only', () => {
   assert.ok(documentBuilder.includes('class="center package-cell">&nbsp;</td>'))
 })
 
-test('warehouse request actions have a defined pure status patch helper', () => {
+test('warehouse request actions keep the fallback helper pure and derive exact order summaries from scoped data', () => {
   const page = readFileSync('pages/warehouse-export-requests.vue', 'utf8')
   const helper = readFileSync('utils/fallbackOrderPatch.ts', 'utf8')
 
-  assert.ok(page.includes('const orderPatch = fallbackOrderPatch(nextStatus)'))
-  assert.ok(page.includes("orderSummaryPatch: fallbackOrderPatch('da_xuat')"))
-  assert.ok(page.includes("orderSummaryPatch: fallbackOrderPatch('da_tiep_nhan')"))
+  assert.ok(page.includes('async function deriveOrderSummaryPatch('))
+  assert.ok(page.includes('if (!orderId) return fallbackOrderPatch(nextStatus)'))
+  assert.ok(page.includes('loadPersistedOrder(orderId)'))
+  assert.ok(page.includes('loadScopedExportRequests([order], true)'))
+  assert.ok(page.includes('orderSummary(buildFulfillmentRows(items, nextRequests), nextRequests)'))
+  assert.ok(page.includes("orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_xuat')"))
+  assert.ok(page.includes("orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_tiep_nhan')"))
   assert.ok(helper.includes('export function fallbackOrderPatch'))
   assert.ok(helper.includes("nextStatus === 'da_xuat'"))
   assert.ok(helper.includes("nextStatus === 'da_tiep_nhan'"))
