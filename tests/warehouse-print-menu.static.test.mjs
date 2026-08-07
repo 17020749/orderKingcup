@@ -40,7 +40,7 @@ test('request and parcel print modals use snapshot recipient data only', () => {
   assert.ok(parcelModal.includes('request?.receiver_address'))
   assert.ok(!parcelModal.includes('CustomerDoc'))
   assert.ok(!parcelModal.includes('OrderDoc'))
-  assert.ok(documentBuilder.includes('class="center package-cell">&nbsp;</td>'))
+  assert.ok(documentBuilder.includes('displayValue(row.packageCount)'))
 })
 
 test('warehouse request actions keep the fallback helper pure and derive exact order summaries from scoped data', () => {
