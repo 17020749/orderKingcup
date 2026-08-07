@@ -1,9 +1,11 @@
+import { canonicalWarehouseLogo } from './warehouseLogoIdentity.mjs'
+
 function normalizeId(value) {
   return String(value || '').trim()
 }
 
 function normalizeLogo(value) {
-  return String(value || '').trim()
+  return canonicalWarehouseLogo(value)
 }
 
 function safePayload(request) {
