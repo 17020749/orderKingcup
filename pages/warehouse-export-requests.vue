@@ -23,11 +23,13 @@ import {
 const { db } = useFirebaseServices()
 const { appUser, hasPermission, hasAnyPermission } = useAuth()
 const {
+  loadPersistedOrder,
   loadProducts,
+  loadScopedExportRequests,
   loadWarehouses,
   listenWarehouseExportRequests,
 } = useScopedQueries()
-const { requestLineProgress } = useWarehouseLogic()
+const { buildFulfillmentRows, orderSummary, requestLineProgress } = useWarehouseLogic()
 const { processExportRequestToExportOrder, cancelExportRequestRelease } = useWarehouseTransactions()
 const { showToast } = useUi()
 const { confirmState, askConfirm, resolveConfirm } = useConfirmDialog()
@@ -309,8 +311,29 @@ function addSaleNotifications(batch: any, row: any, input: { type: string; title
   return recipients.length
 }
 
+async function deriveOrderSummaryPatch(row: any, nextStatus: string) {
+  const orderId = String(row?.order_id || '').trim()
+  if (!orderId) return fallbackOrderPatch(nextStatus)
+
+  const { order, items } = await loadPersistedOrder(orderId)
+  const latestRequests = (await loadScopedExportRequests([order], true)).filter(isActive)
+  const targetId = String(row?.id || row?.request_id || '').trim()
+  let targetFound = false
+  const nextRequests = latestRequests.map((request: any) => {
+    const requestId = String(request?.id || request?.request_id || '').trim()
+    if (!targetId || requestId !== targetId) return request
+    targetFound = true
+    return { ...request, status: nextStatus }
+  })
+
+  if (!targetFound) nextRequests.push({ ...row, status: nextStatus })
+  return orderSummary(buildFulfillmentRows(items, nextRequests), nextRequests)
+}
+
 async function updateRequestStatus(row: any, nextStatus: string, action: string, title: string, note = '', extra: Record<string, any> = {}, notification?: { type: string; title: string; message: string }, extendBatch?: (batch: any) => void) {
-  const orderPatch = fallbackOrderPatch(nextStatus)
+  const orderPatch = nextStatus === 'da_xuat'
+    ? await deriveOrderSummaryPatch(row, nextStatus)
+    : fallbackOrderPatch(nextStatus)
   const batch = writeBatch(db)
   const patch = {
     status: nextStatus,
@@ -436,7 +459,7 @@ async function submitRelease(row: any) {
     export_date: actionForm.export_date,
     note: actionForm.note,
     timeline: timeline(row),
-    orderSummaryPatch: fallbackOrderPatch('da_xuat'),
+    orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_xuat'),
     expected_revision: toNumber(row.revision),
     lines: lines.map((line: any) => {
       const warehouseId = releaseWarehouseId(line, line.__release_index)
@@ -629,7 +652,7 @@ async function submitCancelRelease(row: any) {
     reason,
     timeline: timeline(row),
     notification_recipients: saleNotificationRecipients(row),
-    orderSummaryPatch: fallbackOrderPatch('da_tiep_nhan'),
+    orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_tiep_nhan'),
     operation_id: `export_request_cancel:${row.id}:${toNumber(row.revision)}`,
     expected_request_revision: toNumber(row.revision),
   })
