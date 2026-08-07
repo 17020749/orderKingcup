@@ -43,6 +43,24 @@ test('request and parcel print modals use snapshot recipient data only', () => {
   assert.ok(documentBuilder.includes('displayValue(row.packageCount)'))
 })
 
+test('parcel labels use one editable generic product row', () => {
+  const parcelModal = readFileSync('components/ParcelLabelPrintModal.vue', 'utf8')
+  const documentBuilder = readFileSync('utils/parcelLabelPrintDocuments.ts', 'utf8')
+
+  assert.ok(parcelModal.includes("DEFAULT_PRODUCT_NAME = 'Đồ dùng một lần cho quán cà phê, trà sữa'"))
+  assert.ok(parcelModal.includes('v-model="form.productName"'))
+  assert.ok(parcelModal.includes('v-model="form.packageCount"'))
+  assert.ok(parcelModal.includes('v-model="form.logo"'))
+  assert.ok(parcelModal.includes('v-model="form.receiverName"'))
+  assert.ok(parcelModal.includes('v-model="form.senderName"'))
+  assert.ok(parcelModal.includes('v-model="form.orderCode"'))
+  assert.ok(parcelModal.includes('1 dòng cố định'))
+  assert.ok(!parcelModal.includes('props.items.filter'))
+  assert.ok(documentBuilder.includes('packageCount?: string'))
+  assert.ok(documentBuilder.includes('displayValue(row.packageCount)'))
+  assert.ok(!documentBuilder.includes('setTimeout(() => window.print()'))
+})
+
 test('warehouse request actions keep the fallback helper pure and derive exact order summaries from scoped data', () => {
   const page = readFileSync('pages/warehouse-export-requests.vue', 'utf8')
   const helper = readFileSync('utils/fallbackOrderPatch.ts', 'utf8')
