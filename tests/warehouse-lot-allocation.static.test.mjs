@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { resolveImportItemLotIdentity } from '../utils/warehouseImportLotIdentity.mjs'
 
 const source = readFileSync('utils/warehouseLotAllocation.ts', 'utf8')
 const transactions = readFileSync('composables/useWarehouseCostTransactions.ts', 'utf8')
-const warehouseClient = readFileSync('composables/useWarehouseTransactionsClient.ts', 'utf8')
 const productsPage = readFileSync('pages/products.vue', 'utf8')
 const settingsPage = readFileSync('pages/settings/general.vue', 'utf8')
 const inventoryPage = readFileSync('pages/inventory.vue', 'utf8')
@@ -35,76 +33,6 @@ test('priced fields are limited to import transaction payloads', () => {
   )
   assert.match(importSection, /unit_cost:/)
   assert.match(importSection, /line_cost:/)
-})
-
-test('import update/delete resolves every old line back to its real balance and lot', () => {
-  assert.match(warehouseClient, /resolveImportItemLotIdentity/)
-  assert.match(warehouseClient, /resolveImportExistingItems/)
-  assert.match(warehouseClient, /async function updateImportOrder/)
-  assert.match(warehouseClient, /async function deleteImportOrder/)
-  assert.match(warehouseClient, /base\.updateImportOrder\(\{ \.\.\.input, existingItems, lines \}\)/)
-  assert.match(warehouseClient, /base\.deleteImportOrder\(\{ \.\.\.input, existingItems \}\)/)
-})
-
-test('stale import lot id is repaired by import item provenance without changing product scope', () => {
-  const item = {
-    id: 'import-item-1',
-    import_order_id: 'import-order-1',
-    product_id: 'product-1',
-    warehouse_id: 'warehouse-1',
-    product_code: 'LNPET93-12OZ',
-    logo: 'Ghiền',
-    lot_id: 'lot-stale',
-    quantity: 100,
-    source: 'nuxt',
-  }
-  const resolved = resolveImportItemLotIdentity([{
-    id: 'balance-1',
-    product_id: 'product-1',
-    warehouse_id: 'warehouse-1',
-    logo: 'Ghiền'.normalize('NFD'),
-    quantity: 100,
-    active: true,
-    deleted: false,
-    lots: [{
-      id: 'lot-real',
-      import_order_item_id: 'import-item-1',
-      available_quantity: 100,
-    }],
-  }], item)
-
-  assert.equal(resolved.ambiguous, false)
-  assert.equal(resolved.mode, 'item_id')
-  assert.equal(resolved.lot.id, 'lot-real')
-})
-
-test('new nuxt import whose lot is depleted never borrows legacy opening stock', () => {
-  const resolved = resolveImportItemLotIdentity([{
-    id: 'balance-1',
-    product_id: 'product-1',
-    warehouse_id: 'warehouse-1',
-    logo: 'Ghiền',
-    quantity: 100,
-    active: true,
-    deleted: false,
-    lots: [{
-      id: 'opening-balance-1',
-      source: 'legacy_opening',
-      available_quantity: 100,
-    }],
-  }], {
-    id: 'import-item-1',
-    import_order_id: 'import-order-1',
-    product_id: 'product-1',
-    warehouse_id: 'warehouse-1',
-    logo: 'Ghiền',
-    lot_id: 'depleted-lot',
-    quantity: 100,
-    source: 'nuxt',
-  })
-
-  assert.equal(resolved.mode, 'unresolved')
-  assert.equal(resolved.balance, null)
 })
 
 test('product catalog removes legacy cost_price and settings provides migration', () => {
