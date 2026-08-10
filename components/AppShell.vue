@@ -216,6 +216,9 @@ onBeforeUnmount(saveNavScroll)
         </button>
       </div>
     </aside>
-    <main class="main"><slot /></main>
+    <main class="main">
+      <slot />
+      <DashboardSalesOverviewChart v-if="route.path === '/dashboard'" />
+    </main>
   </div>
 </template>
