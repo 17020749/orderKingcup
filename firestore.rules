@@ -892,10 +892,7 @@ service cloud.firestore {
 
     function orderCanBeDeleted() {
       return fulfillmentStatus() != 'da_xuat_1_phan'
-        && (
-          fulfillmentStatus() != 'da_xuat_du'
-          || fulfilledOrderInvoiceMutationFieldsAllowed()
-        )
+        && fulfillmentStatus() != 'da_xuat_du'
         && resource.data.get('warehouse_request_status', '') != 'da_tiep_nhan'
         && resource.data.get('warehouse_request_status', '') != 'cho_xuat_kho'
         && resource.data.get('warehouse_request_status', '') != 'da_xuat'
@@ -1711,7 +1708,10 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && (ownsOrderData(resource.data) || hasPerm('orders.view_all') || isAdmin())
         && orderIdentityUnchanged()
         && orderLegacyInvoiceCreateKeepsOtherSystemFields()
-        && fulfillmentStatus() != 'da_xuat_du'
+        && (
+          fulfillmentStatus() != 'da_xuat_du'
+          || fulfilledOrderInvoiceMutationFieldsAllowed()
+        )
         && resource.data.get('invoice_record_count', 0) in [0, 1]
         && request.resource.data.get('invoice_record_count', -1) == 1
         && request.resource.data.get('invoice_relation_revision', -1) == currentRevision + 1
