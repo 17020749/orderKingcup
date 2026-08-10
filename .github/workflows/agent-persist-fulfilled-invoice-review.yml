@@ -1,0 +1,48 @@
+name: Agent persist fulfilled invoice review
+
+on:
+  push:
+    branches:
+      - agent/fulfilled-order-invoice-edit
+
+permissions:
+  contents: write
+
+jobs:
+  persist:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fulfilled-order-invoice-edit
+          fetch-depth: 0
+      - name: Apply tested review corrections
+        run: python .github/agent-review-fix-fulfilled-invoice.py
+      - name: Persist corrected files through GitHub Contents API
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: agent/fulfilled-order-invoice-edit
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in pages/orders.vue firestore.rules tests/order-fulfilled-metadata-edit.client.test.mjs tests/order-export-delete-lock.rules.test.mjs; do
+            sha=$(git rev-parse "HEAD:${path}")
+            content=$(base64 -w0 "${path}")
+            jq -n \
+              --arg message "test: tighten fulfilled invoice edit boundaries (${path})" \
+              --arg content "${content}" \
+              --arg sha "${sha}" \
+              --arg branch "${BRANCH}" \
+              '{message:$message,content:$content,sha:$sha,branch:$branch}' > /tmp/payload.json
+            curl --fail-with-body --silent --show-error \
+              -X PUT \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPO}/contents/${path}" \
+              --data-binary @/tmp/payload.json > /tmp/result.json
+            jq -e '.commit.sha' /tmp/result.json >/dev/null
+          done
