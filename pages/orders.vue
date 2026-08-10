@@ -756,15 +756,17 @@ async function saveFulfilledMetadataOnly() {
   const currentMetadata = {
     order_date: dateTimeLocal(currentOrder.order_date) || String(currentOrder.order_date || ''),
     order_status: String(currentOrder.order_status || ''),
+    invoice_status: normalizeInvoiceStatus(currentOrder.invoice_status),
   }
   const nextMetadata = {
     order_date: form.order_date,
     order_status: form.order_status,
+    invoice_status: normalizeInvoiceStatus(form.invoice_status),
   }
 
   try {
     if (!fulfilledOrderMetadataChanged(currentMetadata, nextMetadata)) {
-      showToast('Ngày giờ và trạng thái đơn chưa thay đổi.', 'info')
+      showToast('Ngày giờ, trạng thái đơn và hóa đơn chưa thay đổi.', 'info')
       return
     }
   } catch (error) {
@@ -798,15 +800,44 @@ async function saveFulfilledMetadataOnly() {
       })
     }
 
+    const persistedInvoiceStatus = normalizeInvoiceStatus(persistedOrder.invoice_status)
+    const requestedInvoiceStatus = normalizeInvoiceStatus(form.invoice_status)
+    let invoiceMutation: any
+    if (persistedInvoiceStatus !== requestedInvoiceStatus) {
+      const activeInvoices = (await loadScopedInvoicesForOrders([persistedOrder], true))
+        .filter(isActiveOrderRelation) as InvoiceDoc[]
+      const currentInvoice = selectCanonicalInvoice(activeInvoices) as InvoiceDoc | null
+      const selectedCustomer = customers.value.find(customer => customer.id === persistedOrder.customer_id)
+      invoiceMutation = planOrderEditInvoiceMutation({
+        orderId: currentOrder.id,
+        persistedStatus: persistedInvoiceStatus,
+        requestedStatus: requestedInvoiceStatus,
+        currentInvoice,
+        activeInvoiceCount: activeInvoices.length,
+        payload: {
+          tax_code: selectedCustomer?.tax_code || '',
+          company_name: selectedCustomer?.company_name || '',
+          billing_address: selectedCustomer?.billing_address || '',
+          note: '',
+        },
+      })
+      if (!invoiceMutation) {
+        throw new Error('Hóa đơn đã xuất. Sale không được thay đổi trạng thái từ đơn hàng.')
+      }
+    }
+
     await saveFulfilledOrderMetadata({
       orderId: currentOrder.id,
       expectedRevision: toNumber(persistedOrder.revision),
       orderDate: form.order_date,
       orderStatus: form.order_status,
+      invoiceStatus: requestedInvoiceStatus,
+      invoiceMutation,
     })
     commitSucceeded = true
 
     invalidateScopedCache('orders')
+    if (invoiceMutation) invalidateScopedCache('invoices')
     invalidateScopedCache('activity_logs')
 
     markOrderSyncPending(currentOrder.id, true)
@@ -834,14 +865,14 @@ async function saveFulfilledMetadataOnly() {
     }
 
     showModal.value = false
-    showToast('Đã cập nhật ngày giờ và trạng thái đơn hàng', 'success')
+    showToast('Đã cập nhật thông tin cho phép của đơn hàng', 'success')
     if (!synchronized) {
       showToast('Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.', 'warning')
     }
   }).catch(error => showToast(
     commitSucceeded
       ? 'Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.'
-      : reportFirebaseError(error, 'Không cập nhật được ngày giờ và trạng thái đơn.', {
+      : reportFirebaseError(error, 'Không cập nhật được thông tin cho phép của đơn.', {
           module: 'orders',
           operation: 'orders.edit_fulfilled_metadata',
           stage: 'metadata_transaction',
@@ -851,8 +882,8 @@ async function saveFulfilledMetadataOnly() {
           scopePermission: 'orders.view_all',
           scopeSatisfied: orderActionDecision('edit', currentOrder).allowed,
           context: {
-            collection: 'orders',
-            editable_fields: ['order_date', 'order_status'],
+            collections: ['orders', 'invoices'],
+            editable_fields: ['order_date', 'order_status', 'invoice_status'],
           },
         }),
     'error',
@@ -1517,7 +1548,7 @@ onMounted(loadRows)
 
     <BaseModal
       v-if="showModal"
-      :title="editingFulfilledOrder ? 'Sửa ngày giờ / trạng thái đơn' : editing ? 'Sửa đơn hàng' : 'Tạo đơn hàng'"
+      :title="editingFulfilledOrder ? 'Sửa ngày giờ / trạng thái / hóa đơn' : editing ? 'Sửa đơn hàng' : 'Tạo đơn hàng'"
       size="xl"
       save-label="Lưu đơn"
       :loading="saving"
@@ -1526,12 +1557,20 @@ onMounted(loadRows)
     >
       <div v-if="editingFulfilledOrder" class="card" style="padding:16px; margin-bottom:16px;">
         <div class="small subtle" style="margin-bottom:12px;">
-          Đơn đã xuất đủ. Hệ thống chỉ cho phép cập nhật ngày giờ và trạng thái đơn; sản phẩm, giá, hóa đơn và dữ liệu kho được giữ nguyên.
+          Đơn đã xuất đủ. Hệ thống chỉ cho phép cập nhật ngày giờ, trạng thái đơn và trạng thái hóa đơn; sản phẩm, giá và dữ liệu kho được giữ nguyên.
         </div>
         <div class="form-row-3">
           <div class="form-group"><label>Mã đơn</label><input v-model="form.order_code" class="input readonly-field" readonly /></div>
           <div class="form-group"><label>Ngày giờ đơn</label><input v-model="form.order_date" class="input" type="datetime-local" /></div>
           <div class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
+          <div class="form-group">
+            <label>Hóa đơn</label>
+            <select v-model="form.invoice_status" class="select" :disabled="invoiceStatusLocked">
+              <option v-for="status in saleInvoiceStatusOptions" :key="status" :value="status">{{ status }}</option>
+              <option v-if="invoiceStatusLocked" value="Đã xuất">Đã xuất</option>
+            </select>
+            <div v-if="invoiceStatusLocked" class="small subtle">Hóa đơn đã xuất; chỉ người có quyền tại trang Hóa đơn được cập nhật.</div>
+          </div>
         </div>
       </div>
 
@@ -1563,7 +1602,7 @@ onMounted(loadRows)
         <div class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
         <div class="form-group"><label>Phân loại đơn</label><select v-model="form.order_classification" class="select"><option v-for="s in ORDER_CLASSIFICATION_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div v-if="!editingFulfilledOrder" class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
-        <div class="form-group">
+        <div v-if="!editingFulfilledOrder" class="form-group">
           <label>Hóa đơn</label>
           <select v-model="form.invoice_status" class="select" :disabled="invoiceStatusLocked">
             <option v-for="status in saleInvoiceStatusOptions" :key="status" :value="status">{{ status }}</option>
