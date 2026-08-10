@@ -6,14 +6,12 @@ fieldset = '<fieldset :disabled="editingFulfilledOrder" style="border:0; padding
 if page.count(fieldset) != 1:
     raise SystemExit('orders.vue: fulfilled fieldset marker mismatch')
 before, after = page.split(fieldset, 1)
-invoice_field = '''        <div class="form-group">\n          <label>Hóa đơn</label>\n          <select v-model="form.invoice_status" class="select" :disabled="invoiceStatusLocked">'''
-if after.count(invoice_field) != 1:
-    raise SystemExit(f'orders.vue: expected one normal invoice field after fieldset, found {after.count(invoice_field)}')
-after = after.replace(
-    invoice_field,
-    '''        <div v-if="!editingFulfilledOrder" class="form-group">\n          <label>Hóa đơn</label>\n          <select v-model="form.invoice_status" class="select" :disabled="invoiceStatusLocked">''',
-    1,
-)
+plain_invoice_field = '''        <div class="form-group">\n          <label>Hóa đơn</label>\n          <select v-model="form.invoice_status" class="select" :disabled="invoiceStatusLocked">'''
+scoped_invoice_field = '''        <div v-if="!editingFulfilledOrder" class="form-group">\n          <label>Hóa đơn</label>\n          <select v-model="form.invoice_status" class="select" :disabled="invoiceStatusLocked">'''
+if plain_invoice_field in after:
+    after = after.replace(plain_invoice_field, scoped_invoice_field, 1)
+elif scoped_invoice_field not in after:
+    raise SystemExit('orders.vue: normal invoice field missing')
 page_path.write_text(before + fieldset + after, encoding='utf-8')
 
 rules_path = Path('firestore.rules')
@@ -24,17 +22,19 @@ plain_guard = "        && fulfillmentStatus() != 'da_xuat_du'"
 delete_start = rules.index('    function orderCanBeDeleted() {')
 delete_end = rules.index('    function exportRequestEditable()', delete_start)
 delete_segment = rules[delete_start:delete_end]
-if delete_segment.count(fulfilled_guard) != 1:
-    raise SystemExit('firestore.rules: delete guard is not the unexpected fulfilled guard')
-delete_segment = delete_segment.replace(fulfilled_guard, plain_guard, 1)
+if fulfilled_guard in delete_segment:
+    delete_segment = delete_segment.replace(fulfilled_guard, plain_guard, 1)
+elif plain_guard not in delete_segment:
+    raise SystemExit('firestore.rules: delete fulfillment guard missing')
 rules = rules[:delete_start] + delete_segment + rules[delete_end:]
 
 legacy_start = rules.index('    function orderLegacyInvoiceCreateAllowed(orderId) {')
 legacy_end = rules.index('    function invoiceOrderCascadeDeleteAllowed()', legacy_start)
 legacy_segment = rules[legacy_start:legacy_end]
-if legacy_segment.count(plain_guard) != 1:
-    raise SystemExit('firestore.rules: legacy invoice guard mismatch')
-legacy_segment = legacy_segment.replace(plain_guard, fulfilled_guard, 1)
+if fulfilled_guard not in legacy_segment:
+    if plain_guard not in legacy_segment:
+        raise SystemExit('firestore.rules: legacy invoice guard mismatch')
+    legacy_segment = legacy_segment.replace(plain_guard, fulfilled_guard, 1)
 rules = rules[:legacy_start] + legacy_segment + rules[legacy_end:]
 
 sale_start = rules.index('    function orderSaleInvoiceStatusUpdateAllowed(orderId) {')
