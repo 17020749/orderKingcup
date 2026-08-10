@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { importUpdateMode } from '../utils/warehouseImportUpdateMode.mjs'
 
 const source = readFileSync('utils/warehouseLotAllocation.ts', 'utf8')
 const transactions = readFileSync('composables/useWarehouseCostTransactions.ts', 'utf8')
+const warehouseClient = readFileSync('composables/useWarehouseTransactionsClient.ts', 'utf8')
 const productsPage = readFileSync('pages/products.vue', 'utf8')
 const settingsPage = readFileSync('pages/settings/general.vue', 'utf8')
 const inventoryPage = readFileSync('pages/inventory.vue', 'utf8')
@@ -12,6 +14,39 @@ const printingPage = readFileSync('pages/printing.vue', 'utf8')
 const orderLogic = readFileSync('composables/useOrderLogic.ts', 'utf8')
 const warehouseLogic = readFileSync('composables/useWarehouseLogic.ts', 'utf8')
 const models = readFileSync('types/models.ts', 'utf8')
+
+function oldImportItem(overrides = {}) {
+  return {
+    id: 'imp__1',
+    product_id: 'product-1',
+    warehouse_id: 'warehouse-1',
+    logo: 'housing',
+    quantity: 1000,
+    unit: 'Cái',
+    unit_cost: 597.22,
+    vat_rate: 8,
+    expiry_date: '',
+    note: '',
+    active: true,
+    deleted: false,
+    ...overrides,
+  }
+}
+
+function editedImportLine(overrides = {}) {
+  return {
+    product: { id: 'product-1' },
+    warehouse: { id: 'warehouse-1' },
+    logo: 'housing',
+    quantity: 1000,
+    unit: 'Cái',
+    unit_cost: 610,
+    vat_rate: 10,
+    expiry_date: '2027-01-01',
+    note: 'điều chỉnh giá',
+    ...overrides,
+  }
+}
 
 test('lot engine supports configured issue policies', () => {
   assert.match(source, /'fifo'/)
@@ -33,6 +68,47 @@ test('priced fields are limited to import transaction payloads', () => {
   )
   assert.match(importSection, /unit_cost:/)
   assert.match(importSection, /line_cost:/)
+})
+
+test('price VAT expiry supplier-style metadata edits do not require reversing an import lot', () => {
+  const mode = importUpdateMode({
+    order: { import_date: '2026-08-08' },
+    import_date: '2026-08-08',
+    existingItems: [oldImportItem()],
+    lines: [editedImportLine()],
+  })
+  assert.equal(mode, 'metadata')
+})
+
+test('quantity product warehouse logo or receipt-date changes stay on guarded inventory path', () => {
+  const base = {
+    order: { import_date: '2026-08-08' },
+    import_date: '2026-08-08',
+    existingItems: [oldImportItem()],
+  }
+  assert.equal(importUpdateMode({ ...base, lines: [editedImportLine({ quantity: 999 })] }), 'inventory')
+  assert.equal(importUpdateMode({ ...base, lines: [editedImportLine({ product: { id: 'product-2' } })] }), 'inventory')
+  assert.equal(importUpdateMode({ ...base, lines: [editedImportLine({ warehouse: { id: 'warehouse-2' } })] }), 'inventory')
+  assert.equal(importUpdateMode({ ...base, lines: [editedImportLine({ logo: 'other-logo' })] }), 'inventory')
+  assert.equal(importUpdateMode({ ...base, import_date: '2026-08-09', lines: [editedImportLine()] }), 'inventory')
+})
+
+test('adding or removing import lines stays on guarded inventory path', () => {
+  const base = {
+    order: { import_date: '2026-08-08' },
+    import_date: '2026-08-08',
+    existingItems: [oldImportItem()],
+  }
+  assert.equal(importUpdateMode({ ...base, lines: [editedImportLine(), editedImportLine()] }), 'inventory')
+  assert.equal(importUpdateMode({ ...base, lines: [] }), 'inventory')
+})
+
+test('client wrapper uses metadata transaction only for non-inventory edits', () => {
+  assert.match(warehouseClient, /importUpdateMode\(input\) === 'metadata'/)
+  assert.match(warehouseClient, /updateImportOrderMetadataOnly/)
+  assert.match(warehouseClient, /return await base\.updateImportOrder\(input\)/)
+  assert.match(warehouseClient, /inventory_unchanged: true/)
+  assert.match(warehouseClient, /Lô nhập không còn tồn khả dụng hoặc đã được xuất hết/)
 })
 
 test('product catalog removes legacy cost_price and settings provides migration', () => {
