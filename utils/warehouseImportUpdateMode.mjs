@@ -44,7 +44,7 @@ export function importUpdateTouchesInventory(input = {}) {
   const oldImportDate = text(input?.order?.import_date).slice(0, 10)
   const nextImportDate = text(input?.import_date || oldImportDate).slice(0, 10)
 
-  // Changing receipt date changes lot chronology/FIFO semantics, so keep it
+  // Receipt date affects lot chronology/FIFO history, so changing it must stay
   // on the guarded inventory transaction path.
   if (oldImportDate && nextImportDate && oldImportDate !== nextImportDate) return true
   if (oldItems.length !== lines.length) return true
