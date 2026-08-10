@@ -4,6 +4,8 @@ import {
   getDoc,
   getDocs,
   query,
+  runTransaction,
+  serverTimestamp,
   where,
 } from 'firebase/firestore'
 import { useWarehouseCostTransactions } from '~/composables/useWarehouseCostTransactions'
@@ -21,11 +23,12 @@ import {
   warehouseLogoLookupVariants,
 } from '~/utils/warehouseLogoIdentity.mjs'
 // @ts-ignore Shared ESM helper is also executed directly by Node client tests.
-import { resolveImportItemLotIdentity } from '~/utils/warehouseImportLotIdentity.mjs'
+import { importUpdateMode } from '~/utils/warehouseImportUpdateMode.mjs'
 
 export function useWarehouseTransactionsClient() {
   const base = useWarehouseCostTransactions()
   const { db } = useFirebaseServices()
+  const { appUser } = useAuth()
 
   async function loadBalance(input: { productId: string; warehouseId: string; logo: string }) {
     const balanceId = await inventoryBalanceId(input.productId, input.warehouseId, input.logo)
@@ -76,22 +79,289 @@ export function useWarehouseTransactionsClient() {
     ).trim()
   }
 
-  function importWarehouseIdOf(line: any) {
-    const warehouse = line?.warehouse || null
-    if (typeof warehouse === 'string') return warehouse.trim()
-    return String(
-      warehouse?.id
-      || warehouse?.firestore_id
-      || line?.warehouse_id
-      || '',
-    ).trim()
-  }
-
   function inventoryLogoOf(line: any) {
     if (line && Object.prototype.hasOwnProperty.call(line, 'target_logo')) {
       return String(line.target_logo || '').trim()
     }
     return String(line?.logo || '').trim()
+  }
+
+  function text(value: any) {
+    return String(value || '').trim()
+  }
+
+  function numberOf(value: any) {
+    const parsed = Number(value || 0)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
+  function revisionOf(value: any) {
+    const revision = numberOf(value?.revision ?? value)
+    return Math.max(0, Math.floor(revision))
+  }
+
+  function roundMoney(value: any) {
+    return Math.round(numberOf(value) * 100) / 100
+  }
+
+  function lineVatRate(line: any) {
+    return Math.max(0, Math.min(100, numberOf(line?.vat_rate ?? line?.vat_percent ?? 0)))
+  }
+
+  function lineUnitCostWithVat(line: any) {
+    const supplied = numberOf(line?.unit_cost_with_vat)
+    if (supplied > 0) return roundMoney(supplied)
+    return roundMoney(numberOf(line?.unit_cost) * (1 + lineVatRate(line) / 100))
+  }
+
+  function lineCost(line: any) {
+    const supplied = numberOf(line?.line_cost)
+    if (supplied > 0) return roundMoney(supplied)
+    return roundMoney(numberOf(line?.quantity) * lineUnitCostWithVat(line))
+  }
+
+  function productCodeOf(line: any, existing: any) {
+    return text(line?.product?.product_code || line?.product?.code || existing?.product_code)
+  }
+
+  function productNameOf(line: any, existing: any) {
+    return text(line?.product?.product_name || line?.product?.name || existing?.product_name)
+  }
+
+  function warehouseNameOf(line: any, existing: any) {
+    const warehouse = line?.warehouse
+    if (typeof warehouse === 'string') return text(existing?.warehouse_name || warehouse)
+    return text(warehouse?.name || warehouse?.warehouse_name || existing?.warehouse_name || warehouseIdOf(line))
+  }
+
+  function actorEmail() {
+    return text(appUser.value?.email).toLowerCase()
+  }
+
+  async function updateImportOrderMetadataOnly(input: any) {
+    const actor = actorEmail()
+    if (!actor) throw new Error('Bạn chưa đăng nhập.')
+
+    const orderId = text(input?.order?.id)
+    if (!orderId) throw new Error('Thiếu ID phiếu nhập cần sửa.')
+    const code = text(input?.order?.code || input?.order?.import_code || orderId)
+    const oldItems = (Array.isArray(input?.existingItems) ? input.existingItems : [])
+      .filter((item: any) => item && item.deleted !== true && item.active !== false)
+    const rawLines = (Array.isArray(input?.lines) ? input.lines : [])
+      .filter((line: any) => numberOf(line?.quantity) > 0)
+    if (oldItems.length !== rawLines.length || !rawLines.length) {
+      throw new Error('Thay đổi số dòng hàng phải đi qua kiểm tra tồn kho.')
+    }
+
+    const expectedRevision = revisionOf(input?.expected_revision ?? input?.order?.revision)
+    const nextImportDate = text(input?.import_date || input?.order?.import_date).slice(0, 10)
+    const supplier = input?.supplier || {}
+    const supplierId = text(supplier?.id || supplier?.supplier_id)
+    const supplierName = text(supplier?.name || supplier?.supplier_name)
+    const operationId = text(input?.operation_id) || `import_update_metadata:${orderId}:${expectedRevision}`
+
+    const prepared = rawLines.map((line: any, index: number) => {
+      const existing = oldItems[index]
+      const quantity = numberOf(line.quantity)
+      return {
+        line,
+        existing,
+        quantity,
+        itemId: text(existing.id),
+        lotId: text(existing.lot_id),
+        productId: productIdOf(line),
+        warehouseId: warehouseIdOf(line),
+        logo: text(line.logo),
+        unit: text(line.unit || existing.unit),
+        unitCost: roundMoney(line.unit_cost),
+        vatRate: lineVatRate(line),
+        unitCostWithVat: lineUnitCostWithVat(line),
+        lineCost: lineCost(line),
+        expiryDate: text(line.expiry_date).slice(0, 10),
+        note: text(line.note),
+      }
+    })
+
+    const balanceEntries = new Map<string, { ref: any; pairs: any[] }>()
+    for (const row of prepared) {
+      if (!row.productId || !row.warehouseId) continue
+      const balanceId = await inventoryBalanceId(row.productId, row.warehouseId, row.logo)
+      if (!balanceEntries.has(balanceId)) {
+        balanceEntries.set(balanceId, {
+          ref: doc(db, 'inventory_balances', balanceId),
+          pairs: [],
+        })
+      }
+      balanceEntries.get(balanceId)!.pairs.push(row)
+    }
+
+    let replay: any = null
+    let nextRevision = expectedRevision + 1
+
+    await runTransaction(db, async tx => {
+      const operationRef = doc(db, 'warehouse_operations', operationId)
+      const orderRef = doc(db, 'import_orders', orderId)
+      const operationSnap = await tx.get(operationRef)
+      const orderSnap = await tx.get(orderRef)
+      const balanceSnapshots = new Map<string, any>()
+      for (const [balanceId, entry] of balanceEntries) {
+        balanceSnapshots.set(balanceId, await tx.get(entry.ref))
+      }
+
+      if (operationSnap.exists()) {
+        const operation = operationSnap.data() || {}
+        if (text(operation.action) && text(operation.action) !== 'import_update') {
+          throw new Error('operation_id đã được dùng cho nghiệp vụ khác.')
+        }
+        if (text(operation.created_by) && text(operation.created_by).toLowerCase() !== actor) {
+          throw new Error('operation_id đã được dùng bởi người dùng khác.')
+        }
+        if (text(operation.status) === 'completed') {
+          replay = {
+            id: text(operation.target_id || orderId),
+            code: text(operation.result_code || code),
+            revision: revisionOf(operation.target_revision),
+          }
+          return
+        }
+        if (text(operation.status) === 'processing') {
+          throw new Error('Nghiệp vụ này đang được xử lý ở phiên khác.')
+        }
+      }
+
+      if (!orderSnap.exists()) throw new Error('Phiếu nhập không còn tồn tại.')
+      const current = orderSnap.data() || {}
+      if (revisionOf(current) !== expectedRevision) {
+        throw new Error('Phiếu nhập đã được cập nhật ở phiên khác. Hãy tải lại trang.')
+      }
+      if (current.deleted === true || current.active === false) throw new Error('Phiếu nhập đã bị xóa.')
+      nextRevision = revisionOf(current) + 1
+
+      tx.update(orderRef, {
+        import_date: nextImportDate,
+        supplier_id: supplierId,
+        supplier_name: supplierName,
+        total_quantity: roundMoney(prepared.reduce((sum: number, row: any) => sum + row.quantity, 0)),
+        total_cost: roundMoney(prepared.reduce((sum: number, row: any) => sum + row.lineCost, 0)),
+        note: text(input?.note),
+        updated_by: actor,
+        operation_id: operationId,
+        last_operation_id: operationId,
+        revision: nextRevision,
+        updated_at: serverTimestamp(),
+      })
+
+      prepared.forEach((row: any) => {
+        tx.update(doc(db, 'import_order_items', row.itemId), {
+          product_id: row.productId,
+          product_code: productCodeOf(row.line, row.existing),
+          product_name: productNameOf(row.line, row.existing),
+          warehouse_id: row.warehouseId,
+          warehouse_name: warehouseNameOf(row.line, row.existing),
+          logo: row.logo,
+          quantity: row.quantity,
+          unit: row.unit,
+          unit_cost: row.unitCost,
+          vat_rate: row.vatRate,
+          vat_percent: row.vatRate,
+          unit_cost_with_vat: row.unitCostWithVat,
+          line_cost: row.lineCost,
+          expiry_date: row.expiryDate,
+          note: row.note,
+          updated_by: actor,
+          operation_id: operationId,
+          last_operation_id: operationId,
+          revision: revisionOf(row.existing) + 1,
+          updated_at: serverTimestamp(),
+        })
+      })
+
+      for (const [balanceId, entry] of balanceEntries) {
+        const snapshot = balanceSnapshots.get(balanceId)
+        if (!snapshot?.exists()) continue
+        const balance = snapshot.data() || {}
+        if (!Array.isArray(balance.lots) || !balance.lots.length) continue
+
+        let changed = false
+        const lots = balance.lots.map((lot: any) => {
+          const row = entry.pairs.find((candidate: any) => candidate.lotId && text(lot?.id) === candidate.lotId)
+          if (!row) return lot
+          changed = true
+          return {
+            ...lot,
+            expiry_date: row.expiryDate,
+            unit: row.unit,
+            supplier_id: supplierId,
+            supplier_name: supplierName,
+          }
+        })
+
+        if (changed) {
+          tx.update(entry.ref, {
+            lots,
+            updated_by: actor,
+            last_operation_id: operationId,
+            updated_at: serverTimestamp(),
+          })
+        }
+      }
+
+      const operationPayload: any = {
+        id: operationId,
+        operation_id: operationId,
+        action: 'import_update',
+        target_collection: 'import_orders',
+        target_id: orderId,
+        result_code: code,
+        target_revision: nextRevision,
+        created_by: actor,
+        status: 'completed',
+        completed_at: serverTimestamp(),
+        failure_message: '',
+        active: true,
+        deleted: false,
+      }
+      if (!operationSnap.exists()) operationPayload.created_at = serverTimestamp()
+      tx.set(operationRef, operationPayload, { merge: true })
+
+      tx.set(doc(collection(db, 'activity_logs')), {
+        module: 'import_orders',
+        action: 'update',
+        item_code: code,
+        item_name: code,
+        changed_by: actor,
+        after_json: JSON.stringify({
+          id: orderId,
+          line_count: prepared.length,
+          inventory_unchanged: true,
+          update_mode: 'metadata',
+        }),
+        created_at: serverTimestamp(),
+        active: true,
+        deleted: false,
+      })
+    })
+
+    if (replay) return { ...replay, operationId, alreadyProcessed: true }
+    return { id: orderId, code, revision: nextRevision, operationId, alreadyProcessed: false, updateMode: 'metadata' }
+  }
+
+  async function updateImportOrder(input: any) {
+    if (importUpdateMode(input) === 'metadata') {
+      return updateImportOrderMetadataOnly(input)
+    }
+
+    try {
+      return await base.updateImportOrder(input)
+    } catch (error: any) {
+      const message = String(error?.message || '')
+      if (message.includes('Không tìm thấy lô của dòng nhập')) {
+        throw new Error(
+          'Lô nhập không còn tồn khả dụng hoặc đã được xuất hết. Bạn vẫn có thể sửa giá nhập, VAT, nhà cung cấp, hạn dùng và ghi chú; không thể đổi sản phẩm, kho, logo, số lượng hoặc ngày nhập sau khi lô đã được sử dụng.',
+        )
+      }
+      throw error
+    }
   }
 
   async function loadEquivalentBalanceRows(input: { productId: string; warehouseId: string; logo: string }) {
@@ -127,137 +397,6 @@ export function useWarehouseTransactionsClient() {
     }
 
     return Array.from(rows.values())
-  }
-
-  async function loadProductWarehouseBalanceRows(input: { productId: string; warehouseId: string; logo: string }) {
-    const rows = new Map<string, any>()
-
-    for (const variant of warehouseLogoLookupVariants(input.logo)) {
-      const balanceId = await inventoryBalanceId(input.productId, input.warehouseId, variant)
-      if (rows.has(balanceId)) continue
-      const snapshot = await getDoc(doc(db, 'inventory_balances', balanceId))
-      if (snapshot.exists()) rows.set(snapshot.id, { ...snapshot.data(), id: snapshot.id })
-    }
-
-    try {
-      const snapshot = await getDocs(query(
-        collection(db, 'inventory_balances'),
-        where('product_id', '==', input.productId),
-        where('warehouse_id', '==', input.warehouseId),
-      ))
-      snapshot.docs.forEach(item => {
-        if (!rows.has(item.id)) rows.set(item.id, { ...item.data(), id: item.id })
-      })
-    } catch {
-      // Keep exact/NFC/NFD candidates if compatibility query is unavailable.
-    }
-
-    return Array.from(rows.values())
-  }
-
-  async function resolveImportExistingItems(existingItems: any[]) {
-    const balanceRowsByKey = new Map<string, Promise<any[]>>()
-    const resolved: any[] = []
-
-    for (const item of existingItems || []) {
-      const productId = productIdOf(item)
-      const warehouseId = importWarehouseIdOf(item)
-      const requestedLogo = String(item?.logo || '').trim()
-
-      if (!productId || !warehouseId) {
-        resolved.push(item)
-        continue
-      }
-
-      const key = `${warehouseId}\u0000${productId}`
-      if (!balanceRowsByKey.has(key)) {
-        balanceRowsByKey.set(key, loadProductWarehouseBalanceRows({
-          productId,
-          warehouseId,
-          logo: requestedLogo,
-        }))
-      }
-
-      const rows = await balanceRowsByKey.get(key)!
-      const identity = resolveImportItemLotIdentity(rows, item)
-      if (identity.ambiguous) {
-        throw new Error(
-          `Dòng nhập ${item.product_code || item.id} đang khớp với nhiều lô tồn kho. Vui lòng đối soát lô trước khi sửa/xóa phiếu.`,
-        )
-      }
-
-      if (identity.balance) {
-        resolved.push({
-          ...item,
-          logo: String(identity.balance.logo ?? item.logo ?? '').trim(),
-          lot_id: identity.clearLotId ? '' : String(identity.lot?.id || item.lot_id || '').trim(),
-        })
-        continue
-      }
-
-      const selection = selectEquivalentWarehouseBalance(rows, {
-        productId,
-        warehouseId,
-        logo: requestedLogo,
-      })
-      if (selection.ambiguous) {
-        throw new Error(
-          `Dòng nhập ${item.product_code || item.id} có nhiều dòng tồn cùng logo tương đương. Vui lòng đối soát/gộp tồn trước khi sửa/xóa phiếu.`,
-        )
-      }
-
-      if (selection.balance && !String(item?.lot_id || '').trim()) {
-        resolved.push({
-          ...item,
-          logo: String(selection.balance.logo ?? item.logo ?? '').trim(),
-        })
-        continue
-      }
-
-      resolved.push(item)
-    }
-
-    return resolved
-  }
-
-  function resolveImportLines(lines: any[], originalItems: any[], resolvedItems: any[]) {
-    const candidates = (originalItems || []).map((item, index) => ({
-      original: item,
-      resolved: resolvedItems[index] || item,
-      used: false,
-    }))
-
-    return (lines || []).map(line => {
-      const lineProductId = productIdOf(line)
-      const lineWarehouseId = importWarehouseIdOf(line)
-      const lineLogo = canonicalWarehouseLogo(line?.logo)
-      const match = candidates.find(candidate => (
-        !candidate.used
-        && productIdOf(candidate.original) === lineProductId
-        && importWarehouseIdOf(candidate.original) === lineWarehouseId
-        && canonicalWarehouseLogo(candidate.original?.logo) === lineLogo
-      ))
-
-      if (!match) return line
-      match.used = true
-      return {
-        ...line,
-        logo: String(match.resolved?.logo ?? line.logo ?? '').trim(),
-      }
-    })
-  }
-
-  async function updateImportOrder(input: any) {
-    const originalItems = Array.isArray(input?.existingItems) ? input.existingItems : []
-    const existingItems = await resolveImportExistingItems(originalItems)
-    const lines = resolveImportLines(input?.lines || [], originalItems, existingItems)
-    return base.updateImportOrder({ ...input, existingItems, lines })
-  }
-
-  async function deleteImportOrder(input: any) {
-    const originalItems = Array.isArray(input?.existingItems) ? input.existingItems : []
-    const existingItems = await resolveImportExistingItems(originalItems)
-    return base.deleteImportOrder({ ...input, existingItems })
   }
 
   async function resolveExportRequestInventoryLines(lines: any[]) {
@@ -345,7 +484,6 @@ export function useWarehouseTransactionsClient() {
     ...base,
     createExportOrder,
     updateImportOrder,
-    deleteImportOrder,
     processExportRequestToExportOrder,
   }
 }
