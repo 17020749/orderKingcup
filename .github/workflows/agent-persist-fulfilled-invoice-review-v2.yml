@@ -1,0 +1,73 @@
+name: Agent persist fulfilled invoice review v2
+
+on:
+  push:
+    branches:
+      - agent/fulfilled-order-invoice-edit
+
+permissions:
+  contents: write
+
+jobs:
+  persist:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fulfilled-order-invoice-edit
+          fetch-depth: 0
+      - name: Apply tested review corrections
+        run: python .github/agent-review-fix-fulfilled-invoice.py
+      - name: Persist corrected files through GitHub Contents API
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: agent/fulfilled-order-invoice-edit
+        shell: bash
+        run: |
+          python <<'PY'
+          import base64
+          import json
+          import os
+          import subprocess
+          import urllib.request
+
+          repo = os.environ['REPO']
+          branch = os.environ['BRANCH']
+          token = os.environ['GH_TOKEN']
+          paths = [
+              'pages/orders.vue',
+              'firestore.rules',
+              'tests/order-fulfilled-metadata-edit.client.test.mjs',
+              'tests/order-export-delete-lock.rules.test.mjs',
+          ]
+          for path in paths:
+              sha = subprocess.check_output(['git', 'rev-parse', f'HEAD:{path}'], text=True).strip()
+              with open(path, 'rb') as handle:
+                  content = base64.b64encode(handle.read()).decode('ascii')
+              payload = json.dumps({
+                  'message': f'test: tighten fulfilled invoice edit boundaries ({path})',
+                  'content': content,
+                  'sha': sha,
+                  'branch': branch,
+              }).encode('utf-8')
+              request = urllib.request.Request(
+                  f'https://api.github.com/repos/{repo}/contents/{path}',
+                  data=payload,
+                  method='PUT',
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Accept': 'application/vnd.github+json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                      'Content-Type': 'application/json',
+                  },
+              )
+              with urllib.request.urlopen(request) as response:
+                  result = json.load(response)
+              commit_sha = result.get('commit', {}).get('sha', '')
+              if not commit_sha:
+                  raise RuntimeError(f'GitHub did not return a commit for {path}')
+              print(f'{path}: {commit_sha}')
+          PY
