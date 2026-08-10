@@ -1602,7 +1602,7 @@ onMounted(loadRows)
         <div class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
         <div class="form-group"><label>Phân loại đơn</label><select v-model="form.order_classification" class="select"><option v-for="s in ORDER_CLASSIFICATION_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div v-if="!editingFulfilledOrder" class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
-        <div class="form-group">
+        <div v-if="!editingFulfilledOrder" class="form-group">
           <label>Hóa đơn</label>
           <select v-model="form.invoice_status" class="select" :disabled="invoiceStatusLocked">
             <option v-for="status in saleInvoiceStatusOptions" :key="status" :value="status">{{ status }}</option>
