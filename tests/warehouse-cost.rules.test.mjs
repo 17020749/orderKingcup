@@ -7,8 +7,10 @@ import {
   initializeTestEnvironment,
 } from '@firebase/rules-unit-testing'
 import {
+  collection,
   doc,
   getDoc,
+  serverTimestamp,
   setDoc,
   updateDoc,
   writeBatch,
@@ -210,6 +212,101 @@ test('Kho được cập nhật số lượng và metadata lô trong cùng opera
     updated_by: WAREHOUSE,
   })
   await assertSucceeds(batch.commit())
+})
+
+test('Người nhập kho được sửa metadata phiếu mà không đổi số lượng tồn', async () => {
+  const db = env.authenticatedContext(IMPORTER, { email: IMPORTER }).firestore()
+  const operationId = 'import_update_metadata_rules_test'
+
+  await assertSucceeds(setDoc(doc(db, 'warehouse_operations', operationId), {
+    id: operationId,
+    operation_id: operationId,
+    action: 'import_update',
+    target_collection: 'import_orders',
+    target_id: 'import-priced',
+    result_code: 'PNK-PRICE-001',
+    target_revision: 0,
+    created_by: IMPORTER,
+    status: 'processing',
+    processing_at: serverTimestamp(),
+    created_at: serverTimestamp(),
+    active: true,
+    deleted: false,
+  }))
+
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'import_orders', 'import-priced'), {
+    supplier_id: 'supplier-1',
+    supplier_name: 'NCC A',
+    total_quantity: 10,
+    total_cost: 297000,
+    note: 'Sửa giá sau nhập',
+    updated_by: IMPORTER,
+    operation_id: operationId,
+    last_operation_id: operationId,
+    revision: 1,
+    updated_at: serverTimestamp(),
+  })
+  batch.update(doc(db, 'import_order_items', 'import-priced__1'), {
+    unit_cost: 27500,
+    vat_rate: 8,
+    vat_percent: 8,
+    unit_cost_with_vat: 29700,
+    line_cost: 297000,
+    expiry_date: '2027-01-01',
+    note: 'Sửa giá',
+    quantity: 10,
+    updated_by: IMPORTER,
+    operation_id: operationId,
+    last_operation_id: operationId,
+    revision: 1,
+    updated_at: serverTimestamp(),
+  })
+  batch.update(doc(db, 'inventory_balances', 'warehouse-a__product-a__no_logo'), {
+    lots: [{
+      id: 'lot__import-priced__1',
+      import_order_id: 'import-priced',
+      import_order_item_id: 'import-priced__1',
+      import_code: 'PNK-PRICE-001',
+      import_date: '2026-07-18',
+      expiry_date: '2027-01-01',
+      supplier_id: 'supplier-1',
+      supplier_name: 'NCC A',
+      received_quantity: 10,
+      available_quantity: 10,
+      cost_item_id: 'import-priced__1',
+      status: 'available',
+    }],
+    last_operation_id: operationId,
+    updated_by: IMPORTER,
+    updated_at: serverTimestamp(),
+  })
+  batch.update(doc(db, 'warehouse_operations', operationId), {
+    status: 'completed',
+    completed_at: serverTimestamp(),
+    result_code: 'PNK-PRICE-001',
+    target_revision: 1,
+    failure_message: '',
+  })
+  batch.set(doc(collection(db, 'activity_logs')), {
+    module: 'import_orders',
+    action: 'update',
+    item_code: 'PNK-PRICE-001',
+    item_name: 'PNK-PRICE-001',
+    changed_by: IMPORTER,
+    after_json: JSON.stringify({ id: 'import-priced', inventory_unchanged: true }),
+    created_at: serverTimestamp(),
+    active: true,
+    deleted: false,
+  })
+
+  await assertSucceeds(batch.commit())
+
+  const item = await assertSucceeds(getDoc(doc(db, 'import_order_items', 'import-priced__1')))
+  const balance = await assertSucceeds(getDoc(doc(db, 'inventory_balances', 'warehouse-a__product-a__no_logo')))
+  assert.equal(item.data()?.unit_cost, 27500)
+  assert.equal(balance.data()?.quantity, 10)
+  assert.equal(balance.data()?.lots?.[0]?.available_quantity, 10)
 })
 
 test('Dòng phiếu xuất có parent hợp lệ chỉ cần mã lô và số lượng, không cần giá nhập', async () => {
