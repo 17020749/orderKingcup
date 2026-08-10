@@ -1,0 +1,20 @@
+name: Agent diagnose fulfilled invoice payload
+
+on:
+  push:
+    branches:
+      - agent/fulfilled-order-invoice-edit
+
+jobs:
+  diagnose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fulfilled-order-invoice-edit
+      - name: Hash staged payload chunks
+        run: |
+          wc -c .github/agent-fulfilled-invoice-v2.part1 .github/agent-fulfilled-invoice-v2.part2 .github/agent-fulfilled-invoice-v2.part3 .github/agent-fulfilled-invoice-v2.part4
+          sha256sum .github/agent-fulfilled-invoice-v2.part1 .github/agent-fulfilled-invoice-v2.part2 .github/agent-fulfilled-invoice-v2.part3 .github/agent-fulfilled-invoice-v2.part4
+          cat .github/agent-fulfilled-invoice-v2.part1 .github/agent-fulfilled-invoice-v2.part2 .github/agent-fulfilled-invoice-v2.part3 .github/agent-fulfilled-invoice-v2.part4 | sha256sum
