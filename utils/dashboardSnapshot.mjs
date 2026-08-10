@@ -22,11 +22,18 @@ export const DASHBOARD_PERIODS = [
   { key: 'all', label: 'Tất cả' },
 ]
 
+export const DASHBOARD_ORDER_CLASSIFICATIONS = [
+  { key: 'new', label: 'Số mới' },
+  { key: 'care', label: 'Chăm sóc' },
+  { key: 'agency', label: 'Đại lý' },
+]
+
 const DAY_MS = 24 * 60 * 60 * 1000
 const COMPLETED_ORDER_STATUSES = new Set(['da hoan thanh', 'hoan thanh'])
 const CANCELLED_ORDER_STATUSES = new Set(['da huy', 'huy'])
 const RECEIVED_PAYMENT_STATUS = 'Đã nhận'
 const DESIGN_FILE_TYPES = ['AI', 'PDF', 'Demo', 'Mockup']
+const CLASSIFICATION_KEYS = ['new', 'care', 'agency', 'unclassified']
 
 export function dashboardTimestampValue(value) {
   if (!value) return 0
@@ -110,11 +117,21 @@ function orderCustomerKey(order) {
 }
 
 function orderSaleKey(order) {
-  return String(order.sale_email || order.owner_email || order.created_by || order.sale_name || 'Chưa phân công').trim()
+  return String(order.sale_email || order.owner_email || order.created_by || order.sale_name || 'Chưa phân công')
+    .trim()
+    .toLowerCase()
 }
 
 function orderSaleName(order) {
   return String(order.sale_name || order.sale_email || order.owner_email || order.created_by || 'Chưa phân công').trim()
+}
+
+function orderClassificationKey(order) {
+  const value = normalizedText(order?.order_classification)
+  if (value === 'so moi') return 'new'
+  if (value === 'cham soc') return 'care'
+  if (value === 'dai ly') return 'agency'
+  return 'unclassified'
 }
 
 function orderRevenue(order, toNumber) {
@@ -127,6 +144,37 @@ function isCompletedOrder(order) {
 
 function isCancelledOrder(order) {
   return CANCELLED_ORDER_STATUSES.has(normalizedText(order.order_status))
+}
+
+function emptyBusinessMetrics() {
+  return {
+    orders: 0,
+    revenue: 0,
+    orderPaid: 0,
+    paid: 0,
+    cashReceived: 0,
+    debt: 0,
+    profit: 0,
+    collectionRate: 0,
+  }
+}
+
+function classificationBuckets() {
+  return Object.fromEntries(CLASSIFICATION_KEYS.map(key => [key, emptyBusinessMetrics()]))
+}
+
+function addOrderToBusinessMetrics(bucket, order, profit, toNumber) {
+  bucket.orders += 1
+  bucket.revenue += orderRevenue(order, toNumber)
+  bucket.orderPaid += toNumber(order.paid_amount)
+  bucket.paid = bucket.orderPaid
+  bucket.debt += toNumber(order.debt_amount)
+  bucket.profit += toNumber(profit)
+}
+
+function finalizeBusinessMetrics(bucket) {
+  bucket.collectionRate = percentage(bucket.orderPaid, bucket.revenue)
+  return bucket
 }
 
 function isPrintItemCompleted(item) {
@@ -273,8 +321,9 @@ function buildPeriodView({
   const periodOrders = periodKey === 'all'
     ? orders
     : orders.filter(order => inPeriod(rowDateValue(order, ['order_date', 'created_at']), start, end))
-  const periodOrderIds = new Set(periodOrders.map(order => String(order.id || '').trim()).filter(Boolean))
-  const periodItems = validItems.filter(item => periodOrderIds.has(String(item.order_id || '').trim()))
+  const businessOrders = periodOrders.filter(order => !isCancelledOrder(order))
+  const businessOrderIds = new Set(businessOrders.map(order => String(order.id || '').trim()).filter(Boolean))
+  const periodItems = validItems.filter(item => businessOrderIds.has(String(item.order_id || '').trim()))
   const periodPayments = periodKey === 'all'
     ? receivedPayments
     : receivedPayments.filter(payment => inPeriod(rowDateValue(payment, ['payment_date', 'created_at']), start, end))
@@ -290,16 +339,14 @@ function buildPeriodView({
     return !isCancelledOrder(order) && !['moi tao', 'da bao gia'].includes(status)
   })
   const opportunityOrders = periodOrders
-  const revenue = periodOrders.reduce((sum, order) => sum + orderRevenue(order, toNumber), 0)
-  const profit = periodItems.reduce((sum, item) => sum + toNumber(item.line_profit), 0)
   const firstOrderIds = new Set(
-    periodOrders
+    businessOrders
       .filter(order => firstOrderByCustomer.get(orderCustomerKey(order))?.id === order.id)
       .map(order => order.id),
   )
 
   const salesMap = new Map()
-  periodOrders.forEach(order => {
+  orders.forEach(order => {
     const key = orderSaleKey(order)
     if (!salesMap.has(key)) {
       salesMap.set(key, {
@@ -307,24 +354,70 @@ function buildPeriodView({
         name: orderSaleName(order),
         email: String(order.sale_email || order.owner_email || order.created_by || '').trim(),
         orders: 0,
+        opportunities: 0,
         wonOrders: 0,
         newCustomerKeys: new Set(),
         revenue: 0,
+        orderPaid: 0,
         paid: 0,
+        cashReceived: 0,
         debt: 0,
         profit: 0,
+        classifications: classificationBuckets(),
       })
+    } else {
+      const row = salesMap.get(key)
+      if ((!row.name || row.name === row.email || row.name === key) && order.sale_name) row.name = String(order.sale_name).trim()
+      if (!row.email) row.email = String(order.sale_email || order.owner_email || order.created_by || '').trim()
     }
-    const row = salesMap.get(key)
-    row.orders += 1
+  })
+
+  periodOrders.forEach(order => {
+    const row = salesMap.get(orderSaleKey(order))
+    if (!row) return
+    row.opportunities += 1
     if (!isCancelledOrder(order) && !['moi tao', 'da bao gia'].includes(normalizedText(order.order_status))) row.wonOrders += 1
+  })
+
+  businessOrders.forEach(order => {
+    const row = salesMap.get(orderSaleKey(order))
+    if (!row) return
+    const orderId = String(order.id || '').trim()
+    const profit = profitByOrder.get(orderId) || 0
+    addOrderToBusinessMetrics(row, order, profit, toNumber)
+    const classification = orderClassificationKey(order)
+    addOrderToBusinessMetrics(row.classifications[classification], order, profit, toNumber)
     const customerKey = orderCustomerKey(order)
     if (customerKey && firstOrderIds.has(order.id)) row.newCustomerKeys.add(customerKey)
-    row.revenue += orderRevenue(order, toNumber)
-    row.paid += toNumber(order.paid_amount)
-    row.debt += toNumber(order.debt_amount)
-    row.profit += profitByOrder.get(String(order.id || '').trim()) || 0
   })
+
+  const orderById = new Map(orders.map(order => [String(order.id || '').trim(), order]))
+  periodPayments.forEach(payment => {
+    const amount = toNumber(payment.amount)
+    const order = orderById.get(String(payment.order_id || '').trim())
+    if (!order) return
+    const row = salesMap.get(orderSaleKey(order))
+    if (!row) return
+    row.cashReceived += amount
+    row.classifications[orderClassificationKey(order)].cashReceived += amount
+  })
+
+  const classifications = classificationBuckets()
+  businessOrders.forEach(order => {
+    const orderId = String(order.id || '').trim()
+    addOrderToBusinessMetrics(
+      classifications[orderClassificationKey(order)],
+      order,
+      profitByOrder.get(orderId) || 0,
+      toNumber,
+    )
+  })
+  periodPayments.forEach(payment => {
+    const order = orderById.get(String(payment.order_id || '').trim())
+    if (!order) return
+    classifications[orderClassificationKey(order)].cashReceived += toNumber(payment.amount)
+  })
+  Object.values(classifications).forEach(finalizeBusinessMetrics)
 
   const productProfitMap = new Map()
   periodItems.forEach(item => {
@@ -339,31 +432,54 @@ function buildPeriodView({
     row.quantity += toNumber(item.quantity)
   })
 
+  const revenue = businessOrders.reduce((sum, order) => sum + orderRevenue(order, toNumber), 0)
+  const orderPaid = businessOrders.reduce((sum, order) => sum + toNumber(order.paid_amount), 0)
+  const debt = businessOrders.reduce((sum, order) => sum + toNumber(order.debt_amount), 0)
+  const profit = periodItems.reduce((sum, item) => sum + toNumber(item.line_profit), 0)
+  const cashReceived = periodPayments.reduce((sum, payment) => sum + toNumber(payment.amount), 0)
+
   return {
     key: periodKey,
     stats: {
-      orders: periodOrders.length,
-      customers: uniqueCount(periodOrders.map(orderCustomerKey)),
+      orders: businessOrders.length,
+      customers: uniqueCount(businessOrders.map(orderCustomerKey)),
       products: uniqueCount(periodItems.map(item => item.product_id || item.product_code || item.product_name)),
       newCustomers: firstOrderIds.size,
       revenue,
-      paid: periodPayments.reduce((sum, payment) => sum + toNumber(payment.amount), 0),
-      debt: periodOrders.reduce((sum, order) => sum + toNumber(order.debt_amount), 0),
+      newRevenue: classifications.new.revenue,
+      careRevenue: classifications.care.revenue,
+      agencyRevenue: classifications.agency.revenue,
+      unclassifiedRevenue: classifications.unclassified.revenue,
+      orderPaid,
+      paid: cashReceived,
+      cashReceived,
+      debt,
       profit,
+      collectionRate: percentage(orderPaid, revenue),
       conversionRate: percentage(wonOrders.length, opportunityOrders.length),
       marginRate: percentage(profit, revenue),
+      classifications,
     },
     salesKpis: Array.from(salesMap.values())
-      .map(row => ({
-        ...row,
-        newCustomers: row.newCustomerKeys.size,
-        conversionRate: percentage(row.wonOrders, row.orders),
-        marginRate: percentage(row.profit, row.revenue),
-        newCustomerKeys: undefined,
-        wonOrders: undefined,
-      }))
-      .sort((a, b) => b.revenue - a.revenue || b.orders - a.orders)
-      .slice(0, 10),
+      .map(row => {
+        Object.values(row.classifications).forEach(finalizeBusinessMetrics)
+        row.paid = row.orderPaid
+        return {
+          ...row,
+          newCustomers: row.newCustomerKeys.size,
+          newRevenue: row.classifications.new.revenue,
+          careRevenue: row.classifications.care.revenue,
+          agencyRevenue: row.classifications.agency.revenue,
+          unclassifiedRevenue: row.classifications.unclassified.revenue,
+          collectionRate: percentage(row.orderPaid, row.revenue),
+          conversionRate: percentage(row.wonOrders, row.opportunities),
+          marginRate: percentage(row.profit, row.revenue),
+          newCustomerKeys: undefined,
+          wonOrders: undefined,
+          opportunities: undefined,
+        }
+      })
+      .sort((a, b) => b.revenue - a.revenue || b.orders - a.orders || a.name.localeCompare(b.name, 'vi')),
     productProfit: Array.from(productProfitMap.values())
       .map(row => ({ ...row, marginRate: percentage(row.profit, row.revenue) }))
       .sort((a, b) => b.profit - a.profit || b.revenue - a.revenue)
@@ -444,6 +560,7 @@ export function buildDashboardSnapshot({
 
   const firstOrderByCustomer = new Map()
   ;[...ordersWithPayment]
+    .filter(order => !isCancelledOrder(order))
     .sort((a, b) => rowDateValue(a, ['order_date', 'created_at']) - rowDateValue(b, ['order_date', 'created_at']))
     .forEach(order => {
       const key = orderCustomerKey(order)
@@ -614,7 +731,7 @@ export function buildDashboardSnapshot({
 
   const revenueTrend = makeMonthBuckets(now)
   const trendMap = new Map(revenueTrend.map(row => [row.key, row]))
-  ordersWithPayment.forEach(order => {
+  ordersWithPayment.filter(order => !isCancelledOrder(order)).forEach(order => {
     const bucket = trendMap.get(monthKey(order.order_date || order.created_at))
     if (bucket) bucket.revenue += orderRevenue(order, toNumber)
   })
@@ -624,7 +741,8 @@ export function buildDashboardSnapshot({
   })
   validItems.forEach(item => {
     const order = ordersWithPayment.find(row => row.id === item.order_id)
-    const bucket = order ? trendMap.get(monthKey(order.order_date || order.created_at)) : null
+    if (!order || isCancelledOrder(order)) return
+    const bucket = trendMap.get(monthKey(order.order_date || order.created_at))
     if (bucket) bucket.profit += toNumber(item.line_profit)
   })
 
