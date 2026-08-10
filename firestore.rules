@@ -892,7 +892,10 @@ service cloud.firestore {
 
     function orderCanBeDeleted() {
       return fulfillmentStatus() != 'da_xuat_1_phan'
-        && fulfillmentStatus() != 'da_xuat_du'
+        && (
+          fulfillmentStatus() != 'da_xuat_du'
+          || fulfilledOrderInvoiceMutationFieldsAllowed()
+        )
         && resource.data.get('warehouse_request_status', '') != 'da_tiep_nhan'
         && resource.data.get('warehouse_request_status', '') != 'cho_xuat_kho'
         && resource.data.get('warehouse_request_status', '') != 'da_xuat'
@@ -1626,6 +1629,38 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         ]);
     }
 
+    function fulfilledOrderInvoiceMutationFieldsAllowed() {
+      let orderDate = request.resource.data.get('order_date', null);
+      return onlyChanged([
+          'order_date', 'order_status',
+          'invoice_status', 'invoice_record_count', 'invoice_relation_revision',
+          'relation_lock_version', 'relation_last_module', 'relation_last_action',
+          'relation_last_document_id', 'relation_updated_by', 'relation_updated_at',
+          'revision', 'last_operation_id', 'updated_at'
+        ])
+        && (
+          !changedAny(['order_date'])
+          || orderDate is timestamp
+          || (
+            orderDate is string
+            && orderDate.size() >= 1
+            && orderDate.size() <= 40
+          )
+        )
+        && (
+          !changedAny(['order_status'])
+          || validBoundedString(request.resource.data.get('order_status', ''), 1, 200)
+        )
+        && request.resource.data.get('revision', -1) is int
+        && request.resource.data.get('revision', -1)
+          == resource.data.get('revision', 0) + 1
+        && validBoundedString(request.resource.data.get('last_operation_id', ''), 1, 200)
+        && request.resource.data.get('updated_at', null) is timestamp
+        && request.resource.data.get('updated_at', null) == request.time
+        && request.resource.data.get('relation_updated_at', null) is timestamp
+        && request.resource.data.get('relation_updated_at', null) == request.time;
+    }
+
     function orderSaleInvoiceStatusUpdateAllowed(orderId) {
       let documentId = request.resource.data.get('relation_last_document_id', '');
       let childPath = invoicePath(documentId);
@@ -1633,7 +1668,10 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && (ownsOrderData(resource.data) || hasPerm('orders.view_all') || isAdmin())
         && orderIdentityUnchanged()
         && orderEditKeepsNonInvoiceSystemFields()
-        && fulfillmentStatus() != 'da_xuat_du'
+        && (
+          fulfillmentStatus() != 'da_xuat_du'
+          || fulfilledOrderInvoiceMutationFieldsAllowed()
+        )
         && saleMutableInvoiceStatusValue(resource.data.get('invoice_status', ''))
         && saleInvoiceStatusValue(request.resource.data.get('invoice_status', ''))
         && request.resource.data.get('invoice_status', '') != resource.data.get('invoice_status', '')

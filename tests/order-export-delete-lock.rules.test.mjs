@@ -101,6 +101,71 @@ async function seed(orderOverrides = {}, requestStatus = '') {
   })
 }
 
+async function seedFulfilledInvoice(invoiceStatus = 'Không xuất') {
+  await seed({
+    order_status: 'Hoàn thành',
+    warehouse_fulfillment_status: 'da_xuat_du',
+    payable_amount: 1000,
+    invoice_status: invoiceStatus,
+    invoice_record_count: 1,
+    invoice_relation_revision: 3,
+    revision: 4,
+  })
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore()
+    await setDoc(doc(db, 'invoices', 'inv-order-delete'), {
+      id: 'inv-order-delete',
+      order_id: 'order-delete',
+      order_code: 'SALE-ABC-0001',
+      invoice_number: invoiceStatus === 'Đã xuất' ? 'HD-LOCK' : '',
+      invoice_date: invoiceStatus === 'Đã xuất' ? '2026-07-21' : '',
+      invoice_amount: 1000,
+      invoice_status: invoiceStatus,
+      created_by: OWNER,
+      order_owner_email: OWNER,
+      order_created_by: OWNER,
+      order_sale_email: OWNER,
+      relation_revision: 3,
+      last_operation_id: 'seed-invoice',
+      active: true,
+      deleted: false,
+      status: 'active',
+      created_at: '2026-07-21T00:00:00.000Z',
+      updated_at: '2026-07-21T00:00:00.000Z',
+    })
+  })
+}
+
+function fulfilledInvoiceUpdateBatch(db, nextStatus, { extraOrder = {} } = {}) {
+  const batch = writeBatch(db)
+  const timestamp = serverTimestamp()
+  const operationId = 'fulfilled-invoice-edit:test'
+  batch.update(doc(db, 'invoices', 'inv-order-delete'), {
+    invoice_status: nextStatus,
+    relation_revision: 4,
+    last_operation_id: operationId,
+    updated_at: timestamp,
+  })
+  batch.update(doc(db, 'orders', 'order-delete'), {
+    order_date: '2026-07-22T09:00',
+    order_status: 'Đã bàn giao',
+    invoice_status: nextStatus,
+    invoice_record_count: 1,
+    invoice_relation_revision: 4,
+    relation_lock_version: 1,
+    relation_last_module: 'invoices',
+    relation_last_action: 'update',
+    relation_last_document_id: 'inv-order-delete',
+    relation_updated_by: OWNER,
+    relation_updated_at: timestamp,
+    revision: 5,
+    last_operation_id: operationId,
+    updated_at: timestamp,
+    ...extraOrder,
+  })
+  return batch
+}
+
 before(async () => {
   env = await initializeTestEnvironment({
     projectId,
@@ -168,6 +233,29 @@ test('đơn đã xuất đủ chỉ cho sửa ngày giờ và trạng thái đơ
   await assertFails(updateDoc(doc(db, 'orders', 'order-delete'), {
     note: 'Không được phép sửa nội dung đơn đã xuất đủ',
   }))
+})
+
+test('đơn đã xuất đủ cho Sale đổi trạng thái hóa đơn cùng parent-child transaction', async () => {
+  await seedFulfilledInvoice('Không xuất')
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+
+  await assertSucceeds(fulfilledInvoiceUpdateBatch(db, 'Yêu cầu xuất').commit())
+})
+
+test('đơn đã xuất đủ không cho lợi dụng cập nhật hóa đơn để sửa field khác', async () => {
+  await seedFulfilledInvoice('Không xuất')
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+
+  await assertFails(fulfilledInvoiceUpdateBatch(db, 'Yêu cầu xuất', {
+    extraOrder: { note: 'Không được sửa note sau khi đã xuất đủ' },
+  }).commit())
+})
+
+test('hóa đơn Đã xuất vẫn khóa Sale dù đơn đã xuất đủ', async () => {
+  await seedFulfilledInvoice('Đã xuất')
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+
+  await assertFails(fulfilledInvoiceUpdateBatch(db, 'Không xuất').commit())
 })
 
 test('đơn đã xuất đủ vẫn bị khóa xóa', async () => {
