@@ -10,7 +10,7 @@ import {
   invalidateQueryCacheTags,
 } from '~/composables/useQueryCache'
 
-export const DASHBOARD_CACHE_NAMESPACE = 'dashboard:snapshot:v3'
+export const DASHBOARD_CACHE_NAMESPACE = 'dashboard:snapshot:v4'
 export const DASHBOARD_CACHE_TAGS = [
   'dashboard:snapshot',
   ...DASHBOARD_SOURCE_COLLECTIONS.map(collectionName => `collection:${collectionName}`),
