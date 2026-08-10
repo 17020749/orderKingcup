@@ -20,6 +20,8 @@ import {
   selectEquivalentWarehouseBalance,
   warehouseLogoLookupVariants,
 } from '~/utils/warehouseLogoIdentity.mjs'
+// @ts-ignore Shared ESM helper is also executed directly by Node client tests.
+import { resolveImportItemLotIdentity } from '~/utils/warehouseImportLotIdentity.mjs'
 
 export function useWarehouseTransactionsClient() {
   const base = useWarehouseCostTransactions()
@@ -74,6 +76,17 @@ export function useWarehouseTransactionsClient() {
     ).trim()
   }
 
+  function importWarehouseIdOf(line: any) {
+    const warehouse = line?.warehouse || null
+    if (typeof warehouse === 'string') return warehouse.trim()
+    return String(
+      warehouse?.id
+      || warehouse?.firestore_id
+      || line?.warehouse_id
+      || '',
+    ).trim()
+  }
+
   function inventoryLogoOf(line: any) {
     if (line && Object.prototype.hasOwnProperty.call(line, 'target_logo')) {
       return String(line.target_logo || '').trim()
@@ -114,6 +127,137 @@ export function useWarehouseTransactionsClient() {
     }
 
     return Array.from(rows.values())
+  }
+
+  async function loadProductWarehouseBalanceRows(input: { productId: string; warehouseId: string; logo: string }) {
+    const rows = new Map<string, any>()
+
+    for (const variant of warehouseLogoLookupVariants(input.logo)) {
+      const balanceId = await inventoryBalanceId(input.productId, input.warehouseId, variant)
+      if (rows.has(balanceId)) continue
+      const snapshot = await getDoc(doc(db, 'inventory_balances', balanceId))
+      if (snapshot.exists()) rows.set(snapshot.id, { ...snapshot.data(), id: snapshot.id })
+    }
+
+    try {
+      const snapshot = await getDocs(query(
+        collection(db, 'inventory_balances'),
+        where('product_id', '==', input.productId),
+        where('warehouse_id', '==', input.warehouseId),
+      ))
+      snapshot.docs.forEach(item => {
+        if (!rows.has(item.id)) rows.set(item.id, { ...item.data(), id: item.id })
+      })
+    } catch {
+      // Keep exact/NFC/NFD candidates if compatibility query is unavailable.
+    }
+
+    return Array.from(rows.values())
+  }
+
+  async function resolveImportExistingItems(existingItems: any[]) {
+    const balanceRowsByKey = new Map<string, Promise<any[]>>()
+    const resolved: any[] = []
+
+    for (const item of existingItems || []) {
+      const productId = productIdOf(item)
+      const warehouseId = importWarehouseIdOf(item)
+      const requestedLogo = String(item?.logo || '').trim()
+
+      if (!productId || !warehouseId) {
+        resolved.push(item)
+        continue
+      }
+
+      const key = `${warehouseId}\u0000${productId}`
+      if (!balanceRowsByKey.has(key)) {
+        balanceRowsByKey.set(key, loadProductWarehouseBalanceRows({
+          productId,
+          warehouseId,
+          logo: requestedLogo,
+        }))
+      }
+
+      const rows = await balanceRowsByKey.get(key)!
+      const identity = resolveImportItemLotIdentity(rows, item)
+      if (identity.ambiguous) {
+        throw new Error(
+          `Dòng nhập ${item.product_code || item.id} đang khớp với nhiều lô tồn kho. Vui lòng đối soát lô trước khi sửa/xóa phiếu.`,
+        )
+      }
+
+      if (identity.balance) {
+        resolved.push({
+          ...item,
+          logo: String(identity.balance.logo ?? item.logo ?? '').trim(),
+          lot_id: identity.clearLotId ? '' : String(identity.lot?.id || item.lot_id || '').trim(),
+        })
+        continue
+      }
+
+      const selection = selectEquivalentWarehouseBalance(rows, {
+        productId,
+        warehouseId,
+        logo: requestedLogo,
+      })
+      if (selection.ambiguous) {
+        throw new Error(
+          `Dòng nhập ${item.product_code || item.id} có nhiều dòng tồn cùng logo tương đương. Vui lòng đối soát/gộp tồn trước khi sửa/xóa phiếu.`,
+        )
+      }
+
+      if (selection.balance && !String(item?.lot_id || '').trim()) {
+        resolved.push({
+          ...item,
+          logo: String(selection.balance.logo ?? item.logo ?? '').trim(),
+        })
+        continue
+      }
+
+      resolved.push(item)
+    }
+
+    return resolved
+  }
+
+  function resolveImportLines(lines: any[], originalItems: any[], resolvedItems: any[]) {
+    const candidates = (originalItems || []).map((item, index) => ({
+      original: item,
+      resolved: resolvedItems[index] || item,
+      used: false,
+    }))
+
+    return (lines || []).map(line => {
+      const lineProductId = productIdOf(line)
+      const lineWarehouseId = importWarehouseIdOf(line)
+      const lineLogo = canonicalWarehouseLogo(line?.logo)
+      const match = candidates.find(candidate => (
+        !candidate.used
+        && productIdOf(candidate.original) === lineProductId
+        && importWarehouseIdOf(candidate.original) === lineWarehouseId
+        && canonicalWarehouseLogo(candidate.original?.logo) === lineLogo
+      ))
+
+      if (!match) return line
+      match.used = true
+      return {
+        ...line,
+        logo: String(match.resolved?.logo ?? line.logo ?? '').trim(),
+      }
+    })
+  }
+
+  async function updateImportOrder(input: any) {
+    const originalItems = Array.isArray(input?.existingItems) ? input.existingItems : []
+    const existingItems = await resolveImportExistingItems(originalItems)
+    const lines = resolveImportLines(input?.lines || [], originalItems, existingItems)
+    return base.updateImportOrder({ ...input, existingItems, lines })
+  }
+
+  async function deleteImportOrder(input: any) {
+    const originalItems = Array.isArray(input?.existingItems) ? input.existingItems : []
+    const existingItems = await resolveImportExistingItems(originalItems)
+    return base.deleteImportOrder({ ...input, existingItems })
   }
 
   async function resolveExportRequestInventoryLines(lines: any[]) {
@@ -200,6 +344,8 @@ export function useWarehouseTransactionsClient() {
   return {
     ...base,
     createExportOrder,
+    updateImportOrder,
+    deleteImportOrder,
     processExportRequestToExportOrder,
   }
 }
