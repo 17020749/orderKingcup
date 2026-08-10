@@ -166,6 +166,52 @@ function fulfilledInvoiceUpdateBatch(db, nextStatus, { extraOrder = {} } = {}) {
   return batch
 }
 
+
+function fulfilledLegacyInvoiceCreateBatch(db) {
+  const batch = writeBatch(db)
+  const timestamp = serverTimestamp()
+  const operationId = 'fulfilled-legacy-invoice:test'
+  batch.set(doc(db, 'invoices', 'inv_order-delete'), {
+    id: 'inv_order-delete',
+    order_id: 'order-delete',
+    order_code: 'SALE-ABC-0001',
+    invoice_number: '',
+    invoice_date: '',
+    invoice_amount: 1000,
+    invoice_status: 'Yêu cầu xuất',
+    tax_code: '',
+    company_name: '',
+    billing_address: '',
+    note: '',
+    created_by: OWNER,
+    order_owner_email: OWNER,
+    order_created_by: OWNER,
+    order_sale_email: OWNER,
+    relation_revision: 1,
+    last_operation_id: operationId,
+    active: true,
+    deleted: false,
+    status: 'active',
+    created_at: timestamp,
+    updated_at: timestamp,
+  })
+  batch.update(doc(db, 'orders', 'order-delete'), {
+    invoice_status: 'Yêu cầu xuất',
+    invoice_record_count: 1,
+    invoice_relation_revision: 1,
+    relation_lock_version: 1,
+    relation_last_module: 'invoices',
+    relation_last_action: 'create',
+    relation_last_document_id: 'inv_order-delete',
+    relation_updated_by: OWNER,
+    relation_updated_at: timestamp,
+    revision: 5,
+    last_operation_id: operationId,
+    updated_at: timestamp,
+  })
+  return batch
+}
+
 before(async () => {
   env = await initializeTestEnvironment({
     projectId,
@@ -256,6 +302,21 @@ test('hóa đơn Đã xuất vẫn khóa Sale dù đơn đã xuất đủ', asyn
   const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
 
   await assertFails(fulfilledInvoiceUpdateBatch(db, 'Không xuất').commit())
+})
+
+
+test('đơn legacy đã xuất đủ vẫn tạo invoice child khi Sale đổi trạng thái hóa đơn', async () => {
+  await seed({
+    order_status: 'Hoàn thành',
+    warehouse_fulfillment_status: 'da_xuat_du',
+    payable_amount: 1000,
+    invoice_status: 'Không xuất',
+    invoice_record_count: 0,
+    invoice_relation_revision: 0,
+    revision: 4,
+  })
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+  await assertSucceeds(fulfilledLegacyInvoiceCreateBatch(db).commit())
 })
 
 test('đơn đã xuất đủ vẫn bị khóa xóa', async () => {
