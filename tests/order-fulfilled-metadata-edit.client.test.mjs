@@ -193,3 +193,22 @@ test('warehouse release persists an exact order summary instead of a permanent p
   assert.equal(warehouseRequestsSource.includes("orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_xuat')"), true)
   assert.equal(warehouseRequestsSource.includes("orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_tiep_nhan')"), true)
 })
+
+test('fulfilled invoice exception is scoped away from delete lock and duplicate UI', () => {
+  const fieldsetIndex = ordersPageSource.indexOf('<fieldset :disabled="editingFulfilledOrder"')
+  assert.ok(fieldsetIndex > 0)
+  const normalFields = ordersPageSource.slice(fieldsetIndex)
+  assert.match(normalFields, /<div v-if="!editingFulfilledOrder" class="form-group">\s*<label>Hóa đơn<\/label>/)
+
+  const deleteStart = firestoreRulesSource.indexOf('function orderCanBeDeleted()')
+  const deleteEnd = firestoreRulesSource.indexOf('function exportRequestEditable()', deleteStart)
+  const deleteRule = firestoreRulesSource.slice(deleteStart, deleteEnd)
+  assert.match(deleteRule, /fulfillmentStatus\(\) != 'da_xuat_du'/)
+  assert.doesNotMatch(deleteRule, /fulfilledOrderInvoiceMutationFieldsAllowed/)
+
+  const legacyStart = firestoreRulesSource.indexOf('function orderLegacyInvoiceCreateAllowed(orderId)')
+  const legacyEnd = firestoreRulesSource.indexOf('function invoiceOrderCascadeDeleteAllowed()', legacyStart)
+  const legacyRule = firestoreRulesSource.slice(legacyStart, legacyEnd)
+  assert.match(legacyRule, /fulfilledOrderInvoiceMutationFieldsAllowed\(\)/)
+})
+
