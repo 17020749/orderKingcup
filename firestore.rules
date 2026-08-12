@@ -1660,7 +1660,8 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
       let path = orderPath(orderId);
       let order = get(path).data;
       let after = getAfter(path).data;
-      return hasPerm('orders.edit')
+      return after.get('warehouse_fulfillment_status', 'chua_xuat') == 'da_xuat_du'
+        && hasPerm('orders.edit')
         && orderId is string
         && orderId != ''
         && exists(path)
