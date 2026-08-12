@@ -1626,6 +1626,71 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         ]);
     }
 
+    function orderPriceEditAllowed() {
+      return hasPerm('orders.edit')
+        && (
+          ownEmailField(resource.data, 'owner_email')
+          || ownEmailField(resource.data, 'created_by')
+          || ownEmailField(resource.data, 'sale_email')
+          || hasPerm('orders.view_all')
+        )
+        && orderIdentityUnchanged()
+        && changedAny(['price_revision'])
+        && onlyChanged([
+          'subtotal_no_vat', 'vat_amount', 'total_vat', 'actual_revenue', 'payable_amount',
+          'debt_amount', 'payment_status', 'computed_payment_status',
+          'revision', 'price_revision', 'last_operation_id', 'updated_at'
+        ])
+        && request.resource.data.get('subtotal_no_vat', -1) is number
+        && request.resource.data.get('vat_amount', -1) is number
+        && request.resource.data.get('total_vat', -1) is number
+        && request.resource.data.get('actual_revenue', -1) is number
+        && request.resource.data.get('payable_amount', -1) is number
+        && request.resource.data.get('debt_amount', 0) is number
+        && request.resource.data.get('revision', -1) == resource.data.get('revision', 0) + 1
+        && request.resource.data.get('price_revision', -1) == resource.data.get('price_revision', 0) + 1
+        && validBoundedString(request.resource.data.get('last_operation_id', ''), 1, 200)
+        && request.resource.data.get('updated_at', null) is timestamp
+        && request.resource.data.get('updated_at', null) == request.time;
+
+    }
+
+    function orderPriceItemUpdateAllowed() {
+      let orderId = resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      let order = get(path).data;
+      let after = getAfter(path).data;
+      return after.get('warehouse_fulfillment_status', 'chua_xuat') == 'da_xuat_du'
+        && hasPerm('orders.edit')
+        && orderId is string
+        && orderId != ''
+        && exists(path)
+        && existsAfter(path)
+        && orderDataIsActive(order)
+        && (
+          ownEmailField(order, 'owner_email')
+          || ownEmailField(order, 'created_by')
+          || ownEmailField(order, 'sale_email')
+          || hasPerm('orders.view_all')
+        )
+        && request.resource.data.get('order_id', '') == orderId
+        && onlyChanged([
+          'unit_price', 'line_total', 'line_profit', 'logo_json',
+          'order_revision', 'price_revision', 'last_operation_id', 'updated_at'
+        ])
+        && request.resource.data.get('unit_price', -1) is number
+        && request.resource.data.get('unit_price', -1) >= 0
+        && request.resource.data.get('line_total', -1) is number
+        && request.resource.data.get('line_total', -1) >= 0
+        && request.resource.data.get('line_profit', -1) is number
+        && request.resource.data.get('order_revision', -1) == after.get('revision', -2)
+        && request.resource.data.get('price_revision', -1) == after.get('price_revision', -2)
+        && request.resource.data.get('last_operation_id', '') == after.get('last_operation_id', '')
+        && validBoundedString(request.resource.data.get('last_operation_id', ''), 1, 200)
+        && request.resource.data.get('updated_at', null) is timestamp
+        && request.resource.data.get('updated_at', null) == request.time;
+    }
+
     function fulfilledOrderInvoiceMutationFieldsAllowed() {
       let orderDate = request.resource.data.get('order_date', null);
       return onlyChanged([
@@ -2645,7 +2710,8 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
                 || orderPrintingSummaryUpdateAllowed(docId)
               )
               : (
-                fulfilledOrderMetadataUpdateAllowed()
+                orderPriceEditAllowed()
+                || fulfilledOrderMetadataUpdateAllowed()
                 || (
                   hasPerm('orders.edit')
                   && (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
@@ -2700,7 +2766,8 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && canMutateOrderAfterById(request.resource.data.order_id)
         && requestMatchesOrderItemAfter(request.resource.data.order_id);
 
-      allow update: if (
+      allow update: if orderPriceItemUpdateAllowed()
+        || (
           softDeleteOnly()
           && hasAnyPerm(['orders.edit', 'orders.delete'])
           && resource.data.order_id is string
@@ -2724,7 +2791,8 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           && request.resource.data.order_id == resource.data.order_id
           && orderItemIdentityUnchanged()
           && orderItemOwnershipSafe(resource.data.order_id)
-        );
+        )
+        ;
 
       allow delete: if (
           isAdmin()
