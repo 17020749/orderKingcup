@@ -411,6 +411,7 @@ function normalizeItemForForm(item: any = {}) {
   const logoLines = parseLogoLines(item.logo_json || item.logos_json || item.logos)
   return {
     id: item.id || makeId('itm'),
+    order_id: item.order_id || '',
     product_id: item.product_id || '',
     product_code: item.product_code || '',
     product_name: item.product_name || '',
