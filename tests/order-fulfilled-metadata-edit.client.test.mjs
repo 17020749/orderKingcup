@@ -125,7 +125,7 @@ test('rejects empty values, invalid revisions and missing audit fields', () => {
   )
 })
 
-test('keeps one edit button and exposes only date, order status and invoice status for fulfilled orders', () => {
+test('keeps one edit button and exposes price plus metadata for fulfilled orders', () => {
   assert.match(
     ordersPageSource,
     /<button v-if="canEditRow\(row\)" class="btn-sm" @click="openModal\(row\)">Sửa<\/button>/,
@@ -134,8 +134,10 @@ test('keeps one edit button and exposes only date, order status and invoice stat
     ordersPageSource,
     /if \(editing\.value && editingFulfilledOrder\.value\) return saveFulfilledMetadataOnly\(\)/,
   )
-  assert.match(ordersPageSource, /Sửa ngày giờ \/ trạng thái \/ hóa đơn/)
-  assert.match(ordersPageSource, /Đơn đã xuất đủ\. Hệ thống chỉ cho phép cập nhật ngày giờ, trạng thái đơn và trạng thái hóa đơn/)
+  assert.match(ordersPageSource, /Sửa đơn giá \/ ngày giờ \/ trạng thái \/ hóa đơn/)
+  assert.match(ordersPageSource, /Đơn đã xuất đủ\. Hệ thống chỉ cho phép cập nhật đơn giá, ngày giờ, trạng thái đơn và trạng thái hóa đơn/)
+  assert.match(ordersPageSource, /useOrderPriceSave/)
+  assert.match(ordersPageSource, /v-model\.number="item\.unit_price"/)
   assert.match(ordersPageSource, /<fieldset :disabled="editingFulfilledOrder"/)
   assert.match(ordersPageSource, /invoiceStatus: requestedInvoiceStatus/)
 })
@@ -181,7 +183,7 @@ test('revalidates and repairs a stale fulfilled summary before limited save', ()
   assert.equal(ordersPageSource.includes('if (!isFulfilledOrder(latestSummary))'), true)
   assert.equal(ordersPageSource.includes("hasPermission('orders.warehouse_export')"), true)
   assert.equal(ordersPageSource.includes('warehouse_fulfillment_status: latestSummary.warehouse_fulfillment_status'), true)
-  assert.equal(ordersPageSource.includes('expectedRevision: toNumber(persistedOrder.revision)'), true)
+  assert.equal(ordersPageSource.includes('let expectedRevision = toNumber(persistedOrder.revision)'), true)
   assert.equal(ordersPageSource.includes('loadScopedInvoicesForOrders([persistedOrder], true)'), true)
 })
 
@@ -211,4 +213,3 @@ test('fulfilled invoice exception is scoped away from delete lock and duplicate 
   const legacyRule = firestoreRulesSource.slice(legacyStart, legacyEnd)
   assert.match(legacyRule, /fulfilledOrderInvoiceMutationFieldsAllowed\(\)/)
 })
-

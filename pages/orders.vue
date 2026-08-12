@@ -39,6 +39,8 @@ import {
   fulfilledOrderMetadataChanged,
   isFulfilledOrder,
 } from '~/utils/orderFulfilledMetadataEdit.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { priceOnlyItemsChanged } from '~/utils/orderPriceEdit.mjs'
 
 const { db } = useFirebaseServices()
 const { appUser, permissions, hasPermission, isAdmin } = useAuth()
@@ -58,6 +60,7 @@ const {
 } = useScopedQueries()
 const { saveOrderAtomic } = useAtomicOrderSave()
 const { saveFulfilledOrderMetadata } = useFulfilledOrderMetadataSave()
+const { saveOrderPrice } = useOrderPriceSave()
 const { reconcileOrderRelationLocks } = useAtomicOrderRelations()
 const { loadPrintingDependenciesForOrders, loadPrintingProgressForOrder } = useOrderPrintingDeleteGuard()
 const { showToast, withLoading } = useUi()
@@ -763,9 +766,14 @@ async function saveFulfilledMetadataOnly() {
     order_status: form.order_status,
     invoice_status: normalizeInvoiceStatus(form.invoice_status),
   }
+  const candidateTotals = calcItems(buildSaveItems(), form)
+  const candidatePriceChanged = priceOnlyItemsChanged(
+    itemsByOrder.value[currentOrder.id] || [],
+    candidateTotals.items,
+  )
 
   try {
-    if (!fulfilledOrderMetadataChanged(currentMetadata, nextMetadata)) {
+    if (!fulfilledOrderMetadataChanged(currentMetadata, nextMetadata) && !candidatePriceChanged) {
       showToast('Ngày giờ, trạng thái đơn và hóa đơn chưa thay đổi.', 'info')
       return
     }
@@ -800,6 +808,21 @@ async function saveFulfilledMetadataOnly() {
       })
     }
 
+    const nextTotals = calcItems(buildSaveItems(), form)
+    const priceChanged = priceOnlyItemsChanged(persistedItems, nextTotals.items)
+    let expectedRevision = toNumber(persistedOrder.revision)
+    let priceResult: any = null
+    if (priceChanged) {
+      priceResult = await saveOrderPrice({
+        orderId: currentOrder.id,
+        expectedRevision,
+        nextItems: nextTotals.items,
+        orderTotals: nextTotals,
+      })
+      expectedRevision = priceResult.revision
+      commitSucceeded = true
+    }
+
     const persistedInvoiceStatus = normalizeInvoiceStatus(persistedOrder.invoice_status)
     const requestedInvoiceStatus = normalizeInvoiceStatus(form.invoice_status)
     let invoiceMutation: any
@@ -826,15 +849,17 @@ async function saveFulfilledMetadataOnly() {
       }
     }
 
-    await saveFulfilledOrderMetadata({
-      orderId: currentOrder.id,
-      expectedRevision: toNumber(persistedOrder.revision),
-      orderDate: form.order_date,
-      orderStatus: form.order_status,
-      invoiceStatus: requestedInvoiceStatus,
-      invoiceMutation,
-    })
-    commitSucceeded = true
+    if (fulfilledOrderMetadataChanged(currentMetadata, nextMetadata)) {
+      await saveFulfilledOrderMetadata({
+        orderId: currentOrder.id,
+        expectedRevision,
+        orderDate: form.order_date,
+        orderStatus: form.order_status,
+        invoiceStatus: requestedInvoiceStatus,
+        invoiceMutation,
+      })
+      commitSucceeded = true
+    }
 
     invalidateScopedCache('orders')
     if (invoiceMutation) invalidateScopedCache('invoices')
@@ -865,6 +890,9 @@ async function saveFulfilledMetadataOnly() {
     }
 
     showModal.value = false
+    if (priceResult?.invoice_needs_adjustment) {
+      showToast('Đơn giá đã đổi; hóa đơn liên quan chưa tự động cập nhật. Vui lòng rà soát hóa đơn và lập điều chỉnh nếu cần.', 'warning')
+    }
     showToast('Đã cập nhật thông tin cho phép của đơn hàng', 'success')
     if (!synchronized) {
       showToast('Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.', 'warning')
@@ -1548,7 +1576,7 @@ onMounted(loadRows)
 
     <BaseModal
       v-if="showModal"
-      :title="editingFulfilledOrder ? 'Sửa ngày giờ / trạng thái / hóa đơn' : editing ? 'Sửa đơn hàng' : 'Tạo đơn hàng'"
+      :title="editingFulfilledOrder ? 'Sửa đơn giá / ngày giờ / trạng thái / hóa đơn' : editing ? 'Sửa đơn hàng' : 'Tạo đơn hàng'"
       size="xl"
       save-label="Lưu đơn"
       :loading="saving"
@@ -1557,7 +1585,7 @@ onMounted(loadRows)
     >
       <div v-if="editingFulfilledOrder" class="card" style="padding:16px; margin-bottom:16px;">
         <div class="small subtle" style="margin-bottom:12px;">
-          Đơn đã xuất đủ. Hệ thống chỉ cho phép cập nhật ngày giờ, trạng thái đơn và trạng thái hóa đơn; sản phẩm, giá và dữ liệu kho được giữ nguyên.
+          Đơn đã xuất đủ. Hệ thống chỉ cho phép cập nhật đơn giá, ngày giờ, trạng thái đơn và trạng thái hóa đơn; sản phẩm, số lượng và dữ liệu kho được giữ nguyên.
         </div>
         <div class="form-row-3">
           <div class="form-group"><label>Mã đơn</label><input v-model="form.order_code" class="input readonly-field" readonly /></div>
@@ -1570,6 +1598,28 @@ onMounted(loadRows)
               <option v-if="invoiceStatusLocked" value="Đã xuất">Đã xuất</option>
             </select>
             <div v-if="invoiceStatusLocked" class="small subtle">Hóa đơn đã xuất; chỉ người có quyền tại trang Hóa đơn được cập nhật.</div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="editingFulfilledOrder" class="card" style="padding:16px; margin-bottom:16px;">
+        <div class="small subtle" style="margin-bottom:12px;">
+          Có thể sửa đơn giá kể cả khi đơn đã xuất đủ. Sản phẩm, số lượng, logo và dữ liệu kho vẫn được giữ nguyên.
+        </div>
+        <div v-for="(item, index) in formItems" :key="item.id" class="card" style="padding:12px; margin-bottom:10px;">
+          <div class="form-row-3">
+            <div class="form-group"><label>Sản phẩm</label><input :value="`${item.product_code || ''} - ${item.product_name || ''}`" class="input readonly-field" readonly /></div>
+            <div class="form-group"><label>Số lượng</label><input :value="item.quantity" class="input readonly-field" readonly /></div>
+            <template v-if="!item.has_logo">
+              <div class="form-group"><label>Đơn giá</label><input v-model.number="item.unit_price" class="input" type="number" min="0" /></div>
+            </template>
+          </div>
+          <div v-if="item.has_logo" class="logo-items-box">
+            <div v-for="(line, logoIndex) in item.logo_lines" :key="`${item.id}-${logoIndex}`" class="logo-row">
+              <div class="form-group"><label>Logo</label><input :value="line.logo" class="input readonly-field" readonly /></div>
+              <div class="form-group"><label>Số lượng</label><input :value="line.quantity" class="input readonly-field" readonly /></div>
+              <div class="form-group"><label>Đơn giá</label><input v-model.number="line.unit_price" class="input" type="number" min="0" /></div>
+            </div>
           </div>
         </div>
       </div>
