@@ -114,6 +114,19 @@ test('warehouse cost transaction override accepts per-line source warehouses', (
   assert.match(requestReleaseSection, /warehouse: line\.fromWarehouse/)
 })
 
+test('warehouse cost export update loads balance states before restoring and reallocating stock', () => {
+  const updateSection = costTransactions.slice(
+    costTransactions.indexOf('async function updateExportOrder'),
+    costTransactions.indexOf('async function deleteExportOrder'),
+  )
+
+  assert.match(
+    updateSection,
+    /const states = await readBalanceStates\(tx, refs, exportDate\)[\s\S]*await restoreExistingExportToStates\(\{ states, refs, items: oldItems \}\)/,
+  )
+  assert.match(updateSection, /states\.forEach\(state => tx\.set\(state\.ref, balancePayload\(state, operationId, actor\), \{ merge: true \}\)\)/)
+})
+
 test('warehouse cost transaction shortage message includes product warehouse logo and quantities', () => {
   const allocateSection = costTransactions.slice(
     costTransactions.indexOf('function allocateFromState'),
