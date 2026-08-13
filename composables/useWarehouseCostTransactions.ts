@@ -1348,6 +1348,7 @@ export function useWarehouseCostTransactions() {
         const operationSnap = await tx.get(doc(db, 'warehouse_operations', operationId))
         const orderRef = doc(db, 'export_orders', orderId)
         const orderSnap = await tx.get(orderRef)
+        const states = await readBalanceStates(tx, refs, exportDate)
         if (!operationSnap.exists() || operationSnap.data()?.status !== 'processing') throw new Error('Operation sửa phiếu xuất không hợp lệ.')
         if (!orderSnap.exists()) throw new Error('Phiếu xuất không còn tồn tại.')
         const current = orderSnap.data() || {}
