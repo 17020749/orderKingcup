@@ -17,6 +17,13 @@ const selectedSaleKey = ref('all')
 const selectedClassification = ref('all')
 const saleSearch = ref('')
 const salesSort = ref('revenue_desc')
+const dateTimeFrom = ref('')
+const dateTimeTo = ref('')
+
+const dashboardTimeRange = computed(() => ({
+  from: dateTimeFrom.value,
+  to: dateTimeTo.value,
+}))
 
 const emptyMetrics = {
   orders: 0,
@@ -152,7 +159,7 @@ const filteredSalesRows = computed(() => {
 async function loadDashboard(force = false) {
   loading.value = true
   try {
-    dashboard.value = await loadDashboardSnapshot(force)
+    dashboard.value = await loadDashboardSnapshot(force, dashboardTimeRange.value)
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được dữ liệu dashboard.'), 'error')
   } finally {
@@ -236,6 +243,24 @@ function clearBusinessFilters() {
   selectedClassification.value = 'all'
   saleSearch.value = ''
   salesSort.value = 'revenue_desc'
+  dateTimeFrom.value = ''
+  dateTimeTo.value = ''
+  selectedPeriod.value = 'month'
+}
+
+function onPeriodChanged() {
+  if (selectedPeriod.value === 'custom') return
+  dateTimeFrom.value = ''
+  dateTimeTo.value = ''
+}
+
+function applyDateTimeRange() {
+  if (!dateTimeFrom.value && !dateTimeTo.value) {
+    selectedPeriod.value = 'month'
+    return
+  }
+  selectedPeriod.value = 'custom'
+  loadDashboard()
 }
 
 onMounted(() => loadDashboard())
@@ -270,9 +295,17 @@ onMounted(() => loadDashboard())
         <div class="business-filters">
           <label>
             <span>Thời gian</span>
-            <select v-model="selectedPeriod" class="select">
+            <select v-model="selectedPeriod" class="select" @change="onPeriodChanged">
               <option v-for="period in DASHBOARD_PERIODS" :key="period.key" :value="period.key">{{ period.label }}</option>
             </select>
+          </label>
+          <label>
+            <span>Từ ngày giờ</span>
+            <input v-model="dateTimeFrom" class="input" type="datetime-local" @change="applyDateTimeRange" />
+          </label>
+          <label>
+            <span>Đến ngày giờ</span>
+            <input v-model="dateTimeTo" class="input" type="datetime-local" @change="applyDateTimeRange" />
           </label>
           <label>
             <span>Nhân sự / Sale</span>

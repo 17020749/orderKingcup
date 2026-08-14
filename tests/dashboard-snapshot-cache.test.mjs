@@ -147,6 +147,21 @@ test('dashboard builds period KPIs, sale KPIs and product profitability', () => 
   assert.equal(month.productProfit[0].profit, 150)
 })
 
+test('dashboard builds an inclusive custom date-time period for business KPIs', () => {
+  const snapshot = buildDashboardSnapshot({
+    now: '2026-07-04T12:00:00+07:00',
+    customRange: { from: '2026-07-02T09:00:00+07:00', to: '2026-07-02T11:00:00+07:00' },
+    orders: [{ id: 'inside', actual_revenue: 500, order_date: '2026-07-02T10:00:00+07:00', active: true }],
+    customers: [], products: [], requests: [], payments: [], items: [], shipments: [], printOrders: [], printItems: [],
+    computePaymentStatus: paymentStatus,
+    isActive: active,
+    toNumber: number,
+  })
+
+  assert.equal(snapshot.periods.custom.stats.orders, 1)
+  assert.equal(snapshot.periods.custom.stats.revenue, 500)
+})
+
 test('dashboard derives order pipeline, production stages, design gaps and automatic alerts', () => {
   const snapshot = buildFixture()
 
@@ -192,11 +207,11 @@ test('dashboard scopes printing reads and only forces Firestore on manual refres
   const source = read('composables/useDashboardSnapshot.ts')
   assert.match(source, /authorizationCacheKey/)
   assert.match(source, /namespace:\s*DASHBOARD_CACHE_NAMESPACE/)
-  assert.match(source, /params:\s*\{ schema: 3 \}/)
+  assert.match(source, /params:\s*\{ schema: 4, \.\.\.range \}/)
   assert.match(source, /tags:\s*DASHBOARD_CACHE_TAGS/)
   assert.match(source, /policy:\s*QUERY_CACHE_POLICIES\.dashboardSnapshot/)
-  assert.match(source, /fetchSnapshot\(forceSources = false\)/)
-  assert.match(source, /fetcher:\s*\(\) => fetchSnapshot\(force\)/)
+  assert.match(source, /fetchSnapshot\(forceSources = false, customRange/)
+  assert.match(source, /fetcher:\s*\(\) => fetchSnapshot\(force, range\)/)
   assert.match(source, /loadScopedOrders\(forceSources\)/)
   assert.match(source, /loadScopedPayments\(orders, forceSources\)/)
   assert.match(source, /loadScopedOrderItems\(orders, forceSources\)/)
@@ -223,9 +238,10 @@ test('printing dependency loader avoids an unbounded print item scan', () => {
 test('dashboard page uses cached snapshot, period views and refresh button bypasses cache', () => {
   const source = read('pages/dashboard.vue')
   assert.match(source, /useDashboardSnapshot\(\)/)
-  assert.match(source, /loadDashboardSnapshot\(force\)/)
+  assert.match(source, /loadDashboardSnapshot\(force, dashboardTimeRange\.value\)/)
   assert.match(source, /@click="loadDashboard\(true\)"/)
   assert.match(source, /selectedPeriod/)
+  assert.equal((source.match(/type="datetime-local"/g) || []).length, 2)
   assert.match(source, /dashboard\.pipeline/)
   assert.match(source, /dashboard\.productionStages/)
   assert.match(source, /dashboard\.alerts/)
