@@ -76,6 +76,8 @@ const detailTab = ref<'lots' | 'movements'>('movements')
 
 const adjustmentForm = reactive({
   quantity: 0,
+  unit_cost: 0,
+  vat_rate: 0,
   reason: '',
   note: '',
   operation_id: makeId('op_inventory_adjust'),
@@ -127,6 +129,10 @@ function roundQuantity(value: any) {
   return Math.round(toNumber(value) * 1000) / 1000
 }
 
+function roundMoney(value: any) {
+  return Math.round(toNumber(value) * 1000) / 1000
+}
+
 function isActiveRecord(row: any) {
   return row?.deleted !== true
     && row?.active !== false
@@ -145,7 +151,7 @@ function lotHasValidInboundOrigin(lot: any) {
       || (itemId && activeImportItemIds.value.has(itemId)),
     )
   }
-  return ['warehouse_transfer', 'legacy_opening'].includes(source)
+  return ['warehouse_transfer', 'inventory_adjustment', 'legacy_opening'].includes(source)
 }
 
 function balanceHasInboundOrigin(row: any) {
@@ -213,16 +219,16 @@ function lotDetailsForRow(row: any): InventoryLotDetailRow[] {
       const costItem = costItemId ? importItemById.value.get(costItemId) : undefined
       const importOrderId = String(lot.import_order_id || costItem?.import_order_id || '')
       const importOrder = importOrderId ? importOrderById.value.get(importOrderId) : undefined
+      const costSource = costItem || lot
       const hasCost = canViewCost.value
-        && Boolean(costItem)
-        && (Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost_with_vat')
-          || Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost'))
-      const baseUnitCost = toNumber((costItem as any)?.unit_cost)
-      const itemVatRate = Math.max(0, Math.min(100, toNumber((costItem as any)?.vat_rate ?? (costItem as any)?.vat_percent)))
+        && (Object.prototype.hasOwnProperty.call(costSource || {}, 'unit_cost_with_vat')
+          || Object.prototype.hasOwnProperty.call(costSource || {}, 'unit_cost'))
+      const baseUnitCost = toNumber((costSource as any)?.unit_cost)
+      const itemVatRate = Math.max(0, Math.min(100, toNumber((costSource as any)?.vat_rate ?? (costSource as any)?.vat_percent)))
       const unitCost = hasCost
-        ? Object.prototype.hasOwnProperty.call(costItem || {}, 'unit_cost_with_vat')
-          ? toNumber((costItem as any).unit_cost_with_vat)
-          : Math.round(baseUnitCost * (1 + itemVatRate / 100) * 100) / 100
+        ? Object.prototype.hasOwnProperty.call(costSource || {}, 'unit_cost_with_vat')
+          ? roundMoney((costSource as any).unit_cost_with_vat)
+          : roundMoney(baseUnitCost * (1 + itemVatRate / 100))
         : null
       const availableQuantity = roundQuantity(lot.available_quantity)
 
@@ -237,7 +243,7 @@ function lotDetailsForRow(row: any): InventoryLotDetailRow[] {
         unit_cost: unitCost,
         remaining_value: unitCost === null
           ? null
-          : Math.round(availableQuantity * unitCost * 100) / 100,
+          : roundMoney(availableQuantity * unitCost),
         source: String(lot.source || ''),
         source_label: sourceLabel(lot.source),
         source_lot_id: String(lot.source_lot_id || ''),
@@ -256,10 +262,10 @@ function lotCount(row: any) {
 }
 
 function lotValueForRow(row: any) {
-  return lotDetailsForRow(row).reduce(
+  return roundMoney(lotDetailsForRow(row).reduce(
     (sum, lot) => sum + (lot.remaining_value === null ? 0 : lot.remaining_value),
     0,
-  )
+  ))
 }
 
 const auditRows = computed<InventoryAuditRow[]>(() => {
@@ -485,7 +491,7 @@ function currencyText(value: any) {
   return toNumber(value).toLocaleString('vi-VN', {
     style: 'currency',
     currency: 'VND',
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 3,
   })
 }
 
@@ -581,6 +587,8 @@ function openAdjustment(row: InventoryAuditRow) {
   adjustmentTarget.value = row
   Object.assign(adjustmentForm, {
     quantity: roundQuantity(row.quantity),
+    unit_cost: 0,
+    vat_rate: 0,
     reason: '',
     note: '',
     operation_id: makeId('op_inventory_adjust'),
@@ -622,6 +630,9 @@ async function saveAdjustment() {
   if (nextQuantity < 0) return showToast('Số lượng tồn mới không được âm.', 'error')
   if (Math.abs(delta) < 0.0001) return showToast('Số lượng tồn mới chưa thay đổi.', 'error')
   if (!reason) return showToast('Vui lòng nhập lý do điều chỉnh.', 'error')
+  if (delta > 0 && toNumber(adjustmentForm.unit_cost) <= 0) {
+    return showToast('Điều chỉnh tăng cần nhập giá chưa VAT lớn hơn 0.', 'error')
+  }
 
   savingAdjustment.value = true
   try {
@@ -638,6 +649,8 @@ async function saveAdjustment() {
       logo: row.logo || '',
       quantity: delta,
       unit: row.unit || '',
+      unit_cost: delta > 0 ? roundMoney(adjustmentForm.unit_cost) : 0,
+      vat_rate: delta > 0 ? toNumber(adjustmentForm.vat_rate) : 0,
       reason,
       note: noteParts.join('\n'),
       operation_id: adjustmentForm.operation_id,
@@ -832,6 +845,17 @@ onMounted(() => loadRows())
               {{ adjustmentDelta > 0 ? '+' : '' }}{{ quantityText(adjustmentDelta) }} {{ adjustmentTarget.unit || '' }}
             </span>
           </div>
+        </div>
+      </div>
+
+      <div v-if="adjustmentDelta > 0" class="form-grid">
+        <div class="form-group">
+          <label>Giá chưa VAT của phần tăng</label>
+          <input v-model.number="adjustmentForm.unit_cost" class="input" type="number" min="0" step="0.001" placeholder="Bắt buộc khi tăng tồn" />
+        </div>
+        <div class="form-group">
+          <label>VAT (%)</label>
+          <input v-model.number="adjustmentForm.vat_rate" class="input" type="number" min="0" max="100" step="0.001" />
         </div>
       </div>
 

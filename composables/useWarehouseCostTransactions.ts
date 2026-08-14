@@ -188,13 +188,13 @@ function positiveQuantity(value: any, label = 'Số lượng') {
 }
 
 function nonNegativeCost(value: any) {
-  const cost = Math.round(toNumber(value) * 100) / 100
+  const cost = Math.round(toNumber(value) * 1000) / 1000
   if (cost < 0) throw new Error('Giá nhập không được âm.')
   return cost
 }
 
 function roundMoney(value: any) {
-  return Math.round(toNumber(value) * 100) / 100
+  return Math.round(toNumber(value) * 1000) / 1000
 }
 
 function importCostFields(line: any, quantity: number) {
@@ -2208,6 +2208,10 @@ export function useWarehouseCostTransactions() {
     const id = makeId('adj')
     const operationId = operationIdOf(input.operation_id, `inventory_adjust:${id}`)
     const setting = await loadIssueSetting()
+    const adjustmentCost = quantity > 0 ? importCostFields(input, quantity) : null
+    if (quantity > 0 && adjustmentCost!.unitCost <= 0) {
+      throw new Error('Điều chỉnh tăng cần có giá nhập lớn hơn 0 để cập nhật giá trị tồn.')
+    }
     const balanceKey = await inventoryBalanceId(product.id, warehouse.id, input.logo)
     const refs = new Map([[balanceKey, { id: balanceKey, ref: doc(db, 'inventory_balances', balanceKey), product, warehouse, logo: normalizeLogo(input.logo) }]])
     const replay = await claimOperation({ operationId, action: 'inventory_adjust', targetCollection: 'inventory_adjustments', targetId: id, actor })
@@ -2234,6 +2238,11 @@ export function useWarehouseCostTransactions() {
             received_quantity: quantity,
             available_quantity: quantity,
             cost_item_id: '',
+            unit_cost: adjustmentCost!.unitCost,
+            vat_rate: adjustmentCost!.vatRate,
+            vat_percent: adjustmentCost!.vatRate,
+            unit_cost_with_vat: adjustmentCost!.unitCostWithVat,
+            line_cost: adjustmentCost!.lineCost,
             source: 'inventory_adjustment',
             status: 'available',
           })
@@ -2252,6 +2261,11 @@ export function useWarehouseCostTransactions() {
           logo: normalizeLogo(input.logo),
           quantity,
           unit: input.unit || product.unit || '',
+          unit_cost: adjustmentCost?.unitCost ?? null,
+          vat_rate: adjustmentCost?.vatRate ?? null,
+          vat_percent: adjustmentCost?.vatRate ?? null,
+          unit_cost_with_vat: adjustmentCost?.unitCostWithVat ?? null,
+          line_cost: adjustmentCost?.lineCost ?? null,
           lot_allocations_json: JSON.stringify(allocations),
           allocation_strategy: quantity < 0 ? setting.strategy : 'adjustment_lot',
           reason: input.reason || '',

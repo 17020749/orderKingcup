@@ -178,7 +178,7 @@ function signedNumber(value: any) {
 }
 
 function roundMoney(value: any) {
-  return Math.round(toNumber(value) * 100) / 100
+  return Math.round(toNumber(value) * 1000) / 1000
 }
 
 function importCostFields(line: any, quantity: number) {

@@ -57,7 +57,10 @@ test('lot engine supports configured issue policies', () => {
 
 test('export transaction stores only lot references and quantities', () => {
   assert.match(transactions, /lot_allocations_json/)
-  const exportSection = transactions.slice(transactions.indexOf('async function createExportOrder'))
+  const exportSection = transactions.slice(
+    transactions.indexOf('async function createExportOrder'),
+    transactions.indexOf('async function createInventoryAdjustment'),
+  )
   assert.doesNotMatch(exportSection, /unit_cost\s*:/)
   assert.doesNotMatch(exportSection, /line_cost\s*:/)
 })
@@ -125,7 +128,7 @@ test('inventory cost details require import.view and join prices only in the vie
   assert.match(inventoryPage, /loadImportOrderItems\(force\)/)
   assert.match(inventoryPage, /Các lô giá/)
   assert.match(inventoryPage, /Giá trị còn lại/)
-  assert.match(inventoryPage, /costItem as any\)\.unit_cost/)
+  assert.match(inventoryPage, /const costSource = costItem \|\| lot/)
 })
 
 test('warehouse users can load inventory without reading priced import documents', () => {
@@ -135,6 +138,16 @@ test('warehouse users can load inventory without reading priced import documents
   assert.ok(guardedLoadIndex >= 0)
   assert.ok(importLoadIndex > guardedLoadIndex)
   assert.ok(importItemLoadIndex > guardedLoadIndex)
+})
+
+test('positive inventory adjustments retain VAT-inclusive cost on their lots', () => {
+  const adjustmentSection = transactions.slice(transactions.indexOf('async function createInventoryAdjustment'))
+  assert.match(adjustmentSection, /const adjustmentCost = quantity > 0 \? importCostFields\(input, quantity\) : null/)
+  assert.match(adjustmentSection, /unit_cost_with_vat: adjustmentCost!\.unitCostWithVat/)
+  assert.match(adjustmentSection, /line_cost: adjustmentCost!\.lineCost/)
+  assert.match(inventoryPage, /\['warehouse_transfer', 'inventory_adjustment', 'legacy_opening'\]/)
+  assert.match(inventoryPage, /const costSource = costItem \|\| lot/)
+  assert.match(inventoryPage, /unit_cost: delta > 0 \? roundMoney\(adjustmentForm\.unit_cost\) : 0/)
 })
 
 test('order logo color is saved as metadata and shown beside logo', () => {
