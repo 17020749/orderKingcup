@@ -19,6 +19,7 @@ import {
 const projectId = 'demo-orderkingcup-warehouse-cost-rules'
 const WAREHOUSE = 'warehouse-cost@example.com'
 const IMPORTER = 'import-cost@example.com'
+const INVENTORY_VIEWER = 'inventory-viewer@example.com'
 const ADMIN = 'admin-cost@example.com'
 let env
 
@@ -47,6 +48,12 @@ async function seed() {
         active: true,
         deleted: false,
         permissions_flat: ['import.view', 'import.create', 'import.edit', 'import.delete'],
+      }),
+      setDoc(doc(db, 'users', INVENTORY_VIEWER), {
+        email: INVENTORY_VIEWER,
+        active: true,
+        deleted: false,
+        permissions_flat: ['inventory.view'],
       }),
       setDoc(doc(db, 'users', ADMIN), {
         email: ADMIN,
@@ -149,11 +156,30 @@ after(async () => {
   await env.cleanup()
 })
 
-test('Kho không đọc được chi tiết phiếu nhập có giá vốn', async () => {
+test('Người điều chỉnh tồn đọc được giá nguồn để phân bổ theo lô', async () => {
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const snapshot = await assertSucceeds(getDoc(doc(db, 'import_order_items', 'import-priced__1')))
+  assert.equal(snapshot.data()?.unit_cost, 2500)
+})
+
+test('Người chỉ xem tồn không đọc được giá nguồn', async () => {
+  const db = env.authenticatedContext(INVENTORY_VIEWER, { email: INVENTORY_VIEWER }).firestore()
   await assertFails(getDoc(doc(db, 'import_order_items', 'import-priced__1')))
 })
 
+test('Người điều chỉnh tồn tạo được giá vốn lô theo schema bảo vệ', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  await assertSucceeds(setDoc(doc(db, 'inventory_lot_costs', 'adjustment-lot-1'), {
+    id: 'adjustment-lot-1', product_id: 'product-a', warehouse_id: 'warehouse-a', logo: '',
+    unit_cost: 100.123, vat_rate: 10, vat_percent: 10, unit_cost_with_vat: 110.135, line_cost: 1101.35,
+    source_collection: 'inventory_adjustments', source_doc_id: 'adjustment-1', created_by: WAREHOUSE,
+    active: true, deleted: false,
+  }))
+  await assertSucceeds(setDoc(doc(db, 'inventory_adjustment_costs', 'adjustment-1'), {
+    id: 'adjustment-1', adjustment_id: 'adjustment-1', allocation_mode: 'increase', lot_allocations_json: '[]',
+    total_cost: 1101.35, created_by: WAREHOUSE, active: true, deleted: false,
+  }))
+})
 test('Người có quyền nhập kho đọc được giá của phiếu nhập', async () => {
   const db = env.authenticatedContext(IMPORTER, { email: IMPORTER }).firestore()
   const snapshot = await assertSucceeds(getDoc(doc(db, 'import_order_items', 'import-priced__1')))
