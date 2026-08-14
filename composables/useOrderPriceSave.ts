@@ -1,8 +1,10 @@
 import {
   collection,
   doc,
+  query,
   runTransaction,
   serverTimestamp,
+  where,
 } from 'firebase/firestore'
 import { normalizeEmail, round2, toNumber } from '~/utils/format'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
@@ -13,6 +15,8 @@ import {
   pricePatchForItem,
 } from '~/utils/orderPriceEdit.mjs'
 import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
+// @ts-ignore Shared ESM helper is executed directly by Node client tests.
+import { isActiveOrderRelation } from '~/utils/orderRelationState.mjs'
 
 type OrderPriceSaveInput = {
   orderId: string
@@ -92,6 +96,10 @@ export function useOrderPriceSave() {
       }
 
       const itemSnapshots = await Promise.all(itemRefs.map(itemRef => transaction.get(itemRef)))
+      const invoiceSnapshot = await transaction.get(query(
+        collection(db, 'invoices'),
+        where('order_id', '==', orderId),
+      ))
       const currentItems = itemSnapshots.map((snapshot, index) => {
         if (!snapshot.exists()) throw new Error(`Không tìm thấy dòng sản phẩm ${input.nextItems[index]?.id || ''}.`)
         const item = { ...snapshot.data(), id: snapshot.id }
@@ -117,7 +125,9 @@ export function useOrderPriceSave() {
       const priceRevision = toNumber(current.price_revision) + 1
       const updatedAt = serverTimestamp()
       const invoiceStatus = String(current.invoice_status || 'Không xuất')
-      const invoiceNeedsAdjustment = toNumber(current.invoice_record_count) > 0
+      const activeInvoices = invoiceSnapshot.docs
+        .map(snapshot => ({ ...snapshot.data(), id: snapshot.id, ref: snapshot.ref }))
+        .filter(isActiveOrderRelation)
 
       input.nextItems.forEach(next => {
         const currentItem = currentById.get(String(next.id || next.firestore_id || ''))!
@@ -125,6 +135,15 @@ export function useOrderPriceSave() {
           ...pricePatchForItem(currentItem, next),
           order_revision: revision,
           price_revision: priceRevision,
+          last_operation_id: operationId,
+          updated_at: updatedAt,
+        })
+      })
+
+      activeInvoices.forEach(invoice => {
+        if (toNumber(invoice.invoice_amount) === payableAmount) return
+        transaction.update(invoice.ref, {
+          invoice_amount: payableAmount,
           last_operation_id: operationId,
           updated_at: updatedAt,
         })
@@ -172,7 +191,7 @@ export function useOrderPriceSave() {
           actual_revenue: actualRevenue,
           payable_amount: payableAmount,
           debt_amount: debtAmount,
-          invoice_needs_adjustment: invoiceNeedsAdjustment,
+          synchronized_invoice_count: activeInvoices.length,
         }),
         operation_id: operationId,
         order_revision: revision,
@@ -186,7 +205,7 @@ export function useOrderPriceSave() {
         price_revision: priceRevision,
         last_operation_id: operationId,
         invoice_status: invoiceStatus,
-        invoice_needs_adjustment: invoiceNeedsAdjustment,
+        invoice_needs_adjustment: false,
       }
     })
 

@@ -891,9 +891,7 @@ async function saveFulfilledMetadataOnly() {
     }
 
     showModal.value = false
-    if (priceResult?.invoice_needs_adjustment) {
-      showToast('Đơn giá đã đổi; hóa đơn liên quan chưa tự động cập nhật. Vui lòng rà soát hóa đơn và lập điều chỉnh nếu cần.', 'warning')
-    }
+
     showToast('Đã cập nhật thông tin cho phép của đơn hàng', 'success')
     if (!synchronized) {
       showToast('Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.', 'warning')

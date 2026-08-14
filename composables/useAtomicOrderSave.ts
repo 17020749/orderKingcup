@@ -1,8 +1,10 @@
 import {
   collection,
   doc,
+  query,
   runTransaction,
   serverTimestamp,
+  where,
 } from 'firebase/firestore'
 import type { OrderItemDoc } from '~/types/models'
 import { buildOrderCode, ORDER_SEQUENCE_START } from '~/utils/orderCode'
@@ -154,6 +156,9 @@ export function useAtomicOrderSave() {
       })
         ? await transaction.get(invoiceRef)
         : null
+      const activeInvoiceSnapshot = input.mode === 'edit'
+        ? await transaction.get(query(collection(db, 'invoices'), where('order_id', '==', input.orderId)))
+        : null
       const effectiveOwnership = resolveOrderOwnershipForSave({
         mode: input.mode,
         persistedOrder: existingOrder,
@@ -299,6 +304,10 @@ export function useAtomicOrderSave() {
       const finalOrderPayload = input.mode === 'edit'
         ? preservePersistedOrderIdentityForEdit(candidateFinalOrderPayload, existingOrder)
         : candidateFinalOrderPayload
+      const invoiceAmount = Math.max(0, toNumber(finalOrderPayload.payable_amount))
+      const activeInvoices = (activeInvoiceSnapshot?.docs || [])
+        .map(snapshot => ({ ...snapshot.data(), id: snapshot.id, ref: snapshot.ref }))
+        .filter(isActiveOrderRelation)
 
       if (input.mode === 'create') {
         transaction.set(sequenceRef, {
@@ -322,7 +331,7 @@ export function useAtomicOrderSave() {
           order_code: orderCode,
           invoice_number: '',
           invoice_date: '',
-          invoice_amount: Math.max(0, toNumber(finalOrderPayload.payable_amount)),
+          invoice_amount: invoiceAmount,
           invoice_status: requestedInvoiceStatus,
           created_by: actor,
           order_owner_email: effectiveOwnership.ownerEmail,
@@ -339,11 +348,21 @@ export function useAtomicOrderSave() {
       } else if (invoiceMutation?.mode === 'status_update' && invoiceRef && existingInvoice) {
         transaction.update(invoiceRef, {
           invoice_status: requestedInvoiceStatus,
+          invoice_amount: invoiceAmount,
           relation_revision: toNumber(existingInvoice.relation_revision) + 1,
           last_operation_id: operationId,
           updated_at: serverTimestamp(),
         })
       }
+      const statusUpdatedInvoiceId = invoiceMutation?.mode === 'status_update' ? invoiceMutation.invoiceId : ''
+      activeInvoices.forEach(invoice => {
+        if (invoice.id === statusUpdatedInvoiceId || toNumber(invoice.invoice_amount) === invoiceAmount) return
+        transaction.update(invoice.ref, {
+          invoice_amount: invoiceAmount,
+          last_operation_id: operationId,
+          updated_at: serverTimestamp(),
+        })
+      })
 
       const localItems = itemPlan.upsertItems.map(item => {
         const itemPayload = {

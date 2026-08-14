@@ -1598,11 +1598,12 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && childIdentityUnchanged()
         && childOwnershipSafe(orderId)
         && onlyChanged([
-          'invoice_status', 'relation_revision', 'last_operation_id', 'updated_at'
+          'invoice_status', 'invoice_amount', 'relation_revision', 'last_operation_id', 'updated_at'
         ])
         && saleMutableInvoiceStatusValue(resource.data.get('invoice_status', ''))
         && saleInvoiceStatusValue(request.resource.data.get('invoice_status', ''))
         && request.resource.data.get('invoice_status', '') != resource.data.get('invoice_status', '')
+        && request.resource.data.get('invoice_amount', -1) == after.get('payable_amount', -2)
         && request.resource.data.get('relation_revision', -1) == resource.data.get('relation_revision', 0) + 1
         && request.resource.data.get('relation_revision', -1) == after.get('invoice_relation_revision', -2)
         && validBoundedString(request.resource.data.get('last_operation_id', ''), 1, 200)
@@ -1612,6 +1613,30 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && relationParentMarkerMatches(orderId, 'invoices', 'update', invoiceId, 'invoice_relation_revision');
     }
 
+    function saleInvoiceAmountUpdateAllowed() {
+      let orderId = resource.data.get('order_id', '');
+      let path = orderPath(orderId);
+      let order = get(path).data;
+      let after = getAfter(path).data;
+      return hasPerm('orders.edit')
+        && orderId is string
+        && orderId != ''
+        && exists(path)
+        && existsAfter(path)
+        && orderDataIsActive(order)
+        && (ownsOrderData(order) || hasPerm('orders.view_all') || isAdmin())
+        && request.resource.data.get('order_id', '') == orderId
+        && childIdentityUnchanged()
+        && childOwnershipSafe(orderId)
+        && onlyChanged(['invoice_amount', 'last_operation_id', 'updated_at'])
+        && request.resource.data.get('invoice_amount', -1) is number
+        && request.resource.data.get('invoice_amount', -1) >= 0
+        && request.resource.data.get('invoice_amount', -1) == after.get('payable_amount', -2)
+        && after.get('revision', -1) == order.get('revision', 0) + 1
+        && validBoundedString(request.resource.data.get('last_operation_id', ''), 1, 200)
+        && request.resource.data.get('last_operation_id', '') == after.get('last_operation_id', '')
+        && request.resource.data.get('updated_at', null) == request.time;
+    }
     function orderEditKeepsNonInvoiceSystemFields() {
       return unchanged([
           'paid_amount', 'debt_amount', 'computed_payment_status', 'payment_status',
@@ -3269,7 +3294,7 @@ hasAnyPerm([
             )
             : (
               invoiceRequestOrderRevisionAdvanced()
-                ? saleInvoiceStatusUpdateAllowed(docId)
+                ? (saleInvoiceStatusUpdateAllowed(docId) || saleInvoiceAmountUpdateAllowed())
                 : (
                   hasPerm('invoices.view_all')
                   && relationExistingChildBase(resource.data.order_id, 'invoices.view_all')
