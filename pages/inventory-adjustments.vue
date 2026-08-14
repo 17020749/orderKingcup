@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { doc, getDoc } from 'firebase/firestore';
 import type {
   InventoryAdjustmentDoc,
   ProductDoc,
@@ -15,7 +16,8 @@ import { reportFirebaseError } from "~/utils/firebaseErrors";
 
 const { loadInventoryAdjustmentsPage, loadWarehouses, loadProducts } =
   useScopedQueries();
-const { createInventoryAdjustment } = useWarehouseTransactions();
+const { createInventoryAdjustment, readInventoryBalance } = useWarehouseTransactions();
+const { db } = useFirebaseServices();
 const { hasPermission } = useAuth();
 const { showToast } = useUi();
 
@@ -38,6 +40,8 @@ const products = ref<ProductDoc[]>([]);
 const selected = ref<InventoryAdjustmentDoc | null>(null);
 const showDetailModal = ref(false);
 const showCreateModal = ref(false);
+const adjustmentLots = ref<any[]>([]);
+const adjustmentLotCosts = ref<Record<string, any>>({});
 
 const filterValues = computed(() => ({ warehouse: warehouseFilter.value, from: dateFrom.value, to: dateTo.value, quantity: quantityTypeFilter.value, product: productFilter.value }));
 const toolbarFilters = computed(() => [
@@ -65,6 +69,10 @@ const form = reactive({
   reason: "",
   note: "",
   operation_id: makeId("op_inventory_adjust"),
+  unit_cost: 0,
+  vat_rate: 0,
+  allocation_mode: "automatic",
+  lot_allocations: [] as Array<{ lot_id: string; quantity: number }>,
 });
 
 const canAdjust = computed(
@@ -148,7 +156,16 @@ function findWarehouse(id: string) {
 }
 
 function quantityText(value: any) {
-  return toNumber(value).toLocaleString("vi-VN");
+  return toNumber(value).toLocaleString("vi-VN", { maximumFractionDigits: 3 });
+}
+function lotCostText(lot: any) {
+  const source = adjustmentLotCosts.value[String(lot.cost_item_id || lot.import_order_item_id || lot.cost_lot_id || '')];
+  if (!source) return 'Thiếu giá';
+  const vatRate = Math.max(0, Math.min(100, toNumber(source.vat_rate ?? source.vat_percent)));
+  const withVat = Object.prototype.hasOwnProperty.call(source, 'unit_cost_with_vat')
+    ? toNumber(source.unit_cost_with_vat)
+    : toNumber(source.unit_cost) * (1 + vatRate / 100);
+  return withVat.toLocaleString('vi-VN', { maximumFractionDigits: 3 }) + ' (VAT ' + vatRate.toLocaleString('vi-VN', { maximumFractionDigits: 3 }) + '%)';
 }
 
 function openDetail(row: InventoryAdjustmentDoc) {
@@ -167,10 +184,34 @@ function openCreateModal() {
     reason: "",
     note: "",
     operation_id: makeId("op_inventory_adjust"),
+    unit_cost: 0,
+    vat_rate: 0,
+    allocation_mode: "automatic",
+    lot_allocations: [],
   });
   showCreateModal.value = true;
 }
 
+async function loadAdjustmentLots() {
+  if (!form.product_id || !form.warehouse_id) return showToast("Chọn sản phẩm và kho trước khi tải lô.", "error");
+  const balance = await readInventoryBalance(form.product_id, form.warehouse_id, form.logo);
+  const lots = Array.isArray((balance as any)?.lots) ? (balance as any).lots.filter((lot: any) => toNumber(lot.available_quantity) > 0) : [];
+  const costIds = [...new Set(lots.map((lot: any) => String(lot.cost_item_id || lot.import_order_item_id || lot.cost_lot_id || '')).filter(Boolean))];
+  const snapshots = await Promise.all(costIds.map(async costId => {
+    const importCost = await getDoc(doc(db, 'import_order_items', costId));
+    if (importCost.exists()) return { id: costId, ...importCost.data() };
+    const adjustmentCost = await getDoc(doc(db, 'inventory_lot_costs', costId));
+    return adjustmentCost.exists() ? { id: costId, ...adjustmentCost.data() } : null;
+  }));
+  adjustmentLotCosts.value = Object.fromEntries(snapshots.filter(Boolean).map((row: any) => [row.id, row]));
+  adjustmentLots.value = lots;
+}
+function setLotQuantity(lotId: string, quantity: any) {
+  const next = toNumber(quantity); const index = form.lot_allocations.findIndex(row => row.lot_id === lotId);
+  if (next <= 0) { if (index >= 0) form.lot_allocations.splice(index, 1); return; }
+  if (index >= 0) form.lot_allocations[index].quantity = next;
+  else form.lot_allocations.push({ lot_id: lotId, quantity: next });
+}
 function onProductChanged() {
   const product = findProduct(form.product_id);
   if (product && !form.unit) form.unit = product.unit || "";
@@ -179,6 +220,7 @@ function onProductChanged() {
 async function saveAdjustment() {
   if (!form.product_id) return showToast("Vui lòng chọn sản phẩm.", "error");
   if (!form.warehouse_id) return showToast("Vui lòng chọn kho.", "error");
+  if (toNumber(form.quantity) > 0 && toNumber(form.unit_cost) <= 0) return showToast("Vui lòng nhập giá chưa VAT lớn hơn 0.", "error");
   if (toNumber(form.quantity) === 0)
     return showToast(
       "Số lượng điều chỉnh phải khác 0. Dùng số âm để giảm tồn.",
@@ -197,6 +239,10 @@ async function saveAdjustment() {
       reason: form.reason,
       note: form.note,
       operation_id: form.operation_id,
+      unit_cost: form.unit_cost,
+      vat_rate: form.vat_rate,
+      allocation_mode: form.allocation_mode,
+      lot_allocations: form.lot_allocations,
     });
     showCreateModal.value = false;
     showToast(`Đã tạo điều chỉnh tồn ${result.id}.`, "success");
@@ -420,6 +466,16 @@ onMounted(() => loadRows());
             placeholder="Dùng số âm để giảm tồn"
           />
         </div>
+      </div>
+      <div v-if="toNumber(form.quantity) > 0" class="form-grid">
+        <div class="form-group"><label>Giá chưa VAT</label><input v-model.number="form.unit_cost" class="input" type="number" min="0" step="0.001" /></div>
+        <div class="form-group"><label>VAT (%)</label><input v-model.number="form.vat_rate" class="input" type="number" min="0" max="100" step="0.001" /></div>
+        <div class="form-group"><label>Giá có VAT</label><div style="padding-top:9px"><b>{{ (toNumber(form.unit_cost) * (1 + toNumber(form.vat_rate) / 100)).toLocaleString('vi-VN', { maximumFractionDigits: 3 }) }}</b></div></div>
+      </div>
+      <div v-if="toNumber(form.quantity) < 0" class="form-group">
+        <label>Cách chọn lô</label><select v-model="form.allocation_mode" class="select"><option value="automatic">Tự phân bổ theo cấu hình kho</option><option value="manual">Chọn lô thủ công</option></select>
+        <button v-if="form.allocation_mode === 'manual'" type="button" class="btn" style="margin-top:8px" @click="loadAdjustmentLots">Tải lô còn hàng</button>
+        <div v-if="form.allocation_mode === 'manual' && adjustmentLots.length" class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Lô</th><th>Tồn</th><th>Giá có VAT</th><th>Lấy giảm</th></tr></thead><tbody><tr v-for="lot in adjustmentLots" :key="lot.id"><td>{{ lot.import_code || lot.id }}</td><td>{{ quantityText(lot.available_quantity) }}</td><td>{{ lotCostText(lot) }}</td><td><input class="input" type="number" min="0" :max="lot.available_quantity" step="0.001" :value="form.lot_allocations.find(row => row.lot_id === lot.id)?.quantity || ''" @input="setLotQuantity(lot.id, ($event.target as HTMLInputElement).value)" /></td></tr></tbody></table></div>
       </div>
       <div class="form-group">
         <label>Lý do</label

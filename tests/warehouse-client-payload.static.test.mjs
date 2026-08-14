@@ -154,3 +154,8 @@ test('import VAT keeps the entered rate and persists VAT-inclusive costs in both
   assert.match(costTransactions, /line_cost: line\.lineCost/)
   assert.match(costTransactions, /total_cost: roundMoney\(prepared\.reduce\(\(sum, line\) => sum \+ line\.lineCost, 0\)\)/)
 })
+
+test('warehouse monetary values retain three decimal places', () => {
+  assert.match(transactions, /Math\.round\(toNumber\(value\) \* 1000\) \/ 1000/)
+  assert.match(costTransactions, /Math\.round\(toNumber\(value\) \* 1000\) \/ 1000/)
+})

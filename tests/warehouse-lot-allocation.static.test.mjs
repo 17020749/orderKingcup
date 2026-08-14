@@ -57,7 +57,10 @@ test('lot engine supports configured issue policies', () => {
 
 test('export transaction stores only lot references and quantities', () => {
   assert.match(transactions, /lot_allocations_json/)
-  const exportSection = transactions.slice(transactions.indexOf('async function createExportOrder'))
+  const exportSection = transactions.slice(
+    transactions.indexOf('async function createExportOrder'),
+    transactions.indexOf('async function createInventoryAdjustment'),
+  )
   assert.doesNotMatch(exportSection, /unit_cost\s*:/)
   assert.doesNotMatch(exportSection, /line_cost\s*:/)
 })
@@ -125,7 +128,7 @@ test('inventory cost details require import.view and join prices only in the vie
   assert.match(inventoryPage, /loadImportOrderItems\(force\)/)
   assert.match(inventoryPage, /Các lô giá/)
   assert.match(inventoryPage, /Giá trị còn lại/)
-  assert.match(inventoryPage, /costItem as any\)\.unit_cost/)
+  assert.match(inventoryPage, /const costSource = costItem \|\| lotCost \|\| lot/)
 })
 
 test('warehouse users can load inventory without reading priced import documents', () => {
@@ -137,6 +140,16 @@ test('warehouse users can load inventory without reading priced import documents
   assert.ok(importItemLoadIndex > guardedLoadIndex)
 })
 
+test('inventory adjustments use manual price for increases and lot allocation for decreases', () => {
+  const adjustmentSection = transactions.slice(transactions.indexOf('async function createInventoryAdjustment'))
+  assert.match(adjustmentSection, /const increaseCost = quantity > 0 \? importCostFields\(input, quantity\) : null/)
+  assert.match(adjustmentSection, /inventory_lot_costs/)
+  assert.match(adjustmentSection, /inventory_adjustment_costs/)
+  assert.match(adjustmentSection, /allocateManualInventoryLots/)
+  assert.match(adjustmentSection, /allocationMode === 'manual'/)
+  assert.match(inventoryPage, /unit_cost: delta > 0 \? toNumber\(adjustmentForm\.unit_cost\)/)
+  assert.match(inventoryPage, /allocation_mode: delta < 0 \? adjustmentForm\.allocation_mode/)
+})
 test('order logo color is saved as metadata and shown beside logo', () => {
   assert.match(models, /interface LogoLineDoc[\s\S]*logo_color\?: string/)
   assert.match(orderLogic, /logo_color: String\(line\?\.logo_color \?\? line\?\.color \?\? ''\)/)

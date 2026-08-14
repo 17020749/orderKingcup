@@ -809,6 +809,9 @@ async function saveFulfilledMetadataOnly() {
       })
     }
 
+    const activeInvoices = (await loadScopedInvoicesForOrders([persistedOrder], true))
+      .filter(isActiveOrderRelation) as InvoiceDoc[]
+    const currentInvoice = selectCanonicalInvoice(activeInvoices) as InvoiceDoc | null
     const nextTotals = calcItems(buildSaveItems(), form)
     const priceChanged = priceOnlyItemsChanged(persistedItems, nextTotals.items)
     let expectedRevision = toNumber(persistedOrder.revision)
@@ -817,6 +820,7 @@ async function saveFulfilledMetadataOnly() {
       priceResult = await saveOrderPrice({
         orderId: currentOrder.id,
         expectedRevision,
+        invoiceIds: activeInvoices.map(invoice => invoice.id),
         nextItems: nextTotals.items,
         orderTotals: nextTotals,
       })
@@ -828,9 +832,6 @@ async function saveFulfilledMetadataOnly() {
     const requestedInvoiceStatus = normalizeInvoiceStatus(form.invoice_status)
     let invoiceMutation: any
     if (persistedInvoiceStatus !== requestedInvoiceStatus) {
-      const activeInvoices = (await loadScopedInvoicesForOrders([persistedOrder], true))
-        .filter(isActiveOrderRelation) as InvoiceDoc[]
-      const currentInvoice = selectCanonicalInvoice(activeInvoices) as InvoiceDoc | null
       const selectedCustomer = customers.value.find(customer => customer.id === persistedOrder.customer_id)
       invoiceMutation = planOrderEditInvoiceMutation({
         orderId: currentOrder.id,
@@ -891,9 +892,7 @@ async function saveFulfilledMetadataOnly() {
     }
 
     showModal.value = false
-    if (priceResult?.invoice_needs_adjustment) {
-      showToast('Đơn giá đã đổi; hóa đơn liên quan chưa tự động cập nhật. Vui lòng rà soát hóa đơn và lập điều chỉnh nếu cần.', 'warning')
-    }
+
     showToast('Đã cập nhật thông tin cho phép của đơn hàng', 'success')
     if (!synchronized) {
       showToast('Đơn đã được lưu. Vui lòng làm mới dữ liệu trước khi sửa.', 'warning')
@@ -1017,6 +1016,7 @@ async function saveOrder() {
     if (requestedDiscount > totals.actual_revenue) throw new Error('Số tiền giảm giá không được lớn hơn tổng tiền đơn.')
 
     let invoiceMutation: any
+    let invoiceSyncIds: string[] = []
     if (!editing.value) {
       invoiceMutation = {
         mode: 'create',
@@ -1033,6 +1033,7 @@ async function saveOrder() {
       const activeInvoices = (await loadScopedInvoicesForOrders([editing.value], true))
         .filter(isActiveOrderRelation) as InvoiceDoc[]
       const currentInvoice = selectCanonicalInvoice(activeInvoices) as InvoiceDoc | null
+      invoiceSyncIds = activeInvoices.map(invoice => String(invoice.id || '')).filter(Boolean)
       invoiceMutation = planOrderEditInvoiceMutation({
         orderId: form.id,
         persistedStatus: persistedInvoiceStatus,
@@ -1115,6 +1116,7 @@ async function saveOrder() {
       orderPayload,
       nextItems: totals.items,
       existingItems,
+      invoiceSyncIds,
       invoiceMutation,
       activityAction: editing.value ? 'update' : 'create',
       activityItemName: form.customer_name || form.order_code,

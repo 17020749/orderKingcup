@@ -18,6 +18,7 @@ export type InventoryLotState = {
   received_quantity: number
   available_quantity: number
   cost_item_id?: string
+  cost_lot_id?: string
   source_lot_id?: string
   transfer_export_order_id?: string
   transfer_export_item_id?: string
@@ -34,6 +35,7 @@ export type LotAllocation = {
   import_date?: string
   expiry_date?: string
   cost_item_id?: string
+  cost_lot_id?: string
   source_lot_id?: string
   destination_lot_id?: string
   source?: string
@@ -156,6 +158,7 @@ export function allocateInventoryLots(input: {
       import_date: lot.import_date || '',
       expiry_date: lot.expiry_date || '',
       cost_item_id: lot.cost_item_id || lot.import_order_item_id || '',
+      cost_lot_id: lot.cost_lot_id || '',
       source_lot_id: lot.source_lot_id || '',
       source: lot.source || '',
     })
@@ -169,6 +172,34 @@ export function allocateInventoryLots(input: {
     allocations,
     lots: working.filter(lot => roundQuantity(lot.available_quantity) > 0),
   }
+}
+
+export function allocateManualInventoryLots(input: {
+  lots: InventoryLotState[]
+  allocations: Array<{ lot_id?: string; quantity?: number }>
+  quantity: number
+}) {
+  const expected = roundQuantity(input.quantity)
+  const requested = new Map<string, number>()
+  for (const row of input.allocations || []) {
+    const lotId = String(row?.lot_id || '').trim()
+    const quantity = roundQuantity(row?.quantity)
+    if (!lotId || quantity <= 0) continue
+    requested.set(lotId, roundQuantity((requested.get(lotId) || 0) + quantity))
+  }
+  const total = roundQuantity([...requested.values()].reduce((sum, quantity) => sum + quantity, 0))
+  if (total !== expected) throw new Error(`Tổng phân bổ lô ${total} phải bằng số lượng giảm ${expected}.`)
+  const working = normalizeLots(input.lots)
+  const allocations: LotAllocation[] = []
+  for (const [lotId, quantity] of requested) {
+    const lot = working.find(row => row.id === lotId)
+    if (!lot) throw new Error(`Không tìm thấy lô ${lotId}.`)
+    if (roundQuantity(lot.available_quantity) + 0.0001 < quantity) throw new Error(`Lô ${lotId} không đủ tồn để điều chỉnh.`)
+    lot.available_quantity = roundQuantity(lot.available_quantity - quantity)
+    lot.status = lot.available_quantity > 0 ? 'available' : 'depleted'
+    allocations.push({ lot_id: lot.id, quantity, import_order_id: lot.import_order_id || '', import_order_item_id: lot.import_order_item_id || '', import_code: lot.import_code || '', import_date: lot.import_date || '', expiry_date: lot.expiry_date || '', cost_item_id: lot.cost_item_id || lot.import_order_item_id || '', cost_lot_id: lot.cost_lot_id || '', source_lot_id: lot.source_lot_id || '', source: lot.source || '' })
+  }
+  return { allocations, lots: working.filter(lot => roundQuantity(lot.available_quantity) > 0) }
 }
 
 export function restoreInventoryLots(lotsValue: any, allocationsValue: any) {
@@ -194,6 +225,7 @@ export function restoreInventoryLots(lotsValue: any, allocationsValue: any) {
       import_date: allocation.import_date || '',
       expiry_date: allocation.expiry_date || '',
       cost_item_id: allocation.cost_item_id || allocation.import_order_item_id || '',
+      cost_lot_id: allocation.cost_lot_id || '',
       source_lot_id: allocation.source_lot_id || '',
       source: allocation.source || '',
       received_quantity: quantity,

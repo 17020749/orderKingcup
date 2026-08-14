@@ -16,10 +16,13 @@ import { normalizeEmail, toNumber } from '~/utils/format'
 const { db } = useFirebaseServices()
 const { hasPermission } = useAuth()
 const { showToast } = useUi()
+const { synchronizeInvoiceAmounts } = useAtomicOrderRelations()
 
 const loading = ref(false)
 const saving = ref(false)
 const cleaning = ref(false)
+const syncingInvoices = ref(false)
+const invoiceSyncReport = ref<Awaited<ReturnType<typeof synchronizeInvoiceAmounts>> | null>(null)
 const exists = ref(false)
 const legacyCostCount = ref<number | null>(null)
 const form = reactive({
@@ -131,6 +134,19 @@ async function runCleanup() {
     showToast(reportFirebaseError(error, 'Không dọn được giá vốn cũ khỏi sản phẩm.'), 'error')
   }
 }
+async function runInvoiceAmountSync() {
+  if (!canManage.value) return showToast('Chỉ Admin được đồng bộ giá trị hóa đơn.', 'error')
+  syncingInvoices.value = true
+  try {
+    const report = await synchronizeInvoiceAmounts()
+    invoiceSyncReport.value = report
+    showToast(`Đồng bộ hóa đơn: sửa ${report.updated}, đã khớp ${report.matched}, bỏ qua ${report.skipped}.`, 'success')
+  } catch (error) {
+    showToast(reportFirebaseError(error, 'Không đồng bộ được giá trị hóa đơn.'), 'error')
+  } finally {
+    syncingInvoices.value = false
+  }
+}
 
 onMounted(loadSetting)
 </script>
@@ -141,6 +157,9 @@ onMounted(loadSetting)
       <button class="btn" :disabled="loading" @click="loadSetting">Làm mới</button>
       <button v-if="canManage" class="btn" :disabled="cleaning" @click="runCleanup">
         {{ cleaning ? 'Đang dọn...' : 'Dọn giá vốn cũ' }}
+      </button>
+      <button v-if="canManage" class="btn" :disabled="syncingInvoices" @click="runInvoiceAmountSync">
+        {{ syncingInvoices ? 'Đang đồng bộ hóa đơn...' : 'Đồng bộ giá trị hóa đơn' }}
       </button>
       <button v-if="canManage" class="btn primary" :disabled="saving || cleaning" @click="saveSetting">
         {{ saving ? 'Đang lưu...' : 'Lưu cấu hình' }}
@@ -183,6 +202,14 @@ onMounted(loadSetting)
         <p class="small subtle">Giải pháp này không dùng Cloud Functions và không yêu cầu chuyển Firebase sang gói Blaze.</p>
       </div>
 
+      <div class="card" style="margin-top: 18px; background: var(--surface-soft, #f8fafc);">
+        <h3 style="margin-top: 0;">Bảo trì giá trị hóa đơn</h3>
+        <p>Giá trị hóa đơn active luôn lấy từ <code>payable_amount</code> của đơn hàng cha. Thao tác này chỉ sửa dữ liệu cũ đang lệch, không tạo thêm hóa đơn.</p>
+        <p v-if="invoiceSyncReport" class="small subtle">
+          Đã kiểm tra {{ invoiceSyncReport.inspected }}, sửa {{ invoiceSyncReport.updated }}, đã khớp {{ invoiceSyncReport.matched }}, bỏ qua {{ invoiceSyncReport.skipped }}
+          (mồ côi: {{ invoiceSyncReport.skippedReasons.orphaned }}, đơn đã xóa: {{ invoiceSyncReport.skippedReasons.parent_deleted }}).
+        </p>
+      </div>
       <div v-if="!canManage" class="empty" style="margin-top: 16px;">Bạn được xem cấu hình đang áp dụng nhưng chỉ Admin mới được thay đổi.</div>
     </div>
   </AppShell>

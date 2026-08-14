@@ -52,7 +52,7 @@ function collectionName(module: RelationModule) {
   return module
 }
 
-function activePayload(record: RelationRecord, order: OrderDoc, actor: string) {
+function activePayload(module: RelationModule, record: RelationRecord, order: OrderDoc, actor: string) {
   const normalizedActor = normalizeEmail(actor)
   return {
     ...record,
@@ -61,6 +61,7 @@ function activePayload(record: RelationRecord, order: OrderDoc, actor: string) {
     order_owner_email: order.owner_email || '',
     order_created_by: order.created_by || '',
     order_sale_email: order.sale_email || '',
+    ...(module === 'invoices' ? { invoice_amount: Math.max(0, toNumber(order.payable_amount)) } : {}),
     created_by: record.created_by || normalizedActor,
     active: true,
     deleted: false,
@@ -218,7 +219,7 @@ export function useAtomicOrderRelations() {
           updated_at: localTimestamp(),
         }
       } else {
-        const payload = activePayload(input.record, currentOrder, actor)
+        const payload = activePayload(module, input.record, currentOrder, actor)
         const firestorePayload: DocumentData = {
           ...payload,
           id: recordId,
@@ -355,9 +356,62 @@ export function useAtomicOrderRelations() {
     }
   }
 
+  async function synchronizeInvoiceAmounts() {
+    if (!isAdmin.value) throw new Error('Chỉ quản trị viên được đồng bộ giá trị hóa đơn.')
+    const [orderSnapshot, invoiceSnapshot] = await Promise.all([
+      getDocs(collection(db, 'orders')),
+      getDocs(collection(db, 'invoices')),
+    ])
+    const orders = new Map(orderSnapshot.docs.map(snapshot => [snapshot.id, { ...snapshot.data(), id: snapshot.id } as OrderDoc]))
+    const report = {
+      inspected: 0,
+      updated: 0,
+      matched: 0,
+      skipped: 0,
+      skippedReasons: { orphaned: 0, parent_deleted: 0 },
+    }
+    let batch = writeBatch(db)
+    let writes = 0
+    const commitBatch = async () => {
+      if (!writes) return
+      await batch.commit()
+      batch = writeBatch(db)
+      writes = 0
+    }
+
+    for (const snapshot of invoiceSnapshot.docs) {
+      const invoice = { ...snapshot.data(), id: snapshot.id }
+      if (!isActiveOrderRelation(invoice)) continue
+      report.inspected += 1
+      const order = orders.get(String(invoice.order_id || ''))
+      if (!order) {
+        report.skipped += 1
+        report.skippedReasons.orphaned += 1
+        continue
+      }
+      if (!isActiveOrderRelation(order)) {
+        report.skipped += 1
+        report.skippedReasons.parent_deleted += 1
+        continue
+      }
+      const expectedAmount = Math.max(0, toNumber(order.payable_amount))
+      if (toNumber(invoice.invoice_amount) === expectedAmount) {
+        report.matched += 1
+        continue
+      }
+      batch.update(snapshot.ref, { invoice_amount: expectedAmount, updated_at: serverTimestamp() })
+      writes += 1
+      report.updated += 1
+      if (writes >= 400) await commitBatch()
+    }
+    await commitBatch()
+    if (report.updated) invalidateScopedCache('invoices')
+    return report
+  }
   return {
     mutateOrderRelation,
     reconcileOrderRelationLocks,
+    synchronizeInvoiceAmounts,
     relationCountField,
     relationRevisionField,
   }

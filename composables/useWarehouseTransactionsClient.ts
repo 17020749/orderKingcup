@@ -103,7 +103,7 @@ export function useWarehouseTransactionsClient() {
   }
 
   function roundMoney(value: any) {
-    return Math.round(numberOf(value) * 100) / 100
+    return Math.round(numberOf(value) * 1000) / 1000
   }
 
   function lineVatRate(line: any) {

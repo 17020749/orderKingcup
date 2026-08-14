@@ -59,7 +59,7 @@ test('ước lượng write tính thêm invoice nhưng không tăng đường s�
   }), 4)
 })
 
-test('source order tạo invoice nguyên tử và chỉ update invoice khi có mutation', () => {
+test('source order tạo invoice nguyên tử và đồng bộ invoice active theo đơn', () => {
   const composable = readFileSync('composables/useAtomicOrderSave.ts', 'utf8')
   const orders = readFileSync('pages/orders.vue', 'utf8')
 
@@ -101,4 +101,28 @@ test('xóa order cascade invoice nhưng vẫn dùng blocker payment và shipment
 test('Sale được tải invoice của order mình chỉ để đổi trạng thái hoặc cascade xóa', () => {
   const scopedQueries = readFileSync('composables/useScopedQueries.ts', 'utf8')
   assert.match(scopedQueries, /invoices\.delete', 'orders\.edit', 'orders\.delete'/)
+})
+
+test('invoice amount always follows the parent order', () => {
+  const atomicSave = readFileSync('composables/useAtomicOrderSave.ts', 'utf8')
+  const priceSave = readFileSync('composables/useOrderPriceSave.ts', 'utf8')
+  const relations = readFileSync('composables/useAtomicOrderRelations.ts', 'utf8')
+  const invoices = readFileSync('pages/invoices.vue', 'utf8')
+  const settings = readFileSync('pages/settings/general.vue', 'utf8')
+  const rules = readFileSync('firestore.rules', 'utf8')
+
+  assert.doesNotMatch(atomicSave, /transaction\.get\(query\(/)
+  assert.match(atomicSave, /invoiceSyncIds\?: string\[\]/)
+  assert.match(atomicSave, /syncedInvoiceRefs/)
+  assert.match(atomicSave, /invoice_amount: invoiceAmount/)
+  assert.doesNotMatch(priceSave, /transaction\.get\(query\(/)
+  assert.match(priceSave, /invoiceIds\?: string\[\]/)
+  assert.match(priceSave, /activeInvoices\.forEach/)
+  assert.match(relations, /async function synchronizeInvoiceAmounts\(\)/)
+  assert.match(relations, /skippedReasons: \{ orphaned: 0, parent_deleted: 0 \}/)
+  assert.match(invoices, /:value="money\(selectedOrder\?\.payable_amount\)"/)
+  assert.doesNotMatch(invoices, /v-model\.number="form\.invoice_amount"/)
+  assert.match(settings, /runInvoiceAmountSync/)
+  assert.match(rules, /function saleInvoiceAmountUpdateAllowed\(\)/)
+  assert.match(rules, /saleInvoiceStatusUpdateAllowed\(docId\) \|\| saleInvoiceAmountUpdateAllowed\(\)/)
 })

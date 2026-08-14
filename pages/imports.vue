@@ -132,7 +132,7 @@ const itemsByOrder = computed(() => {
 })
 
 function roundMoney(value: any) {
-  return Math.round(toNumber(value) * 100) / 100
+  return Math.round(toNumber(value) * 1000) / 1000
 }
 
 function vatRate(item: any) {
@@ -244,7 +244,7 @@ function currencyText(value: any) {
   return toNumber(value).toLocaleString('vi-VN', {
     style: 'currency',
     currency: 'VND',
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 3,
   })
 }
 
@@ -515,7 +515,7 @@ onMounted(() => loadRows())
               <td><input v-model="line.logo" class="input" placeholder="Để trống nếu không logo" /></td>
               <td><input v-model="line.unit" class="input" placeholder="Đơn vị" /></td>
               <td><input v-model.number="line.quantity" class="input" type="number" min="0" step="1" /></td>
-              <td><input v-model.number="line.unit_cost" class="input" type="number" min="0" step="100" placeholder="Giá chưa VAT" /></td>
+              <td><input v-model.number="line.unit_cost" class="input" type="number" min="0" step="0.001" placeholder="Giá chưa VAT" /></td>
               <td><input v-model="line.vat_rate" class="input" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0" /></td>
               <td><b>{{ currencyText(unitCostWithVat(line)) }}</b></td>
               <td><b>{{ currencyText(lineCost(line)) }}</b></td>

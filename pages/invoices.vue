@@ -177,7 +177,7 @@ async function save() {
   const normalizedRecord = {
     ...form,
     invoice_status: normalizeInvoiceStatus(form.invoice_status),
-    invoice_amount: toNumber(form.invoice_amount),
+    invoice_amount: Math.max(0, toNumber(order.payable_amount)),
     created_by: editing.value.created_by || appUser.value?.email || '',
   }
   const validationError = validateAccountingInvoice(normalizedRecord)
@@ -262,7 +262,7 @@ onMounted(() => loadRows())
         <div class="form-group"><label>Đơn hàng</label><input :value="form.order_code" class="input readonly-field" readonly/></div>
         <div class="form-group"><label>Số hóa đơn</label><input v-model="form.invoice_number" class="input"/></div>
         <div class="form-group"><label>Ngày hóa đơn</label><input v-model="form.invoice_date" class="input" type="date"/></div>
-        <div class="form-group"><label>Giá trị</label><input v-model.number="form.invoice_amount" class="input" type="number" min="0"/></div>
+        <div class="form-group"><label>Giá trị</label><input :value="money(selectedOrder?.payable_amount)" class="input readonly-field" readonly/></div>
         <div class="form-group"><label>Trạng thái</label><select v-model="form.invoice_status" class="select"><option v-for="status in INVOICE_STATUS_OPTIONS" :key="status" :value="status">{{status}}</option></select></div>
         <div class="form-group"><label>Mã số thuế</label><input v-model="form.tax_code" class="input"/></div>
         <div class="form-group"><label>Tên công ty</label><input v-model="form.company_name" class="input"/></div>
