@@ -76,7 +76,7 @@ test('dashboard keeps the accurate client aggregation path until a backend summa
   assert.doesNotMatch(dashboardSnapshot, /getAggregateFromServer/)
 
   assert.match(dashboard, /async function loadDashboard/)
-  assert.match(dashboard, /loadDashboardSnapshot\(force\)/)
+  assert.match(dashboard, /loadDashboardSnapshot\(force, dashboardTimeRange\.value\)/)
   assert.match(dashboardSnapshot, /loadScopedOrders\(forceSources\)/)
   assert.match(dashboardSnapshot, /loadScopedOrderItems\(orders, forceSources\)/)
   assert.match(dashboardSnapshot, /loadScopedPayments\(orders, forceSources\)/)
