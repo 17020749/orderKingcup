@@ -26,7 +26,8 @@
     "migrate:order-item-ownership": "node scripts/backfill-order-item-ownership.mjs",
     "migrate:dedupe-order-invoices": "node scripts/dedupe-order-invoices.mjs",
     "migrate:backfill-order-invoices": "node scripts/backfill-order-invoices.mjs",
-    "test:warehouse-export-history": "node --test tests/warehouse-export-history.client.test.mjs"
+    "test:warehouse-export-history": "node --test tests/warehouse-export-history.client.test.mjs",
+    "test:warehouse-fulfillment": "node --test tests/warehouse-fulfillment.client.test.mjs"
   },
   "dependencies": {
     "@nuxtjs/google-fonts": "^3.2.0",
