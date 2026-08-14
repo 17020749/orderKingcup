@@ -13,6 +13,7 @@ const ordersPage = readFileSync('pages/orders.vue', 'utf8')
 const printingPage = readFileSync('pages/printing.vue', 'utf8')
 const orderLogic = readFileSync('composables/useOrderLogic.ts', 'utf8')
 const warehouseLogic = readFileSync('composables/useWarehouseLogic.ts', 'utf8')
+const warehouseFulfillment = readFileSync('utils/warehouseFulfillment.mjs', 'utf8')
 const models = readFileSync('types/models.ts', 'utf8')
 
 function oldImportItem(overrides = {}) {
@@ -144,9 +145,11 @@ test('order logo color is saved as metadata and shown beside logo', () => {
   assert.match(ordersPage, /<th>Màu<\/th>/)
 })
 
-test('warehouse quantity identity remains product plus logo only', () => {
-  assert.match(warehouseLogic, /function key\(code: any, logo: any\)/)
-  assert.doesNotMatch(warehouseLogic, /logo_color/)
+test('warehouse quantity identity uses source row plus logo and ignores logo color', () => {
+  assert.match(warehouseLogic, /buildWarehouseFulfillmentRows/)
+  assert.match(warehouseFulfillment, /function productLogoKey\(code, logo\)/)
+  assert.match(warehouseFulfillment, /function referenceKey\(orderItemId, logo\)/)
+  assert.doesNotMatch(warehouseFulfillment, /logo_color/)
   assert.match(ordersPage, /const key = `\$\{String\(item\.product_code[\s\S]*\|\$\{String\(line\.logo/)
 })
 
