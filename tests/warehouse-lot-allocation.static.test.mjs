@@ -128,7 +128,7 @@ test('inventory cost details require import.view and join prices only in the vie
   assert.match(inventoryPage, /loadImportOrderItems\(force\)/)
   assert.match(inventoryPage, /Các lô giá/)
   assert.match(inventoryPage, /Giá trị còn lại/)
-  assert.match(inventoryPage, /const costSource = costItem \|\| lot/)
+  assert.match(inventoryPage, /const costSource = costItem \|\| lotCost \|\| lot/)
 })
 
 test('warehouse users can load inventory without reading priced import documents', () => {
@@ -140,19 +140,16 @@ test('warehouse users can load inventory without reading priced import documents
   assert.ok(importItemLoadIndex > guardedLoadIndex)
 })
 
-test('positive inventory adjustments retain VAT-inclusive cost on their lots', () => {
+test('inventory adjustments use manual price for increases and lot allocation for decreases', () => {
   const adjustmentSection = transactions.slice(transactions.indexOf('async function createInventoryAdjustment'))
-  assert.match(adjustmentSection, /const adjustmentCostItemId = quantity > 0 \? normalizeId\(input\.cost_item_id\) : ''/)
-  assert.match(adjustmentSection, /await tx\.get\(doc\(db, 'import_order_items', adjustmentCostItemId\)\)/)
-  assert.match(adjustmentSection, /const adjustmentCost = quantity > 0 \? importCostFields\(adjustmentCostItem, quantity\) : null/)
-  assert.match(adjustmentSection, /unit_cost_with_vat: adjustmentCost!\.unitCostWithVat/)
-  assert.match(adjustmentSection, /line_cost: adjustmentCost!\.lineCost/)
-  assert.match(inventoryPage, /\['warehouse_transfer', 'inventory_adjustment', 'legacy_opening'\]/)
-  assert.match(inventoryPage, /const costSource = costItem \|\| lot/)
-  assert.match(inventoryPage, /function adjustmentCostItemFor\(row: InventoryAuditRow\)/)
-  assert.match(inventoryPage, /cost_item_id: delta > 0 \? adjustmentCostItem\.value\?\.id \\|\\| '' : ''/)
+  assert.match(adjustmentSection, /const increaseCost = quantity > 0 \? importCostFields\(input, quantity\) : null/)
+  assert.match(adjustmentSection, /inventory_lot_costs/)
+  assert.match(adjustmentSection, /inventory_adjustment_costs/)
+  assert.match(adjustmentSection, /allocateManualInventoryLots/)
+  assert.match(adjustmentSection, /allocationMode === 'manual'/)
+  assert.match(inventoryPage, /unit_cost: delta > 0 \? toNumber\(adjustmentForm\.unit_cost\)/)
+  assert.match(inventoryPage, /allocation_mode: delta < 0 \? adjustmentForm\.allocation_mode/)
 })
-
 test('order logo color is saved as metadata and shown beside logo', () => {
   assert.match(models, /interface LogoLineDoc[\s\S]*logo_color\?: string/)
   assert.match(orderLogic, /logo_color: String\(line\?\.logo_color \?\? line\?\.color \?\? ''\)/)

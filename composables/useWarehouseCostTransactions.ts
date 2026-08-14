@@ -15,6 +15,7 @@ import {
 } from '~/composables/useNotifications'
 import {
   allocateInventoryLots,
+  allocateManualInventoryLots,
   normalizeLots,
   parseLotAllocations,
   reconcileOpeningLot,
@@ -574,6 +575,7 @@ export function useWarehouseCostTransactions() {
       received_quantity: input.allocation.quantity,
       available_quantity: input.allocation.quantity,
       cost_item_id: input.allocation.cost_item_id || input.allocation.import_order_item_id || '',
+      cost_lot_id: input.allocation.cost_lot_id || '',
       source_lot_id: input.allocation.lot_id,
       transfer_export_order_id: input.orderId,
       transfer_export_item_id: input.itemId,
@@ -2209,8 +2211,9 @@ export function useWarehouseCostTransactions() {
     const id = makeId('adj')
     const operationId = operationIdOf(input.operation_id, `inventory_adjust:${id}`)
     const setting = await loadIssueSetting()
-    const adjustmentCostItemId = quantity > 0 ? normalizeId(input.cost_item_id) : ''
-    if (quantity > 0 && !adjustmentCostItemId) throw new Error('Điều chỉnh tăng cần có dòng phiếu nhập nguồn để xác định giá vốn.')
+    const allocationMode = input.allocation_mode === 'manual' ? 'manual' : 'automatic'
+    const increaseCost = quantity > 0 ? importCostFields(input, quantity) : null
+    if (quantity > 0 && increaseCost!.unitCost <= 0) throw new Error('Điều chỉnh tăng cần có giá nhập lớn hơn 0.')
     const balanceKey = await inventoryBalanceId(product.id, warehouse.id, input.logo)
     const refs = new Map([[balanceKey, { id: balanceKey, ref: doc(db, 'inventory_balances', balanceKey), product, warehouse, logo: normalizeLogo(input.logo) }]])
     const replay = await claimOperation({ operationId, action: 'inventory_adjust', targetCollection: 'inventory_adjustments', targetId: id, actor })
@@ -2219,99 +2222,74 @@ export function useWarehouseCostTransactions() {
     try {
       await runTransaction(db, async tx => {
         const operationSnap = await tx.get(doc(db, 'warehouse_operations', operationId))
-        const adjustmentCostItemSnap = adjustmentCostItemId ? await tx.get(doc(db, 'import_order_items', adjustmentCostItemId)) : null
         const states = await readBalanceStates(tx, refs, date)
         if (!operationSnap.exists() || operationSnap.data()?.status !== 'processing') throw new Error('Operation điều chỉnh tồn không hợp lệ.')
-        const adjustmentCostItem = adjustmentCostItemSnap?.exists() ? adjustmentCostItemSnap.data() || {} : null
-        if (quantity > 0 && !adjustmentCostItem) throw new Error('Không tìm thấy dòng phiếu nhập nguồn của điều chỉnh tăng.')
-        if (quantity > 0 && (normalizeId(adjustmentCostItem?.product_id) !== product.id || normalizeId(adjustmentCostItem?.warehouse_id) !== warehouse.id || normalizeLogo(adjustmentCostItem?.logo) !== normalizeLogo(input.logo) || adjustmentCostItem?.deleted === true || adjustmentCostItem?.active === false)) throw new Error('Dòng phiếu nhập nguồn không còn phù hợp với sản phẩm, kho hoặc logo cần điều chỉnh.')
-        const adjustmentCost = quantity > 0 ? importCostFields(adjustmentCostItem, quantity) : null
-        if (quantity > 0 && adjustmentCost!.unitCost <= 0) throw new Error('Dòng phiếu nhập nguồn chưa có giá nhập hợp lệ.')
         const state = states.get(balanceKey)!
         reconcileState(state)
         let allocations: LotAllocation[] = []
         if (quantity > 0) {
           const lotId = safeDocId(`adjustment_lot__${id}`, 'lot')
           addLot(state, {
-            id: lotId,
-            import_order_id: String(adjustmentCostItem?.import_order_id || ''),
-            import_order_item_id: adjustmentCostItemId,
-            import_code: String(adjustmentCostItem?.import_code || adjustmentCostItem?.import_order_code || 'ADJUSTMENT'),
-            import_date: String(adjustmentCostItem?.import_date || date),
-            product_id: product.id,
-            warehouse_id: warehouse.id,
-            logo: normalizeLogo(input.logo),
-            unit: input.unit || product.unit || '',
-            received_quantity: quantity,
-            available_quantity: quantity,
-            cost_item_id: adjustmentCostItemId,
-            unit_cost: adjustmentCost!.unitCost,
-            vat_rate: adjustmentCost!.vatRate,
-            vat_percent: adjustmentCost!.vatRate,
-            unit_cost_with_vat: adjustmentCost!.unitCostWithVat,
-            line_cost: adjustmentCost!.lineCost,
-            source: 'inventory_adjustment',
-            status: 'available',
+            id: lotId, import_order_id: '', import_order_item_id: '', import_code: 'ADJUSTMENT', import_date: date,
+            product_id: product.id, warehouse_id: warehouse.id, logo: normalizeLogo(input.logo), unit: input.unit || product.unit || '',
+            received_quantity: quantity, available_quantity: quantity, cost_item_id: '', cost_lot_id: lotId,
+            source: 'inventory_adjustment', status: 'available',
           })
-          allocations = [{ lot_id: lotId, quantity, import_code: String(adjustmentCostItem?.import_code || adjustmentCostItem?.import_order_code || 'ADJUSTMENT'), import_date: String(adjustmentCostItem?.import_date || date), cost_item_id: adjustmentCostItemId, source: 'inventory_adjustment' }]
+          allocations = [{ lot_id: lotId, quantity, import_code: 'ADJUSTMENT', import_date: date, cost_lot_id: lotId, source: 'inventory_adjustment' }]
+        } else if (allocationMode === 'manual') {
+          const manual = allocateManualInventoryLots({ lots: state.lots, allocations: input.lot_allocations || [], quantity: Math.abs(quantity) })
+          state.lots = manual.lots
+          state.quantity = roundQuantity(state.quantity - Math.abs(quantity))
+          allocations = manual.allocations
         } else {
           allocations = allocateFromState(state, Math.abs(quantity), setting)
         }
+
+        const importCostIds = [...new Set(allocations.map(row => normalizeId(row.cost_item_id)).filter(Boolean))]
+        const lotCostIds = [...new Set(allocations.map(row => normalizeId(row.cost_lot_id)).filter(Boolean))]
+        const importCostSnapshots = await Promise.all(importCostIds.map(costId => tx.get(doc(db, 'import_order_items', costId))))
+        const lotCostSnapshots = await Promise.all(lotCostIds.map(lotId => tx.get(doc(db, 'inventory_lot_costs', lotId))))
+        const importCosts = new Map(importCostSnapshots.filter(snapshot => snapshot.exists()).map(snapshot => [snapshot.id, snapshot.data() || {}]))
+        const lotCosts = new Map(lotCostSnapshots.filter(snapshot => snapshot.exists()).map(snapshot => [snapshot.id, snapshot.data() || {}]))
+        const costAllocations = allocations.map(allocation => {
+          const source = importCosts.get(normalizeId(allocation.cost_item_id)) || lotCosts.get(normalizeId(allocation.cost_lot_id))
+          if (!source) return { ...allocation, unit_cost: null, vat_rate: null, unit_cost_with_vat: null, line_cost: null }
+          const cost = importCostFields(source, allocation.quantity)
+          return { ...allocation, unit_cost: cost.unitCost, vat_rate: cost.vatRate, unit_cost_with_vat: cost.unitCostWithVat, line_cost: cost.lineCost }
+        })
+        if (quantity < 0 && costAllocations.some((row: any) => row.unit_cost_with_vat === null)) throw new Error('Có lô chưa có giá vốn. Hãy chọn lô có nguồn giá hợp lệ.')
+        if (quantity > 0) {
+          tx.set(doc(db, 'inventory_lot_costs', allocations[0].lot_id), {
+            id: allocations[0].lot_id, product_id: product.id, warehouse_id: warehouse.id, logo: normalizeLogo(input.logo),
+            unit_cost: increaseCost!.unitCost, vat_rate: increaseCost!.vatRate, vat_percent: increaseCost!.vatRate,
+            unit_cost_with_vat: increaseCost!.unitCostWithVat, line_cost: increaseCost!.lineCost,
+            source_collection: 'inventory_adjustments', source_doc_id: id, created_by: actor,
+            created_at: serverTimestamp(), updated_at: serverTimestamp(), active: true, deleted: false,
+          })
+          costAllocations[0] = { ...costAllocations[0], unit_cost: increaseCost!.unitCost, vat_rate: increaseCost!.vatRate, unit_cost_with_vat: increaseCost!.unitCostWithVat, line_cost: increaseCost!.lineCost }
+        }
+
         tx.set(doc(db, 'inventory_adjustments', id), {
-          id,
-          adjustment_date: date,
-          product_id: product.id,
-          product_code: productCode(product),
-          product_name: productName(product),
-          warehouse_id: warehouse.id,
-          warehouse_name: warehouseName(warehouse),
-          logo: normalizeLogo(input.logo),
-          quantity,
-          unit: input.unit || product.unit || '',
-          cost_item_id: adjustmentCostItemId,
-          import_order_id: String(adjustmentCostItem?.import_order_id || ''),
-          unit_cost: adjustmentCost?.unitCost ?? null,
-          vat_rate: adjustmentCost?.vatRate ?? null,
-          vat_percent: adjustmentCost?.vatRate ?? null,
-          unit_cost_with_vat: adjustmentCost?.unitCostWithVat ?? null,
-          line_cost: adjustmentCost?.lineCost ?? null,
-          lot_allocations_json: JSON.stringify(allocations),
-          allocation_strategy: quantity < 0 ? setting.strategy : 'adjustment_lot',
-          reason: input.reason || '',
-          note: input.note || '',
-          status: 'completed',
-          active: true,
-          deleted: false,
-          created_by: actor,
-          created_at: serverTimestamp(),
-          updated_at: serverTimestamp(),
-          operation_id: operationId,
-          last_operation_id: operationId,
-          revision: 1,
-          source: 'nuxt',
+          id, adjustment_date: date, product_id: product.id, product_code: productCode(product), product_name: productName(product),
+          warehouse_id: warehouse.id, warehouse_name: warehouseName(warehouse), logo: normalizeLogo(input.logo), quantity,
+          unit: input.unit || product.unit || '', allocation_mode: quantity < 0 ? allocationMode : 'increase',
+          lot_allocations_json: JSON.stringify(allocations), allocation_strategy: quantity < 0 ? (allocationMode === 'manual' ? 'manual' : setting.strategy) : 'adjustment_lot',
+          reason: input.reason || '', note: input.note || '', status: 'completed', active: true, deleted: false,
+          created_by: actor, created_at: serverTimestamp(), updated_at: serverTimestamp(), operation_id: operationId, last_operation_id: operationId, revision: 1, source: 'nuxt',
+        })
+        tx.set(doc(db, 'inventory_adjustment_costs', id), {
+          id, adjustment_id: id, allocation_mode: quantity < 0 ? allocationMode : 'increase', lot_allocations_json: JSON.stringify(costAllocations),
+          total_cost: roundMoney(costAllocations.reduce((sum, row: any) => sum + toNumber(row.line_cost), 0)), created_by: actor,
+          created_at: serverTimestamp(), updated_at: serverTimestamp(), active: true, deleted: false,
         })
         const movementId = safeDocId(`adjust:${id}`, 'movement')
         tx.set(doc(db, 'stock_movements', movementId), movementPayload({
-          id: movementId,
-          type: 'adjustment',
-          direction: 'adjust',
-          quantity,
-          product,
-          warehouse,
-          logo: input.logo,
-          unit: input.unit,
-          movementDate: date,
-          sourceCollection: 'inventory_adjustments',
-          sourceDocId: id,
-          sourceItemId: id,
-          sourceCode: id,
-          reason: input.reason || input.note || 'Điều chỉnh tồn',
-          createdBy: actor,
-          operationId,
-          lotAllocations: allocations,
+          id: movementId, type: 'adjustment', direction: 'adjust', quantity, product, warehouse, logo: input.logo, unit: input.unit,
+          movementDate: date, sourceCollection: 'inventory_adjustments', sourceDocId: id, sourceItemId: id, sourceCode: id,
+          reason: input.reason || input.note || 'Điều chỉnh tồn', createdBy: actor, operationId, lotAllocations: allocations,
         }))
         tx.set(state.ref, balancePayload(state, operationId, actor), { merge: true })
-        tx.set(doc(collection(db, 'activity_logs')), activityPayload('inventory_adjustments', 'create', id, { id, quantity }, actor))
+        tx.set(doc(collection(db, 'activity_logs')), activityPayload('inventory_adjustments', 'create', id, { id, quantity, allocation_mode: allocationMode }, actor))
         completeOperationTx(tx, operationId, '', 1)
       })
       invalidateWarehouseCaches()
@@ -2321,7 +2299,6 @@ export function useWarehouseCostTransactions() {
       throw error
     }
   }
-
   return {
     createImportOrder,
     updateImportOrder,

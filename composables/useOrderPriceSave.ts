@@ -1,10 +1,8 @@
 import {
   collection,
   doc,
-  query,
   runTransaction,
   serverTimestamp,
-  where,
 } from 'firebase/firestore'
 import { normalizeEmail, round2, toNumber } from '~/utils/format'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
@@ -21,6 +19,7 @@ import { isActiveOrderRelation } from '~/utils/orderRelationState.mjs'
 type OrderPriceSaveInput = {
   orderId: string
   expectedRevision: number
+  invoiceIds?: string[]
   nextItems: Record<string, any>[]
   orderTotals: Record<string, any>
 }
@@ -63,6 +62,8 @@ export function useOrderPriceSave() {
     }
 
     const orderRef = doc(db, 'orders', orderId)
+    const invoiceIds = [...new Set((input.invoiceIds || []).map(value => String(value || '').trim()).filter(Boolean))]
+    const invoiceRefs = invoiceIds.map(invoiceId => doc(db, 'invoices', invoiceId))
     const itemRefs = input.nextItems.map(item => doc(db, 'order_items', String(item.id || item.firestore_id || '').trim()))
     const activityRef = doc(collection(db, 'activity_logs'))
     const operationId = buildOrderOperationId(orderId)
@@ -95,11 +96,10 @@ export function useOrderPriceSave() {
         throw new Error('Chỉ được sửa đơn giá; số tiền giảm giá phải giữ nguyên.')
       }
 
+      // The caller resolves the active invoice before opening the transaction.
+      // A concrete document reference avoids QuerySnapshot/ref differences here.
+      const invoiceSnapshots = await Promise.all(invoiceRefs.map(invoiceRef => transaction.get(invoiceRef)))
       const itemSnapshots = await Promise.all(itemRefs.map(itemRef => transaction.get(itemRef)))
-      const invoiceSnapshot = await transaction.get(query(
-        collection(db, 'invoices'),
-        where('order_id', '==', orderId),
-      ))
       const currentItems = itemSnapshots.map((snapshot, index) => {
         if (!snapshot.exists()) throw new Error(`Không tìm thấy dòng sản phẩm ${input.nextItems[index]?.id || ''}.`)
         const item = { ...snapshot.data(), id: snapshot.id }
@@ -125,9 +125,11 @@ export function useOrderPriceSave() {
       const priceRevision = toNumber(current.price_revision) + 1
       const updatedAt = serverTimestamp()
       const invoiceStatus = String(current.invoice_status || 'Không xuất')
-      const activeInvoices = invoiceSnapshot.docs
-        .map(snapshot => ({ ...snapshot.data(), id: snapshot.id, ref: snapshot.ref }))
-        .filter(isActiveOrderRelation)
+      const activeInvoices = invoiceSnapshots
+        .map((snapshot, index) => ({ snapshot, ref: invoiceRefs[index] }))
+        .filter(({ snapshot }) => snapshot.exists()
+          && String(snapshot.data().order_id || '') === orderId
+          && isActiveOrderRelation(snapshot.data()))
 
       input.nextItems.forEach(next => {
         const currentItem = currentById.get(String(next.id || next.firestore_id || ''))!
@@ -140,9 +142,9 @@ export function useOrderPriceSave() {
         })
       })
 
-      activeInvoices.forEach(invoice => {
-        if (toNumber(invoice.invoice_amount) === payableAmount) return
-        transaction.update(invoice.ref, {
+      activeInvoices.forEach(({ snapshot, ref }) => {
+        if (toNumber(snapshot.data().invoice_amount) === payableAmount) return
+        transaction.update(ref, {
           invoice_amount: payableAmount,
           last_operation_id: operationId,
           updated_at: updatedAt,

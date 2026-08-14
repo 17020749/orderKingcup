@@ -1431,6 +1431,36 @@ service cloud.firestore {
         && request.resource.data.get('quantity', 0) >= 0;
     }
 
+    function validInventoryLotCost(data, docId) {
+      return data.get('id', '') == docId
+        && data.get('product_id', '') is string
+        && data.get('warehouse_id', '') is string
+        && data.get('logo', '') is string
+        && data.get('unit_cost', -1) is number
+        && data.get('unit_cost', -1) >= 0
+        && data.get('vat_rate', -1) is number
+        && data.get('vat_rate', -1) >= 0
+        && data.get('vat_rate', 101) <= 100
+        && data.get('unit_cost_with_vat', -1) is number
+        && data.get('unit_cost_with_vat', -1) >= 0
+        && data.get('line_cost', -1) is number
+        && data.get('line_cost', -1) >= 0
+        && data.get('source_collection', '') == 'inventory_adjustments'
+        && data.get('source_doc_id', '') is string
+        && data.get('active', false) == true
+        && data.get('deleted', true) == false;
+    }
+
+    function validInventoryAdjustmentCost(data, docId) {
+      return data.get('id', '') == docId
+        && data.get('adjustment_id', '') == docId
+        && data.get('allocation_mode', '') in ['increase', 'manual', 'automatic']
+        && data.get('lot_allocations_json', '') is string
+        && data.get('total_cost', -1) is number
+        && data.get('total_cost', -1) >= 0
+        && data.get('active', false) == true
+        && data.get('deleted', true) == false;
+    }
     function warehouseDocIdentitySafe() {
       return unchanged([
         'id',
@@ -3346,7 +3376,7 @@ hasAnyPerm([
     }
 
     match /import_orders/{docId} {
-      allow read: if hasAnyPerm(['import.view']);
+      allow read: if hasAnyPerm(['import.view', 'inventory.adjust']);
       allow create: if hasAnyPerm(['import.create'])
         && ownEmailField(request.resource.data, 'created_by');
       allow update: if isAdmin()
@@ -3364,7 +3394,7 @@ hasAnyPerm([
     }
 
     match /import_order_items/{docId} {
-      allow read: if hasAnyPerm(['import.view']);
+      allow read: if hasAnyPerm(['import.view', 'inventory.adjust']);
       allow create: if hasAnyPerm(['import.create', 'import.edit'])
         && request.resource.data.import_order_id is string
         && quantityIsNumber(request.resource.data)
@@ -3489,6 +3519,23 @@ hasAnyPerm([
       allow update, delete: if isAdmin();
     }
 
+    match /inventory_lot_costs/{docId} {
+      allow read: if hasAnyPerm(['inventory.adjust']);
+      allow create: if hasAnyPerm(['inventory.adjust'])
+        && ownEmailField(request.resource.data, 'created_by')
+        && validInventoryLotCost(request.resource.data, docId);
+      allow update: if isAdmin() && validInventoryLotCost(request.resource.data, docId);
+      allow delete: if isAdmin();
+    }
+
+    match /inventory_adjustment_costs/{docId} {
+      allow read: if hasAnyPerm(['inventory.adjust']);
+      allow create: if hasAnyPerm(['inventory.adjust'])
+        && ownEmailField(request.resource.data, 'created_by')
+        && validInventoryAdjustmentCost(request.resource.data, docId);
+      allow update: if isAdmin() && validInventoryAdjustmentCost(request.resource.data, docId);
+      allow delete: if isAdmin();
+    }
     match /warehouse_operations/{docId} {
       allow read: if canReadInventoryCore();
       allow create: if canWriteInventoryCore()

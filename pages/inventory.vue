@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { collection, getDocs } from 'firebase/firestore'
 import type {
   ExportOrderDoc,
   ExportOrderItemDoc,
@@ -49,6 +50,7 @@ const {
   loadExportOrderItems,
 } = useScopedQueries()
 const { createInventoryAdjustment } = useWarehouseTransactions()
+const { db } = useFirebaseServices()
 const { hasPermission } = useAuth()
 const { showToast } = useUi()
 
@@ -66,6 +68,7 @@ const warehouses = ref<WarehouseDoc[]>([])
 const products = ref<ProductDoc[]>([])
 const importOrders = ref<ImportOrderDoc[]>([])
 const importItems = ref<ImportOrderItemDoc[]>([])
+const lotCostRows = ref<Record<string, any>[]>([])
 const exportOrders = ref<ExportOrderDoc[]>([])
 const exportItems = ref<ExportOrderItemDoc[]>([])
 const selected = ref<InventoryAuditRow | null>(null)
@@ -79,9 +82,13 @@ const adjustmentForm = reactive({
   reason: '',
   note: '',
   operation_id: makeId('op_inventory_adjust'),
+  unit_cost: 0,
+  vat_rate: 0,
+  allocation_mode: 'automatic',
+  lot_allocations: [] as Array<{ lot_id: string; quantity: number }>,
 })
 
-const canViewCost = computed(() => hasPermission('*') || hasPermission('import.view'))
+const canViewCost = computed(() => hasPermission('*') || hasPermission('import.view') || hasPermission('inventory.adjust'))
 const canAdjust = computed(() => hasPermission('*') || hasPermission('inventory.adjust'))
 
 const activeProductIds = computed(() => new Set(
@@ -94,6 +101,10 @@ const importItemById = computed(() => new Map(
 
 const importOrderById = computed(() => new Map(
   importOrders.value.map(order => [String(order.id || ''), order]),
+))
+
+const lotCostById = computed(() => new Map(
+  lotCostRows.value.map(row => [String(row.id || ''), row]),
 ))
 
 const activeImportOrderIds = computed(() => new Set(
@@ -238,9 +249,11 @@ function lotDetailsForRow(row: any): InventoryLotDetailRow[] {
     .map((lot: any) => {
       const costItemId = String(lot.cost_item_id || lot.import_order_item_id || '')
       const costItem = costItemId ? importItemById.value.get(costItemId) : undefined
+      const costLotId = String(lot.cost_lot_id || '')
+      const lotCost = costLotId ? lotCostById.value.get(costLotId) : undefined
       const importOrderId = String(lot.import_order_id || costItem?.import_order_id || '')
       const importOrder = importOrderId ? importOrderById.value.get(importOrderId) : undefined
-      const costSource = costItem || lot
+      const costSource = costItem || lotCost || lot
       const hasCost = canViewCost.value
         && (Object.prototype.hasOwnProperty.call(costSource || {}, 'unit_cost_with_vat')
           || Object.prototype.hasOwnProperty.call(costSource || {}, 'unit_cost'))
@@ -611,6 +624,10 @@ function openAdjustment(row: InventoryAuditRow) {
     reason: '',
     note: '',
     operation_id: makeId('op_inventory_adjust'),
+    unit_cost: 0,
+    vat_rate: 0,
+    allocation_mode: 'automatic',
+    lot_allocations: [],
   })
   showAdjustmentModal.value = true
 }
@@ -621,6 +638,15 @@ function closeAdjustmentModal() {
   adjustmentTarget.value = null
 }
 
+const adjustmentLots = computed(() => adjustmentTarget.value ? lotDetailsForRow(adjustmentTarget.value) : [])
+const adjustmentAllocationTotal = computed(() => roundQuantity(adjustmentForm.lot_allocations.reduce((sum: number, row: any) => sum + toNumber(row.quantity), 0)))
+function setAdjustmentLotQuantity(lotId: string, quantity: any) {
+  const next = roundQuantity(quantity)
+  const index = adjustmentForm.lot_allocations.findIndex(row => row.lot_id === lotId)
+  if (next <= 0) { if (index >= 0) adjustmentForm.lot_allocations.splice(index, 1); return }
+  if (index >= 0) adjustmentForm.lot_allocations[index].quantity = next
+  else adjustmentForm.lot_allocations.push({ lot_id: lotId, quantity: next })
+}
 function adjustmentProduct(row: InventoryAuditRow) {
   return products.value.find(product => product.id === row.product_id) || {
     id: row.product_id,
@@ -649,7 +675,7 @@ async function saveAdjustment() {
   if (nextQuantity < 0) return showToast('Số lượng tồn mới không được âm.', 'error')
   if (Math.abs(delta) < 0.0001) return showToast('Số lượng tồn mới chưa thay đổi.', 'error')
   if (!reason) return showToast('Vui lòng nhập lý do điều chỉnh.', 'error')
-  if (delta > 0 && !adjustmentCostItem.value) return showToast('Không tìm được phiếu nhập hợp lệ cùng sản phẩm, kho và logo để lấy giá cho phần tăng.', 'error')
+  if (delta > 0 && toNumber(adjustmentForm.unit_cost) <= 0) return showToast('Vui lòng nhập giá chưa VAT lớn hơn 0 cho phần tăng.', 'error')
 
   savingAdjustment.value = true
   try {
@@ -666,7 +692,10 @@ async function saveAdjustment() {
       logo: row.logo || '',
       quantity: delta,
       unit: row.unit || '',
-      cost_item_id: delta > 0 ? adjustmentCostItem.value?.id || '' : '',
+      unit_cost: delta > 0 ? toNumber(adjustmentForm.unit_cost) : 0,
+      vat_rate: delta > 0 ? toNumber(adjustmentForm.vat_rate) : 0,
+      allocation_mode: delta < 0 ? adjustmentForm.allocation_mode : 'increase',
+      lot_allocations: delta < 0 ? adjustmentForm.lot_allocations : [],
       reason,
       note: noteParts.join('\n'),
       operation_id: adjustmentForm.operation_id,
@@ -711,11 +740,18 @@ async function loadRows(force = false) {
 
     let importOrderRows: ImportOrderDoc[] = []
     let importItemRows: ImportOrderItemDoc[] = []
+    let protectedLotCostRows: Record<string, any>[] = []
     if (canViewCost.value) {
-      ;[importOrderRows, importItemRows] = await Promise.all([
+      const imports = await Promise.all([
         loadImportOrders(force),
         loadImportOrderItems(force),
       ])
+      importOrderRows = imports[0]
+      importItemRows = imports[1]
+      if (canAdjust.value) {
+        const lotCosts = await getDocs(collection(db, 'inventory_lot_costs'))
+        protectedLotCostRows = lotCosts.docs.map(snapshot => ({ ...snapshot.data(), id: snapshot.id }))
+      }
     }
 
     rows.value = balanceRows
@@ -724,6 +760,7 @@ async function loadRows(force = false) {
     products.value = productRows.filter(isActiveRecord)
     importOrders.value = importOrderRows
     importItems.value = importItemRows
+    lotCostRows.value = protectedLotCostRows
     exportOrders.value = exportOrderRows
     exportItems.value = exportItemRows
   } catch (error) {
@@ -864,9 +901,14 @@ onMounted(() => loadRows())
         </div>
       </div>
 
-      <div v-if="adjustmentDelta > 0" class="small subtle" style="margin-bottom: 12px;">
-        <template v-if="adjustmentCostItem">Giá và VAT của phần tăng lấy từ phiếu nhập gần nhất: <b>{{ importOrderById.get(String(adjustmentCostItem.import_order_id || ''))?.code || importOrderById.get(String(adjustmentCostItem.import_order_id || ''))?.import_code || adjustmentCostItem.import_order_id }}</b>.</template>
-        <template v-else>Chưa có phiếu nhập hợp lệ cùng sản phẩm, kho và logo; không thể tăng tồn cho đến khi có dữ liệu giá nguồn.</template>
+      <div v-if="adjustmentDelta > 0" class="form-grid" style="margin-bottom: 12px;">
+        <div class="form-group"><label>Giá chưa VAT</label><input v-model.number="adjustmentForm.unit_cost" class="input" type="number" min="0" step="0.001" /></div>
+        <div class="form-group"><label>VAT (%)</label><input v-model.number="adjustmentForm.vat_rate" class="input" type="number" min="0" max="100" step="0.001" /></div>
+        <div class="form-group"><label>Giá có VAT</label><div style="padding-top:9px;"><b>{{ currencyText(roundMoney(toNumber(adjustmentForm.unit_cost) * (1 + toNumber(adjustmentForm.vat_rate) / 100))) }}</b></div></div>
+      </div>
+      <div v-if="adjustmentDelta < 0" style="margin-bottom: 12px;">
+        <div class="form-group"><label>Cách chọn lô</label><select v-model="adjustmentForm.allocation_mode" class="select"><option value="automatic">Tự phân bổ theo cấu hình kho</option><option value="manual">Chọn lô thủ công</option></select></div>
+        <div v-if="adjustmentForm.allocation_mode === 'manual'" class="table-wrap"><table><thead><tr><th>Lô / nguồn</th><th>Tồn lô</th><th>Lấy giảm</th></tr></thead><tbody><tr v-for="lot in adjustmentLots" :key="lot.id"><td>{{ lot.import_code || lot.id }}</td><td>{{ quantityText(lot.available_quantity) }}</td><td><input class="input" type="number" min="0" :max="lot.available_quantity" step="0.001" :value="adjustmentForm.lot_allocations.find((row:any) => row.lot_id === lot.id)?.quantity || ''" @input="setAdjustmentLotQuantity(lot.id, ($event.target as HTMLInputElement).value)" /></td></tr></tbody></table><div class="small subtle">Đã phân bổ {{ quantityText(adjustmentAllocationTotal) }} / cần {{ quantityText(Math.abs(adjustmentDelta)) }}.</div></div>
       </div>
 
       <div class="form-group">

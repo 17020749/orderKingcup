@@ -1,10 +1,8 @@
 import {
   collection,
   doc,
-  query,
   runTransaction,
   serverTimestamp,
-  where,
 } from 'firebase/firestore'
 import type { OrderItemDoc } from '~/types/models'
 import { buildOrderCode, ORDER_SEQUENCE_START } from '~/utils/orderCode'
@@ -57,6 +55,7 @@ export type AtomicOrderSaveInput = {
   orderPayload: Record<string, any>
   nextItems: Record<string, any>[]
   existingItems: OrderItemDoc[]
+  invoiceSyncIds?: string[]
   invoiceMutation?: AtomicInvoiceMutation
   activityAction: string
   activityItemName: string
@@ -130,6 +129,10 @@ export function useAtomicOrderSave() {
     const sequenceRef = doc(db, 'order_sequences', input.customerId)
     const activityRef = doc(collection(db, 'activity_logs'))
     const invoiceRef = invoiceMutation ? doc(db, 'invoices', invoiceMutation.invoiceId) : null
+    const invoiceSyncIds = input.mode === 'edit'
+      ? [...new Set((input.invoiceSyncIds || []).map(value => String(value || '').trim()).filter(Boolean))]
+      : []
+    const invoiceSyncRefs = invoiceSyncIds.map(invoiceId => doc(db, 'invoices', invoiceId))
     const operationId = buildOrderOperationId(input.orderId)
     let finalResult: AtomicOrderSaveResult | null = null
 
@@ -156,9 +159,8 @@ export function useAtomicOrderSave() {
       })
         ? await transaction.get(invoiceRef)
         : null
-      const activeInvoiceSnapshot = input.mode === 'edit'
-        ? await transaction.get(query(collection(db, 'invoices'), where('order_id', '==', input.orderId)))
-        : null
+      const syncedInvoiceRefs = invoiceSyncRefs.filter(ref => ref.path !== invoiceRef?.path)
+      const syncedInvoiceSnapshots = await Promise.all(syncedInvoiceRefs.map(ref => transaction.get(ref)))
       const effectiveOwnership = resolveOrderOwnershipForSave({
         mode: input.mode,
         persistedOrder: existingOrder,
@@ -305,9 +307,15 @@ export function useAtomicOrderSave() {
         ? preservePersistedOrderIdentityForEdit(candidateFinalOrderPayload, existingOrder)
         : candidateFinalOrderPayload
       const invoiceAmount = Math.max(0, toNumber(finalOrderPayload.payable_amount))
-      const activeInvoices = (activeInvoiceSnapshot?.docs || [])
-        .map(snapshot => ({ ...snapshot.data(), id: snapshot.id, ref: snapshot.ref }))
-        .filter(isActiveOrderRelation)
+      const syncedInvoices = [
+        ...(invoiceSnapshot && invoiceRef ? [{ snapshot: invoiceSnapshot, ref: invoiceRef }] : []),
+        ...syncedInvoiceSnapshots.map((snapshot, index) => ({
+          snapshot,
+          ref: syncedInvoiceRefs[index]!,
+        })),
+      ].filter(({ snapshot }) => snapshot.exists()
+        && String(snapshot.data().order_id || '') === input.orderId
+        && isActiveOrderRelation(snapshot.data()))
 
       if (input.mode === 'create') {
         transaction.set(sequenceRef, {
@@ -355,9 +363,9 @@ export function useAtomicOrderSave() {
         })
       }
       const statusUpdatedInvoiceId = invoiceMutation?.mode === 'status_update' ? invoiceMutation.invoiceId : ''
-      activeInvoices.forEach(invoice => {
-        if (invoice.id === statusUpdatedInvoiceId || toNumber(invoice.invoice_amount) === invoiceAmount) return
-        transaction.update(invoice.ref, {
+      syncedInvoices.forEach(({ snapshot, ref }) => {
+        if (snapshot.id === statusUpdatedInvoiceId || toNumber(snapshot.data().invoice_amount) === invoiceAmount) return
+        transaction.update(ref, {
           invoice_amount: invoiceAmount,
           last_operation_id: operationId,
           updated_at: serverTimestamp(),
