@@ -307,6 +307,7 @@ function stageContextForOrder(order, maps) {
 
 function buildPeriodView({
   periodKey,
+  customRange,
   nowValue,
   orders,
   receivedPayments,
@@ -316,17 +317,27 @@ function buildPeriodView({
   productByCode,
   toNumber,
 }) {
-  const start = startOfPeriod(periodKey, nowValue)
-  const end = dashboardTimestampValue(nowValue) || Date.now()
+  const isCustomRange = periodKey === 'custom'
+  const start = isCustomRange
+    ? dashboardTimestampValue(customRange?.from)
+    : startOfPeriod(periodKey, nowValue)
+  const end = isCustomRange
+    ? dashboardTimestampValue(customRange?.to)
+    : (dashboardTimestampValue(nowValue) || Date.now())
+  const matchesPeriod = timestamp => {
+    if (!timestamp) return false
+    if (!start && !end) return true
+    return (!start || timestamp >= start) && (!end || timestamp <= end)
+  }
   const periodOrders = periodKey === 'all'
     ? orders
-    : orders.filter(order => inPeriod(rowDateValue(order, ['order_date', 'created_at']), start, end))
+    : orders.filter(order => matchesPeriod(rowDateValue(order, ['order_date', 'created_at'])))
   const businessOrders = periodOrders.filter(order => !isCancelledOrder(order))
   const businessOrderIds = new Set(businessOrders.map(order => String(order.id || '').trim()).filter(Boolean))
   const periodItems = validItems.filter(item => businessOrderIds.has(String(item.order_id || '').trim()))
   const periodPayments = periodKey === 'all'
     ? receivedPayments
-    : receivedPayments.filter(payment => inPeriod(rowDateValue(payment, ['payment_date', 'created_at']), start, end))
+    : receivedPayments.filter(payment => matchesPeriod(rowDateValue(payment, ['payment_date', 'created_at'])))
 
   const profitByOrder = new Map()
   periodItems.forEach(item => {
@@ -501,6 +512,7 @@ export function buildDashboardSnapshot({
   isActive,
   toNumber,
   now = new Date(),
+  customRange = null,
 }) {
   if (typeof computePaymentStatus !== 'function') throw new Error('computePaymentStatus is required.')
   if (typeof isActive !== 'function') throw new Error('isActive is required.')
@@ -571,6 +583,7 @@ export function buildDashboardSnapshot({
     period.key,
     buildPeriodView({
       periodKey: period.key,
+      customRange,
       nowValue: now,
       orders: ordersWithPayment,
       receivedPayments,
@@ -581,6 +594,20 @@ export function buildDashboardSnapshot({
       toNumber,
     }),
   ]))
+  if (customRange?.from || customRange?.to) {
+    periodEntries.custom = buildPeriodView({
+      periodKey: 'custom',
+      customRange,
+      nowValue: now,
+      orders: ordersWithPayment,
+      receivedPayments,
+      validItems,
+      firstOrderByCustomer,
+      productById,
+      productByCode,
+      toNumber,
+    })
+  }
 
   const contexts = new Map(ordersWithPayment.map(order => [order.id, stageContextForOrder(order, maps)]))
   const pipelineDefinitions = [

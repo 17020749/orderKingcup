@@ -10,7 +10,7 @@ import {
   invalidateQueryCacheTags,
 } from '~/composables/useQueryCache'
 
-export const DASHBOARD_CACHE_NAMESPACE = 'dashboard:snapshot:v4'
+export const DASHBOARD_CACHE_NAMESPACE = 'dashboard:snapshot:v5'
 export const DASHBOARD_CACHE_TAGS = [
   'dashboard:snapshot',
   ...DASHBOARD_SOURCE_COLLECTIONS.map(collectionName => `collection:${collectionName}`),
@@ -88,7 +88,7 @@ export function useDashboardSnapshot() {
     return empty
   }
 
-  async function fetchSnapshot(forceSources = false) {
+  async function fetchSnapshot(forceSources = false, customRange: { from?: string; to?: string } | null = null) {
     // Lượt mở Dashboard thông thường được phép dùng cache ngắn hạn của từng
     // collection. Chỉ nút "Làm mới dữ liệu" mới buộc toàn bộ nguồn đọc lại
     // Firestore, tránh nhân đôi lượt đọc giữa cache nguồn và cache snapshot.
@@ -119,18 +119,23 @@ export function useDashboardSnapshot() {
       isActive,
       toNumber,
       now: new Date(),
+      customRange,
     })
   }
 
-  function loadDashboardSnapshot(force = false) {
+  function loadDashboardSnapshot(force = false, customRange: { from?: string; to?: string } | null = null) {
+    const range = {
+      from: String(customRange?.from || '').trim(),
+      to: String(customRange?.to || '').trim(),
+    }
     return cachedQuery({
       authKey: String(authorizationCacheKey.value || 'anonymous'),
       namespace: DASHBOARD_CACHE_NAMESPACE,
-      params: { schema: 3 },
+      params: { schema: 4, ...range },
       tags: DASHBOARD_CACHE_TAGS,
       policy: QUERY_CACHE_POLICIES.dashboardSnapshot,
       force,
-      fetcher: () => fetchSnapshot(force),
+      fetcher: () => fetchSnapshot(force, range),
       onBackgroundError: error => {
         console.warn('[KINGCUP_CACHE] Không thể làm mới Dashboard trong nền.', error)
       },
