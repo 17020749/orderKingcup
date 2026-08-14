@@ -76,8 +76,6 @@ const detailTab = ref<'lots' | 'movements'>('movements')
 
 const adjustmentForm = reactive({
   quantity: 0,
-  unit_cost: 0,
-  vat_rate: 0,
   reason: '',
   note: '',
   operation_id: makeId('op_inventory_adjust'),
@@ -112,6 +110,29 @@ const activeImportItemIds = computed(() => new Set(
     .map(item => String(item.id || '').trim())
     .filter(Boolean),
 ))
+
+function adjustmentCostItemFor(row: InventoryAuditRow) {
+  const productId = String(row.product_id || '').trim()
+  const warehouseId = String(row.warehouse_id || '').trim()
+  const logo = String(row.logo || '').trim()
+  return importItems.value
+    .filter(item => isActiveRecord(item))
+    .filter(item => activeImportOrderIds.value.has(String(item.import_order_id || '').trim()))
+    .filter(item => String(item.product_id || '').trim() === productId)
+    .filter(item => String(item.warehouse_id || '').trim() === warehouseId)
+    .filter(item => String((item as any).logo || '').trim() === logo)
+    .sort((left, right) => {
+      const leftOrder = importOrderById.value.get(String(left.import_order_id || ''))
+      const rightOrder = importOrderById.value.get(String(right.import_order_id || ''))
+      const leftDate = String(leftOrder?.import_date || (left as any).import_date || left.created_at || '')
+      const rightDate = String(rightOrder?.import_date || (right as any).import_date || right.created_at || '')
+      return rightDate.localeCompare(leftDate) || String(right.id || '').localeCompare(String(left.id || ''))
+    })[0] || null
+}
+
+const adjustmentCostItem = computed(() => adjustmentTarget.value && canViewCost.value
+  ? adjustmentCostItemFor(adjustmentTarget.value)
+  : null)
 
 function inventoryKey(row: any) {
   return [
@@ -587,8 +608,6 @@ function openAdjustment(row: InventoryAuditRow) {
   adjustmentTarget.value = row
   Object.assign(adjustmentForm, {
     quantity: roundQuantity(row.quantity),
-    unit_cost: 0,
-    vat_rate: 0,
     reason: '',
     note: '',
     operation_id: makeId('op_inventory_adjust'),
@@ -630,9 +649,7 @@ async function saveAdjustment() {
   if (nextQuantity < 0) return showToast('Số lượng tồn mới không được âm.', 'error')
   if (Math.abs(delta) < 0.0001) return showToast('Số lượng tồn mới chưa thay đổi.', 'error')
   if (!reason) return showToast('Vui lòng nhập lý do điều chỉnh.', 'error')
-  if (delta > 0 && toNumber(adjustmentForm.unit_cost) <= 0) {
-    return showToast('Điều chỉnh tăng cần nhập giá chưa VAT lớn hơn 0.', 'error')
-  }
+  if (delta > 0 && !adjustmentCostItem.value) return showToast('Không tìm được phiếu nhập hợp lệ cùng sản phẩm, kho và logo để lấy giá cho phần tăng.', 'error')
 
   savingAdjustment.value = true
   try {
@@ -649,8 +666,7 @@ async function saveAdjustment() {
       logo: row.logo || '',
       quantity: delta,
       unit: row.unit || '',
-      unit_cost: delta > 0 ? roundMoney(adjustmentForm.unit_cost) : 0,
-      vat_rate: delta > 0 ? toNumber(adjustmentForm.vat_rate) : 0,
+      cost_item_id: delta > 0 ? adjustmentCostItem.value?.id || '' : '',
       reason,
       note: noteParts.join('\n'),
       operation_id: adjustmentForm.operation_id,
@@ -848,15 +864,9 @@ onMounted(() => loadRows())
         </div>
       </div>
 
-      <div v-if="adjustmentDelta > 0" class="form-grid">
-        <div class="form-group">
-          <label>Giá chưa VAT của phần tăng</label>
-          <input v-model.number="adjustmentForm.unit_cost" class="input" type="number" min="0" step="0.001" placeholder="Bắt buộc khi tăng tồn" />
-        </div>
-        <div class="form-group">
-          <label>VAT (%)</label>
-          <input v-model.number="adjustmentForm.vat_rate" class="input" type="number" min="0" max="100" step="0.001" />
-        </div>
+      <div v-if="adjustmentDelta > 0" class="small subtle" style="margin-bottom: 12px;">
+        <template v-if="adjustmentCostItem">Giá và VAT của phần tăng lấy từ phiếu nhập gần nhất: <b>{{ importOrderById.get(String(adjustmentCostItem.import_order_id || ''))?.code || importOrderById.get(String(adjustmentCostItem.import_order_id || ''))?.import_code || adjustmentCostItem.import_order_id }}</b>.</template>
+        <template v-else>Chưa có phiếu nhập hợp lệ cùng sản phẩm, kho và logo; không thể tăng tồn cho đến khi có dữ liệu giá nguồn.</template>
       </div>
 
       <div class="form-group">

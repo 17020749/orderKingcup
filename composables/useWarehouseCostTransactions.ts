@@ -1139,6 +1139,7 @@ export function useWarehouseCostTransactions() {
       const stockMovementIds: string[] = []
       await runTransaction(db, async tx => {
         const operationSnap = await tx.get(doc(db, 'warehouse_operations', operationId))
+        const adjustmentCostItemSnap = adjustmentCostItemId ? await tx.get(doc(db, 'import_order_items', adjustmentCostItemId)) : null
         const states = await readBalanceStates(tx, balanceRefs, exportDate)
         if (!operationSnap.exists() || operationSnap.data()?.status !== 'processing') throw new Error('Operation xuất kho không hợp lệ.')
 
@@ -2208,10 +2209,8 @@ export function useWarehouseCostTransactions() {
     const id = makeId('adj')
     const operationId = operationIdOf(input.operation_id, `inventory_adjust:${id}`)
     const setting = await loadIssueSetting()
-    const adjustmentCost = quantity > 0 ? importCostFields(input, quantity) : null
-    if (quantity > 0 && adjustmentCost!.unitCost <= 0) {
-      throw new Error('Điều chỉnh tăng cần có giá nhập lớn hơn 0 để cập nhật giá trị tồn.')
-    }
+    const adjustmentCostItemId = quantity > 0 ? normalizeId(input.cost_item_id) : ''
+    if (quantity > 0 && !adjustmentCostItemId) throw new Error('Điều chỉnh tăng cần có dòng phiếu nhập nguồn để xác định giá vốn.')
     const balanceKey = await inventoryBalanceId(product.id, warehouse.id, input.logo)
     const refs = new Map([[balanceKey, { id: balanceKey, ref: doc(db, 'inventory_balances', balanceKey), product, warehouse, logo: normalizeLogo(input.logo) }]])
     const replay = await claimOperation({ operationId, action: 'inventory_adjust', targetCollection: 'inventory_adjustments', targetId: id, actor })
@@ -2220,8 +2219,14 @@ export function useWarehouseCostTransactions() {
     try {
       await runTransaction(db, async tx => {
         const operationSnap = await tx.get(doc(db, 'warehouse_operations', operationId))
+        const adjustmentCostItemSnap = adjustmentCostItemId ? await tx.get(doc(db, 'import_order_items', adjustmentCostItemId)) : null
         const states = await readBalanceStates(tx, refs, date)
         if (!operationSnap.exists() || operationSnap.data()?.status !== 'processing') throw new Error('Operation điều chỉnh tồn không hợp lệ.')
+        const adjustmentCostItem = adjustmentCostItemSnap?.exists() ? adjustmentCostItemSnap.data() || {} : null
+        if (quantity > 0 && !adjustmentCostItem) throw new Error('Không tìm thấy dòng phiếu nhập nguồn của điều chỉnh tăng.')
+        if (quantity > 0 && (normalizeId(adjustmentCostItem?.product_id) !== product.id || normalizeId(adjustmentCostItem?.warehouse_id) !== warehouse.id || normalizeLogo(adjustmentCostItem?.logo) !== normalizeLogo(input.logo) || adjustmentCostItem?.deleted === true || adjustmentCostItem?.active === false)) throw new Error('Dòng phiếu nhập nguồn không còn phù hợp với sản phẩm, kho hoặc logo cần điều chỉnh.')
+        const adjustmentCost = quantity > 0 ? importCostFields(adjustmentCostItem, quantity) : null
+        if (quantity > 0 && adjustmentCost!.unitCost <= 0) throw new Error('Dòng phiếu nhập nguồn chưa có giá nhập hợp lệ.')
         const state = states.get(balanceKey)!
         reconcileState(state)
         let allocations: LotAllocation[] = []
@@ -2229,15 +2234,17 @@ export function useWarehouseCostTransactions() {
           const lotId = safeDocId(`adjustment_lot__${id}`, 'lot')
           addLot(state, {
             id: lotId,
-            import_code: 'ADJUSTMENT',
-            import_date: date,
+            import_order_id: String(adjustmentCostItem?.import_order_id || ''),
+            import_order_item_id: adjustmentCostItemId,
+            import_code: String(adjustmentCostItem?.import_code || adjustmentCostItem?.import_order_code || 'ADJUSTMENT'),
+            import_date: String(adjustmentCostItem?.import_date || date),
             product_id: product.id,
             warehouse_id: warehouse.id,
             logo: normalizeLogo(input.logo),
             unit: input.unit || product.unit || '',
             received_quantity: quantity,
             available_quantity: quantity,
-            cost_item_id: '',
+            cost_item_id: adjustmentCostItemId,
             unit_cost: adjustmentCost!.unitCost,
             vat_rate: adjustmentCost!.vatRate,
             vat_percent: adjustmentCost!.vatRate,
@@ -2246,7 +2253,7 @@ export function useWarehouseCostTransactions() {
             source: 'inventory_adjustment',
             status: 'available',
           })
-          allocations = [{ lot_id: lotId, quantity, import_code: 'ADJUSTMENT', import_date: date, source: 'inventory_adjustment' }]
+          allocations = [{ lot_id: lotId, quantity, import_code: String(adjustmentCostItem?.import_code || adjustmentCostItem?.import_order_code || 'ADJUSTMENT'), import_date: String(adjustmentCostItem?.import_date || date), cost_item_id: adjustmentCostItemId, source: 'inventory_adjustment' }]
         } else {
           allocations = allocateFromState(state, Math.abs(quantity), setting)
         }
@@ -2261,6 +2268,8 @@ export function useWarehouseCostTransactions() {
           logo: normalizeLogo(input.logo),
           quantity,
           unit: input.unit || product.unit || '',
+          cost_item_id: adjustmentCostItemId,
+          import_order_id: String(adjustmentCostItem?.import_order_id || ''),
           unit_cost: adjustmentCost?.unitCost ?? null,
           vat_rate: adjustmentCost?.vatRate ?? null,
           vat_percent: adjustmentCost?.vatRate ?? null,

@@ -142,12 +142,15 @@ test('warehouse users can load inventory without reading priced import documents
 
 test('positive inventory adjustments retain VAT-inclusive cost on their lots', () => {
   const adjustmentSection = transactions.slice(transactions.indexOf('async function createInventoryAdjustment'))
-  assert.match(adjustmentSection, /const adjustmentCost = quantity > 0 \? importCostFields\(input, quantity\) : null/)
+  assert.match(adjustmentSection, /const adjustmentCostItemId = quantity > 0 \? normalizeId\(input\.cost_item_id\) : ''/)
+  assert.match(adjustmentSection, /await tx\.get\(doc\(db, 'import_order_items', adjustmentCostItemId\)\)/)
+  assert.match(adjustmentSection, /const adjustmentCost = quantity > 0 \? importCostFields\(adjustmentCostItem, quantity\) : null/)
   assert.match(adjustmentSection, /unit_cost_with_vat: adjustmentCost!\.unitCostWithVat/)
   assert.match(adjustmentSection, /line_cost: adjustmentCost!\.lineCost/)
   assert.match(inventoryPage, /\['warehouse_transfer', 'inventory_adjustment', 'legacy_opening'\]/)
   assert.match(inventoryPage, /const costSource = costItem \|\| lot/)
-  assert.match(inventoryPage, /unit_cost: delta > 0 \? roundMoney\(adjustmentForm\.unit_cost\) : 0/)
+  assert.match(inventoryPage, /function adjustmentCostItemFor\(row: InventoryAuditRow\)/)
+  assert.match(inventoryPage, /cost_item_id: delta > 0 \? adjustmentCostItem\.value\?\.id \\|\\| '' : ''/)
 })
 
 test('order logo color is saved as metadata and shown beside logo', () => {
