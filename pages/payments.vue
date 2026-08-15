@@ -494,7 +494,7 @@ onMounted(() => {
         <button class="btn" @click="loadRows(true)">Làm mới</button>
       </div>
       <LoadingState v-if="loading" />
-      <div v-else class="table-wrap">
+      <div v-else class="table-wrap table-wrap--sticky-head">
         <table>
           <thead><tr><th>Mã đơn</th><th>Ngày</th><th>Loại</th><th>Số tiền</th><th>Phương thức</th><th>Tài khoản nhận</th><th>Ảnh người gửi</th><th>Trạng thái</th><th>Người tạo</th><th>Thao tác</th></tr></thead>
           <tbody>
@@ -611,7 +611,7 @@ onMounted(() => {
       </div>
 
       <LoadingState v-if="bankAccountsLoading" />
-      <div v-else class="table-wrap">
+      <div v-else class="table-wrap table-wrap--sticky-head">
         <table>
           <thead><tr><th>Ngân hàng</th><th>Số tài khoản</th><th>Tên người nhận</th><th>Người tạo</th><th>Thao tác</th></tr></thead>
           <tbody>

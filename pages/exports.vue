@@ -86,6 +86,18 @@ const warehouseOptions = computed(() =>
   })),
 );
 
+const warehouseNameById = computed(() => new Map(
+  warehouses.value.map((row) => [
+    String(row.id || "").trim(),
+    String(row.name || row.warehouse_code || row.id || "").trim(),
+  ]),
+));
+
+function warehouseDisplayName(id: any, savedName: any = "") {
+  const warehouseId = String(id || "").trim();
+  return warehouseNameById.value.get(warehouseId) || String(savedName || "").trim() || warehouseId || "-";
+}
+
 const filterValues = computed(() => ({ destination: destinationFilter.value, warehouse: fromWarehouseFilter.value, status: statusFilter.value, logo: logoFilter.value, from: dateFrom.value, to: dateTo.value }));
 const toolbarFilters = computed(() => [
   { key: 'destination', label: 'Nơi nhận', allLabel: 'Tất cả nơi nhận', options: [{ label: 'Khách hàng', value: 'customer' }, { label: 'Kho khác', value: 'warehouse' }] },
@@ -230,7 +242,7 @@ function destinationLabel(value: any) {
 
 function detailWarehouseReceiver(row: any) {
   if (row?.destination_type !== "warehouse") return "-";
-  return row.to_warehouse_name || row.destination_name || "-";
+  return warehouseDisplayName(row.to_warehouse_id, row.to_warehouse_name || row.destination_name);
 }
 
 function detailCustomerReceiver(row: any) {
@@ -239,7 +251,7 @@ function detailCustomerReceiver(row: any) {
 }
 
 function itemWarehouseReceiver(item: any) {
-  return item.to_warehouse_name || item.to_warehouse_id || "-";
+  return warehouseDisplayName(item.to_warehouse_id, item.to_warehouse_name);
 }
 
 function itemCustomerReceiver(item: any) {
@@ -690,7 +702,7 @@ onMounted(() => loadRows());
           <tbody>
             <tr v-for="item in selectedItems" :key="item.id">
               <td><b>{{ item.product_code }}</b><div class="small subtle">{{ item.product_name }}</div></td>
-              <td>{{ item.from_warehouse_name || item.from_warehouse_id || "-" }}</td>
+              <td>{{ warehouseDisplayName(item.from_warehouse_id || item.warehouse_id, item.from_warehouse_name || item.warehouse_name) }}</td>
               <td>{{ itemWarehouseReceiver(item) }}</td>
               <td>{{ itemCustomerReceiver(item) }}</td>
               <td>{{ itemSourceLogoText(item) }}</td>
