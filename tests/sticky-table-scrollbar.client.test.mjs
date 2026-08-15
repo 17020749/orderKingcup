@@ -71,11 +71,10 @@ test('các bảng chính có sticky header dùng chung khi cuộn trong vùng b�
     readFile(new URL('../pages/invoices.vue', import.meta.url), 'utf8'),
   ])
 
-  assert.match(styles, /\.table-wrap--page-sticky\s*\{[\s\S]*overflow-x: clip[\s\S]*overflow-y: visible/)
-  assert.match(styles, /transform: translateX\(calc\(-1 \* var\(--table-scroll-x, 0px\)\)\)/)
+  assert.match(styles, /\.table-wrap--page-sticky\s*\{[\s\S]*position: relative/)
   assert.match(styles, /\.table-wrap--page-sticky > table > thead > tr > th\s*\{[\s\S]*z-index: 2/)
-  assert.match(plugin, /function usesPageStickyTable/)
-  assert.match(plugin, /table\.style\.setProperty\('--table-scroll-x'/)
+  assert.match(plugin, /activeTable\.scrollLeft = proxyElement\.scrollLeft/)
+  assert.doesNotMatch(plugin, /--table-scroll-x/)
   for (const page of [orders, requests, customers, payments, invoices]) {
     assert.match(page, /table-wrap table-wrap--page-sticky/)
   }

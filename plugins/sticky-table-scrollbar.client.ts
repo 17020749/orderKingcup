@@ -155,34 +155,16 @@ export default defineNuxtPlugin(nuxtApp => {
       })
   }
 
-  function usesPageStickyTable(table: HTMLElement) {
-    return table.classList.contains('table-wrap--page-sticky')
-  }
-
-  function tableScrollLeft(table: HTMLElement) {
-    if (!usesPageStickyTable(table)) return table.scrollLeft
-    return Number.parseFloat(table.style.getPropertyValue('--table-scroll-x')) || 0
-  }
-
-  function setTableScrollLeft(table: HTMLElement, value: number) {
-    const nextValue = Math.max(0, Number(value) || 0)
-    if (usesPageStickyTable(table)) {
-      table.style.setProperty('--table-scroll-x', `${nextValue}px`)
-      return
-    }
-    table.scrollLeft = nextValue
-  }
-
   function onProxyScroll() {
     if (!proxyElement || !activeTable || syncingScroll) return
     syncingScroll = true
-    setTableScrollLeft(activeTable, proxyElement.scrollLeft)
+    activeTable.scrollLeft = proxyElement.scrollLeft
     proxyElement.setAttribute('aria-valuenow', String(Math.round(proxyElement.scrollLeft)))
     syncingScroll = false
   }
 
   function onTableScroll() {
-    if (!proxyElement || !activeTable || syncingScroll || usesPageStickyTable(activeTable)) return
+    if (!proxyElement || !activeTable || syncingScroll) return
     syncingScroll = true
     proxyElement.scrollLeft = activeTable.scrollLeft
     proxyElement.setAttribute('aria-valuenow', String(Math.round(activeTable.scrollLeft)))
@@ -192,7 +174,6 @@ export default defineNuxtPlugin(nuxtApp => {
   function setActiveTable(nextTable: HTMLElement | null) {
     if (activeTable === nextTable) return
     activeTable?.removeEventListener('scroll', onTableScroll)
-    activeTable?.style.removeProperty('--table-scroll-x')
     tableResizeObserver?.disconnect()
     activeTable = nextTable
 
@@ -240,11 +221,10 @@ export default defineNuxtPlugin(nuxtApp => {
     proxyElement.setAttribute('aria-valuemin', '0')
     proxyElement.hidden = false
 
-    const currentScrollLeft = tableScrollLeft(candidate.element)
-    if (Math.abs(proxyElement.scrollLeft - currentScrollLeft) > 1) {
+    if (Math.abs(proxyElement.scrollLeft - candidate.element.scrollLeft) > 1) {
       syncingScroll = true
-      proxyElement.scrollLeft = currentScrollLeft
-      proxyElement.setAttribute('aria-valuenow', String(Math.round(currentScrollLeft)))
+      proxyElement.scrollLeft = candidate.element.scrollLeft
+      proxyElement.setAttribute('aria-valuenow', String(Math.round(candidate.element.scrollLeft)))
       syncingScroll = false
     }
   }

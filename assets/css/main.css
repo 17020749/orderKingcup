@@ -507,12 +507,7 @@ button {
   border-radius: 14px;
 }
 .table-wrap--page-sticky {
-  overflow-x: clip;
-  overflow-y: visible;
   position: relative;
-}
-.table-wrap--page-sticky > table {
-  transform: translateX(calc(-1 * var(--table-scroll-x, 0px)));
 }
 .table-wrap--page-sticky > table > thead > tr > th {
   top: 0;
