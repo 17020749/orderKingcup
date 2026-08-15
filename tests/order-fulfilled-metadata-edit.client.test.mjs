@@ -15,6 +15,10 @@ const ordersPageSource = fs.readFileSync(
   new URL('../pages/orders.vue', import.meta.url),
   'utf8',
 )
+const orderPrintSource = fs.readFileSync(
+  new URL('../utils/orderPrintDocuments.ts', import.meta.url),
+  'utf8',
+)
 const fulfilledSaveSource = fs.readFileSync(
   new URL('../composables/useFulfilledOrderMetadataSave.ts', import.meta.url),
   'utf8',
@@ -212,4 +216,13 @@ test('fulfilled invoice exception is scoped away from delete lock and duplicate 
   const legacyEnd = firestoreRulesSource.indexOf('function invoiceOrderCascadeDeleteAllowed()', legacyStart)
   const legacyRule = firestoreRulesSource.slice(legacyStart, legacyEnd)
   assert.match(legacyRule, /fulfilledOrderInvoiceMutationFieldsAllowed\(\)/)
+})
+
+test('orders expose fulfillment filtering and flag fulfilled orders with unpaid balances', () => {
+  assert.match(ordersPageSource, /const fulfillmentStatusFilter = ref\(''\)/)
+  assert.match(ordersPageSource, /fulfillmentStatusKey\(row\.warehouse_fulfillment_status\)/)
+  assert.match(ordersPageSource, /hasFulfilledPaymentAlert\(row\)/)
+  assert.match(ordersPageSource, /order-row--payment-alert/)
+  assert.match(orderPrintSource, /email\?: string/)
+  assert.match(orderPrintSource, /info\.email \? `<div class="info-row"><strong>Địa chỉ email:<\/strong>/)
 })

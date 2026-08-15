@@ -6,6 +6,7 @@ export type PrintCustomer = {
   company?: string
   contact?: string
   phone?: string
+  email?: string
   taxCode?: string
   billingAddress?: string
   shippingAddress?: string
@@ -87,6 +88,7 @@ function customerData(order: any, customer: any): PrintCustomer {
     company: row.company_name || row.customer_name || order.customer_name || '',
     contact: row.customer_name || order.customer_name || '',
     phone: row.phone || order.phone || '',
+    email: row.email || order.email || '',
     taxCode: row.tax_code || order.tax_code || '',
     billingAddress: row.billing_address || order.billing_address || '',
     shippingAddress: row.shipping_address || order.shipping_address || '',
@@ -322,6 +324,7 @@ export function buildCommercialPrintHtml(options: CommercialPrintOptions) {
         <div class="info-row two"><strong>Người đặt hàng:</strong><span>${escapeHtml(info.contact)}</span><strong>SĐT:</strong><span>${escapeHtml(info.phone)}</span></div>
         <div class="info-row"><strong>Địa chỉ hóa đơn:</strong><span>${escapeHtml(info.billingAddress)}</span></div>
         <div class="info-row"><strong>Địa chỉ giao hàng:</strong><span>${escapeHtml(info.shippingAddress)}</span></div>
+        ${info.email ? `<div class="info-row"><strong>Địa chỉ email:</strong><span>${escapeHtml(info.email)}</span></div>` : ''}
         <div class="info-row sale"><strong>Nhân viên kinh doanh:</strong><span>${escapeHtml(saleName)}</span><strong>SĐT:</strong><span>${escapeHtml(salePhone)}</span></div>
       </div>
       <div class="intro">
