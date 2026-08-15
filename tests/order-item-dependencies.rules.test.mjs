@@ -119,6 +119,25 @@ test('fulfilled order content is locked for editor and admin', async () => {
   }
 })
 
+test('stale fulfilled parent must be reconciled by warehouse authority before item editing', async () => {
+  const editorDb = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  const adminDb = env.authenticatedContext(ADMIN, { email: ADMIN }).firestore()
+
+  await assertFails(updateDoc(doc(editorDb, 'orders', 'order-full'), {
+    warehouse_fulfillment_status: 'da_xuat_1_phan',
+    warehouse_request_status: 'da_xuat',
+    updated_at: 'now',
+  }))
+  await assertFails(updateDoc(doc(adminDb, 'order_items', 'item-full'), { quantity: 11 }))
+
+  await assertSucceeds(updateDoc(doc(adminDb, 'orders', 'order-full'), {
+    warehouse_fulfillment_status: 'da_xuat_1_phan',
+    warehouse_request_status: 'da_xuat',
+    updated_at: 'now',
+  }))
+  await assertSucceeds(updateDoc(doc(adminDb, 'order_items', 'item-full'), { quantity: 11 }))
+})
+
 test('orders.edit owner can read export and printing dependencies used by client guard', async () => {
   const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
   assert.equal((await assertSucceeds(getDoc(doc(db, 'order_export_requests', 'request-active')))).exists(), true)

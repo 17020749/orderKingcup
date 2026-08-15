@@ -191,6 +191,16 @@ test('revalidates and repairs a stale fulfilled summary before limited save', ()
   assert.equal(ordersPageSource.includes('loadScopedInvoicesForOrders([persistedOrder], true)'), true)
 })
 
+test('repairs a stale persisted fulfilled status before a normal partial-order edit', () => {
+  assert.equal(ordersPageSource.includes('persistedEditItems = persistedItems'), true)
+  assert.equal(ordersPageSource.includes('if (isFulfilledOrder(latestSummary))'), true)
+  assert.equal(ordersPageSource.includes('if (isFulfilledOrder(persistedOrder))'), true)
+  assert.equal(ordersPageSource.includes("saveStage = 'reconcile_warehouse_summary'"), true)
+  assert.equal(ordersPageSource.includes('warehouse_fulfillment_status: latestSummary.warehouse_fulfillment_status'), true)
+  assert.equal(ordersPageSource.includes('previousItems: persistedItems'), true)
+  assert.equal(ordersPageSource.includes("'orders/order_items/invoices'"), true)
+})
+
 test('warehouse release persists an exact order summary instead of a permanent partial fallback', () => {
   assert.equal(warehouseRequestsSource.includes('async function deriveOrderSummaryPatch('), true)
   assert.equal(warehouseRequestsSource.includes('loadPersistedOrder(orderId)'), true)
