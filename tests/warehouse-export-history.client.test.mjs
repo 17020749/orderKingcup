@@ -209,3 +209,23 @@ test('page lịch sử chỉ đọc và tái sử dụng SearchableSelect', asyn
   assert.equal((requestPage.match(/type="datetime-local"/g) || []).length >= 2, true)
   assert.match(requestPage, /isDateTimeInRange/)
 })
+
+test('warehouse labels resolve ids through the warehouse catalog on every warehouse screen', async () => {
+  const [exportsPage, historyPage, inventoryPage] = await Promise.all([
+    readFile(new URL('../pages/exports.vue', import.meta.url), 'utf8'),
+    readFile(new URL('../pages/warehouse-export-history.vue', import.meta.url), 'utf8'),
+    readFile(new URL('../pages/inventory.vue', import.meta.url), 'utf8'),
+  ])
+
+  for (const page of [exportsPage, historyPage, inventoryPage]) {
+    assert.match(page, /function warehouseDisplayName\(id: any, savedName: any = ['"]{2}\)/)
+    assert.match(page, /warehouseNameById/)
+  }
+
+  assert.match(exportsPage, /warehouseDisplayName\(item\.from_warehouse_id \|\| item\.warehouse_id/)
+  assert.match(exportsPage, /warehouseDisplayName\(row\.to_warehouse_id, row\.to_warehouse_name \|\| row\.destination_name\)/)
+  assert.match(historyPage, /loadOptional\(loadWarehouses, force\)/)
+  assert.match(historyPage, /warehouse_name: warehouseDisplayName\(row\.warehouse_id, row\.warehouse_name\)/)
+  assert.match(inventoryPage, /warehouse_name: warehouseDisplayName\(row\.warehouse_id, row\.warehouse_name\)/)
+  assert.match(inventoryPage, /warehouseDisplayName\(selected\.warehouse_id, selected\.warehouse_name\)/)
+})

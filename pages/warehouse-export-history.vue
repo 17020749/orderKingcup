@@ -12,6 +12,7 @@ const { hasPermission } = useAuth()
 const {
   loadExportOrders,
   loadExportOrderItems,
+  loadWarehouses,
   loadWarehouseExportRequests,
   loadScopedOrders,
 } = useScopedQueries()
@@ -25,6 +26,19 @@ const logoFilter = ref('')
 const dateTimeFrom = ref('')
 const dateTimeTo = ref('')
 const rows = ref<any[]>([])
+const warehouses = ref<any[]>([])
+
+const warehouseNameById = computed(() => new Map(
+  warehouses.value.map(row => [
+    String(row.id || '').trim(),
+    String(row.name || row.warehouse_code || row.id || '').trim(),
+  ]),
+))
+
+function warehouseDisplayName(id: any, savedName: any = '') {
+  const warehouseId = String(id || '').trim()
+  return warehouseNameById.value.get(warehouseId) || String(savedName || '').trim() || warehouseId || '-'
+}
 
 const canOpenPage = computed(() => hasPermission('*') || hasPermission('export.view'))
 
@@ -44,19 +58,24 @@ async function loadRows(force = false) {
 
   loading.value = true
   try {
-    const [exportOrders, exportItems, requests, orders] = await Promise.all([
+    const [exportOrders, exportItems, requests, orders, warehouseRows] = await Promise.all([
       loadExportOrders(force),
       loadExportOrderItems(force),
       loadOptional(loadWarehouseExportRequests, force),
       loadOptional(loadScopedOrders, force),
+      loadOptional(loadWarehouses, force),
     ])
 
+    warehouses.value = warehouseRows
     rows.value = buildWarehouseExportHistoryRows({
       exportOrders,
       exportItems,
       requests,
       orders,
-    })
+    }).map(row => ({
+      ...row,
+      warehouse_name: warehouseDisplayName(row.warehouse_id, row.warehouse_name),
+    }))
   } catch (error) {
     showToast(reportFirebaseError(error, 'Không tải được lịch sử xuất kho.'), 'error')
   } finally {
@@ -212,7 +231,7 @@ onMounted(() => loadRows())
                 <b>{{ formatDateTime(row.exported_at) }}</b>
                 <div v-if="row.export_date" class="small subtle">Ngày phiếu: {{ row.export_date }}</div>
               </td>
-              <td><b>{{ row.warehouse_name || '-' }}</b></td>
+              <td><b>{{ warehouseDisplayName(row.warehouse_id, row.warehouse_name) }}</b></td>
               <td>
                 <b>{{ row.product_code || '-' }}</b>
                 <div class="small subtle">{{ row.product_name || '-' }}</div>

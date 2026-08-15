@@ -95,6 +95,18 @@ const activeProductIds = computed(() => new Set(
   products.value.map(row => String(row.id || '').trim()).filter(Boolean),
 ))
 
+const warehouseNameById = computed(() => new Map(
+  warehouses.value.map(row => [
+    String(row.id || '').trim(),
+    String(row.name || row.warehouse_code || row.id || '').trim(),
+  ]),
+))
+
+function warehouseDisplayName(id: any, savedName: any = '') {
+  const warehouseId = String(id || '').trim()
+  return warehouseNameById.value.get(warehouseId) || String(savedName || '').trim() || warehouseId || '-'
+}
+
 const importItemById = computed(() => new Map(
   importItems.value.map(item => [String(item.id || ''), item]),
 ))
@@ -310,6 +322,7 @@ const auditRows = computed<InventoryAuditRow[]>(() => {
     .forEach(row => {
       audit.set(inventoryKey(row), {
         ...row,
+        warehouse_name: warehouseDisplayName(row.warehouse_id, row.warehouse_name),
         movement_in: 0,
         movement_out: 0,
         movement_adjustment: 0,
@@ -328,7 +341,7 @@ const auditRows = computed<InventoryAuditRow[]>(() => {
         audit.set(key, {
           id: `missing_balance__${key}`,
           warehouse_id: movement.warehouse_id,
-          warehouse_name: movement.warehouse_name,
+          warehouse_name: warehouseDisplayName(movement.warehouse_id, movement.warehouse_name),
           product_id: movement.product_id,
           product_code: movement.product_code,
           product_name: movement.product_name,
@@ -589,7 +602,7 @@ function movementDetail(movement: StockMovementDoc) {
     const order = findImportOrder(movement.source_doc_id)
     const item = findImportItem(movement.source_item_id)
     const supplier = order?.supplier_name ? ` từ NCC: ${order.supplier_name}` : ''
-    const warehouse = item?.warehouse_name || movement.warehouse_name || ''
+    const warehouse = warehouseDisplayName(item?.warehouse_id || movement.warehouse_id, item?.warehouse_name || movement.warehouse_name)
     return `Nhập vào kho ${warehouse || '-'}${supplier}.`
   }
   if (sourceCollection === 'export_orders') {
@@ -599,10 +612,11 @@ function movementDetail(movement: StockMovementDoc) {
       return movement.reason || 'Biến động đảo/hoàn tồn của phiếu xuất.'
     }
     if (type === 'transfer_in' || type === 'export_transfer_in' || movement.direction === 'in') {
-      return `Nhập chuyển kho từ ${item?.from_warehouse_name || 'kho nguồn'} theo phiếu ${order?.code || order?.export_code || movement.source_code || ''}.`
+      const sourceWarehouse = warehouseDisplayName(item?.from_warehouse_id, item?.from_warehouse_name)
+      return `Nhập chuyển kho từ ${sourceWarehouse === '-' ? 'kho nguồn' : sourceWarehouse} theo phiếu ${order?.code || order?.export_code || movement.source_code || ''}.`
     }
     if (item?.to_warehouse_name || order?.destination_type === 'warehouse') {
-      return `Xuất tới kho ${item?.to_warehouse_name || order?.destination_name || '-'}.`
+      return `Xuất tới kho ${warehouseDisplayName(item?.to_warehouse_id || order?.to_warehouse_id, item?.to_warehouse_name || order?.destination_name)}.`
     }
     return `Xuất tới khách ${item?.destination_name || order?.customer_name || order?.destination_name || '-'}.`
   }
@@ -659,8 +673,8 @@ function adjustmentProduct(row: InventoryAuditRow) {
 function adjustmentWarehouse(row: InventoryAuditRow) {
   return warehouses.value.find(warehouse => warehouse.id === row.warehouse_id) || {
     id: row.warehouse_id,
-    name: row.warehouse_name || row.warehouse_id,
-    warehouse_code: row.warehouse_name || row.warehouse_id,
+    name: warehouseDisplayName(row.warehouse_id, row.warehouse_name),
+    warehouse_code: warehouseDisplayName(row.warehouse_id, row.warehouse_name),
   }
 }
 
@@ -827,7 +841,7 @@ onMounted(() => loadRows())
           </thead>
           <tbody>
             <tr v-for="row in filtered" :key="row.id">
-              <td><b>{{ row.warehouse_name || row.warehouse_id }}</b></td>
+              <td><b>{{ warehouseDisplayName(row.warehouse_id, row.warehouse_name) }}</b></td>
               <td><b>{{ row.product_code }}</b><div class="small subtle">{{ row.product_name }}</div></td>
               <td>{{ row.logo || 'Không logo' }}</td>
               <td>{{ row.unit || '-' }}</td>
@@ -873,7 +887,7 @@ onMounted(() => loadRows())
       @save="saveAdjustment"
     >
       <div class="detail-grid" style="margin-bottom: 16px;">
-        <div class="detail-item"><label>Kho</label><strong>{{ adjustmentTarget.warehouse_name || adjustmentTarget.warehouse_id }}</strong></div>
+        <div class="detail-item"><label>Kho</label><strong>{{ warehouseDisplayName(adjustmentTarget.warehouse_id, adjustmentTarget.warehouse_name) }}</strong></div>
         <div class="detail-item"><label>Sản phẩm</label><strong>{{ adjustmentTarget.product_code }} - {{ adjustmentTarget.product_name }}</strong></div>
         <div class="detail-item"><label>Logo</label><strong>{{ adjustmentTarget.logo || 'Không logo' }}</strong></div>
         <div class="detail-item"><label>Tồn hiện tại</label><strong>{{ quantityText(adjustmentTarget.quantity) }} {{ adjustmentTarget.unit || '' }}</strong></div>
@@ -943,7 +957,7 @@ onMounted(() => loadRows())
       @close="showDetailModal = false"
     >
       <div class="detail-grid">
-        <div class="detail-item"><label>Kho hiện tại</label><strong>{{ selected.warehouse_name || selected.warehouse_id }}</strong></div>
+        <div class="detail-item"><label>Kho hiện tại</label><strong>{{ warehouseDisplayName(selected.warehouse_id, selected.warehouse_name) }}</strong></div>
         <div class="detail-item"><label>Sản phẩm</label><strong>{{ selected.product_code }} - {{ selected.product_name }}</strong></div>
         <div class="detail-item"><label>Logo</label><strong>{{ selected.logo || 'Không logo' }}</strong></div>
         <div class="detail-item"><label>Tồn hiện tại</label><strong>{{ quantityText(selected.quantity) }} {{ selected.unit || '' }}</strong></div>
