@@ -249,7 +249,7 @@ onMounted(() => loadRows())
         @refresh="loadRows(true)"
       />
       <LoadingState v-if="loading" />
-      <div v-else class="table-wrap table-wrap--sticky-head">
+      <div v-else class="table-wrap table-wrap--page-sticky">
         <table>
           <thead><tr><th>Mã</th><th>Tên khách</th><th>Công ty</th><th>SĐT</th><th>Email</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>

@@ -506,11 +506,15 @@ button {
   border: 1px solid var(--line);
   border-radius: 14px;
 }
-.table-wrap--sticky-head {
-  max-height: min(68vh, 720px);
-  overscroll-behavior: contain;
+.table-wrap--page-sticky {
+  overflow-x: clip;
+  overflow-y: visible;
+  position: relative;
 }
-.table-wrap--sticky-head > table > thead > tr > th {
+.table-wrap--page-sticky > table {
+  transform: translateX(calc(-1 * var(--table-scroll-x, 0px)));
+}
+.table-wrap--page-sticky > table > thead > tr > th {
   top: 0;
   z-index: 2;
   box-shadow: 0 1px 0 var(--line);
