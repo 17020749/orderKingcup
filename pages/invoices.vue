@@ -245,7 +245,7 @@ onMounted(() => loadRows())
     <div class="card" style="padding: 24px;">
       <FilterToolbar v-model:search="search" search-placeholder="Tìm đơn, số hóa đơn, công ty..." :filters="toolbarFilters" :values="filterValues" :result-count="filtered.length" :loading="loading" show-refresh @update:filter="updateFilter" @reset="resetFilters" @refresh="loadRows(true)" />
       <LoadingState v-if="loading"/>
-      <div v-else class="table-wrap">
+      <div v-else class="table-wrap table-wrap--sticky-head">
         <table>
           <thead><tr><th>Đơn hàng</th><th>Số hóa đơn</th><th>Ngày</th><th>Công ty</th><th>Giá trị</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
