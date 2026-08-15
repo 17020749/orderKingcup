@@ -648,7 +648,7 @@ function fulfillmentStatusKey(value: any) {
 function hasFulfilledPaymentAlert(row: OrderDoc) {
   const paymentStatus = String(row.payment_status || row.computed_payment_status || '').trim()
   return fulfillmentStatusKey(row.warehouse_fulfillment_status) === 'da_xuat_du'
-    && ['Chưa thanh toán', 'Thanh toán một phần'].includes(paymentStatus)
+    && paymentStatus !== 'Đã thanh toán'
 }
 
 function fulfillmentLabel(value: any) {
@@ -1407,7 +1407,10 @@ onMounted(loadRows)
     >
       <option value="">Tất cả thanh toán</option>
       <option value="Chưa thanh toán">Chưa thanh toán</option>
+      <option value="Đã cọc">Đã cọc</option>
+      <option value="Đã cọc + thanh toán một phần">Đã cọc + thanh toán một phần</option>
       <option value="Thanh toán một phần">Thanh toán một phần</option>
+      <option value="Thanh toán thừa">Thanh toán thừa</option>
       <option value="Đã thanh toán">Đã thanh toán</option>
     </select>
   </div>
@@ -1650,10 +1653,7 @@ onMounted(loadRows)
               <div class="form-group"><label>Đơn giá</label><input v-model.number="item.unit_price" class="input" type="number" min="0" /></div>
             </template>
 
-<style scoped>
-.order-row--payment-alert > td { background: #fff1f2; }
-.order-row--payment-alert > td:first-child { box-shadow: inset 4px 0 0 #dc2626; }
-</style>
+
           </div>
           <div v-if="item.has_logo" class="logo-items-box">
             <div v-for="(line, logoIndex) in item.logo_lines" :key="`${item.id}-${logoIndex}`" class="logo-row">
@@ -1734,10 +1734,7 @@ onMounted(loadRows)
             <div class="form-group"><label>Đơn giá</label><input v-model.number="item.unit_price" class="input" type="number" min="0" /></div>
           </template>
 
-<style scoped>
-.order-row--payment-alert > td { background: #fff1f2; }
-.order-row--payment-alert > td:first-child { box-shadow: inset 4px 0 0 #dc2626; }
-</style>
+
           <div v-else class="logo-parent-hidden-note">Sản phẩm có logo: số lượng, đơn giá và thành tiền được tính từ các dòng logo bên dưới.</div>
         </div>
         <div class="form-group logo-toggle"><label><input v-model="item.has_logo" type="checkbox" @change="toggleLogoMode(item)" /> Có logo / tách sản phẩm chi tiết theo logo</label></div>
@@ -1817,10 +1814,7 @@ onMounted(loadRows)
         </button>
       </template>
 
-<style scoped>
-.order-row--payment-alert > td { background: #fff1f2; }
-.order-row--payment-alert > td:first-child { box-shadow: inset 4px 0 0 #dc2626; }
-</style>
+
     </RecordDetailModal>
 
     <BaseModal
