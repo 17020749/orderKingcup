@@ -72,6 +72,7 @@ const saving = ref(false)
 const search = ref('')
 const orderStatusFilter = ref('')
 const paymentStatusFilter = ref('')
+const fulfillmentStatusFilter = ref('')
 const invoiceStatusFilter = ref('')
 const classificationFilter = ref('')
 const logoFilter = ref('')
@@ -121,6 +122,7 @@ const filtered = computed(() => {
     const matchedText = !keyword || normalizeText(`${row.order_code} ${row.customer_name} ${row.phone} ${row.order_classification} ${row.order_status} ${row.payment_status} ${row.invoice_status} ${row.owner_email} ${row.sale_email} ${row.created_by}`).includes(keyword)
     const matchedOrderStatus = !orderStatusFilter.value || row.order_status === orderStatusFilter.value
     const matchedPaymentStatus = !paymentStatusFilter.value || row.payment_status === paymentStatusFilter.value
+    const matchedFulfillmentStatus = !fulfillmentStatusFilter.value || fulfillmentStatusKey(row.warehouse_fulfillment_status) === fulfillmentStatusFilter.value
     const matchedInvoiceStatus = !invoiceStatusFilter.value || row.invoice_status === invoiceStatusFilter.value
     const matchedClassification = !classificationFilter.value || row.order_classification === classificationFilter.value
     const matchedLogo = matchesLogoPresenceFilter(orderHasLogo(row.id), logoFilter.value)
@@ -128,7 +130,7 @@ const filtered = computed(() => {
     const matchedDateFrom = !dateFrom.value || (!!rowDate && rowDate >= dateFrom.value)
     const matchedDateTo = !dateTo.value || (!!rowDate && rowDate <= dateTo.value)
     const matchedOwner = !ownerFilter.value || [row.owner_email, row.sale_email, row.created_by].includes(ownerFilter.value)
-    return matchedText && matchedOrderStatus && matchedPaymentStatus && matchedInvoiceStatus && matchedClassification && matchedLogo && matchedDateFrom && matchedDateTo && matchedOwner
+    return matchedText && matchedOrderStatus && matchedPaymentStatus && matchedFulfillmentStatus && matchedInvoiceStatus && matchedClassification && matchedLogo && matchedDateFrom && matchedDateTo && matchedOwner
   })
 })
 
@@ -136,6 +138,7 @@ function resetFilters() {
   search.value = ''
   orderStatusFilter.value = ''
   paymentStatusFilter.value = ''
+  fulfillmentStatusFilter.value = ''
   invoiceStatusFilter.value = ''
   classificationFilter.value = ''
   logoFilter.value = ''
@@ -633,6 +636,19 @@ function orderDeleteBlocker(
 
 function canDeleteRow(row: OrderDoc) {
   return orderActionDecision('delete', row).allowed
+}
+
+function fulfillmentStatusKey(value: any) {
+  const key = String(value || 'chua_xuat')
+  if (['da_xuat_du', 'exported', 'completed', 'hoan_thanh'].includes(key)) return 'da_xuat_du'
+  if (['da_xuat_1_phan', 'da_xuat_mot_phan', 'partial_exported'].includes(key)) return 'da_xuat_1_phan'
+  return 'chua_xuat'
+}
+
+function hasFulfilledPaymentAlert(row: OrderDoc) {
+  const paymentStatus = String(row.payment_status || row.computed_payment_status || '').trim()
+  return fulfillmentStatusKey(row.warehouse_fulfillment_status) === 'da_xuat_du'
+    && ['Chưa thanh toán', 'Thanh toán một phần'].includes(paymentStatus)
 }
 
 function fulfillmentLabel(value: any) {
@@ -1397,6 +1413,23 @@ onMounted(loadRows)
   </div>
 
   <div class="filter-field">
+    <label class="filter-label" for="fulfillment-status-filter">
+      Trạng thái xuất
+    </label>
+
+    <select
+      id="fulfillment-status-filter"
+      v-model="fulfillmentStatusFilter"
+      class="select"
+    >
+      <option value="">Tất cả trạng thái xuất</option>
+      <option value="chua_xuat">Chưa xuất</option>
+      <option value="da_xuat_1_phan">Đã xuất 1 phần</option>
+      <option value="da_xuat_du">Đã xuất đủ</option>
+    </select>
+  </div>
+
+  <div class="filter-field">
     <label class="filter-label" for="invoice-status-filter">
       Hóa đơn
     </label>
@@ -1537,12 +1570,12 @@ onMounted(loadRows)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in filtered" :key="row.id">
+            <tr v-for="row in filtered" :key="row.id" :class="{ 'order-row--payment-alert': hasFulfilledPaymentAlert(row) }">
               <td><b style="color:#384bdc">{{ row.order_code }}</b><div class="small subtle">{{ formatDateTime(row.order_date) }}</div></td>
               <td>{{ row.customer_name }}<div class="small subtle">{{ row.phone }}</div></td>
               <td><span class="badge">{{ row.order_classification || '-' }}</span></td>
               <td><span class="badge blue">{{ row.order_status || 'Mới tạo' }}</span></td>
-              <td><span class="badge green">{{ row.payment_status || 'Chưa thanh toán' }}</span></td>
+              <td><span class="badge" :class="hasFulfilledPaymentAlert(row) ? 'red' : 'green'">{{ row.payment_status || 'Chưa thanh toán' }}</span></td>
               <td><span class="badge">{{ row.invoice_status || 'Không xuất' }}</span></td>
               <td>{{ money(row.subtotal_no_vat) }}</td>
               <td>{{ money(row.vat_amount) }}</td>
@@ -1616,6 +1649,11 @@ onMounted(loadRows)
             <template v-if="!item.has_logo">
               <div class="form-group"><label>Đơn giá</label><input v-model.number="item.unit_price" class="input" type="number" min="0" /></div>
             </template>
+
+<style scoped>
+.order-row--payment-alert > td { background: #fff1f2; }
+.order-row--payment-alert > td:first-child { box-shadow: inset 4px 0 0 #dc2626; }
+</style>
           </div>
           <div v-if="item.has_logo" class="logo-items-box">
             <div v-for="(line, logoIndex) in item.logo_lines" :key="`${item.id}-${logoIndex}`" class="logo-row">
@@ -1695,6 +1733,11 @@ onMounted(loadRows)
             <div class="form-group"><label>Số lượng</label><input v-model.number="item.quantity" class="input" type="number" min="0" /></div>
             <div class="form-group"><label>Đơn giá</label><input v-model.number="item.unit_price" class="input" type="number" min="0" /></div>
           </template>
+
+<style scoped>
+.order-row--payment-alert > td { background: #fff1f2; }
+.order-row--payment-alert > td:first-child { box-shadow: inset 4px 0 0 #dc2626; }
+</style>
           <div v-else class="logo-parent-hidden-note">Sản phẩm có logo: số lượng, đơn giá và thành tiền được tính từ các dòng logo bên dưới.</div>
         </div>
         <div class="form-group logo-toggle"><label><input v-model="item.has_logo" type="checkbox" @change="toggleLogoMode(item)" /> Có logo / tách sản phẩm chi tiết theo logo</label></div>
@@ -1773,6 +1816,11 @@ onMounted(loadRows)
           Chi tiết đơn hàng
         </button>
       </template>
+
+<style scoped>
+.order-row--payment-alert > td { background: #fff1f2; }
+.order-row--payment-alert > td:first-child { box-shadow: inset 4px 0 0 #dc2626; }
+</style>
     </RecordDetailModal>
 
     <BaseModal
@@ -1887,3 +1935,8 @@ onMounted(loadRows)
     />
   </AppShell>
 </template>
+
+<style scoped>
+.order-row--payment-alert > td { background: #fff1f2; }
+.order-row--payment-alert > td:first-child { box-shadow: inset 4px 0 0 #dc2626; }
+</style>
