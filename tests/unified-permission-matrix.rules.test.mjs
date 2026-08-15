@@ -15,7 +15,7 @@ function user(permissions) {
 function order(id, owner) {
   return {
     id, order_code: id, owner_email: owner, created_by: owner, sale_email: owner,
-    actual_revenue: 1000, paid_amount: 100, debt_amount: 900,
+    actual_revenue: 1000, payable_amount: 1000, paid_amount: 100, debt_amount: 900,
     payment_status: 'Đã cọc', computed_payment_status: 'Đã cọc',
     payment_count: 1, deposit_count: 1, collect_count: 0,
     invoice_status: 'HĐ nháp', shipment_status: 'Chờ giao', shipping_fee_total: 10, cod_amount_total: 0,

@@ -394,9 +394,12 @@ async function synchronizePersistedOrder(orderId: string) {
 
   const orderRequests = exportRequests.value
     .filter(request => request.order_id === orderId && isActive(request))
+  const paymentRows = toNumber((order as any).relation_lock_version) === 1
+    ? []
+    : (paymentsByOrder.value[orderId] || [])
   const canonicalOrder = {
     ...order,
-    ...computePaymentStatus(order, paymentsByOrder.value[orderId] || []),
+    ...computePaymentStatus(order, paymentRows),
     ...orderSummary(buildFulfillmentRows(items, orderRequests), orderRequests),
   } as OrderDoc
   const rowIndex = rows.value.findIndex(row => row.id === orderId)
@@ -1105,8 +1108,9 @@ async function saveOrder() {
       ? stripOrderEditSystemFields({ ...form, ...totals })
       : { ...form, ...totals }
 
-    const localPaymentSummary = computePaymentStatus(baseOrder, paymentsByOrder.value[form.id] || [])
-    const paymentSummary = editing.value ? {} : localPaymentSummary
+    const paymentSummary = editing.value
+      ? {}
+      : computePaymentStatus(baseOrder, paymentsByOrder.value[form.id] || [])
     const existingItems = persistedEditItems || itemsByOrder.value[form.id] || []
     const orderPayload = {
       ...baseOrder,
@@ -1720,13 +1724,14 @@ onMounted(loadRows)
           <div v-if="!editing" class="small subtle">Mã Người dùng - Mã khách - số thứ tự riêng của khách, bắt đầu từ 0001.</div>
         </div>
         <div v-if="!editingFulfilledOrder" class="form-group"><label>Ngày giờ đơn</label><input v-model="form.order_date" class="input" type="datetime-local" /></div>
-        <div class="form-group"><label>Sale phụ trách</label><input v-model="form.sale_name" class="input" /></div>
+        <div class="form-group"><label>Sale phụ trách</label><input v-model="form.sale_name" class="input" :class="{ 'readonly-field': Boolean(editing) }" :readonly="Boolean(editing)" /></div>
         <div class="form-group">
           <label>Khách hàng</label>
           <SearchableSelect
             v-model="form.customer_id"
             :options="customerOptions"
-            :action-label="hasPermission('customers.create') ? '+ Thêm khách hàng' : ''"
+            :disabled="Boolean(editing)"
+            :action-label="!editing && hasPermission('customers.create') ? '+ Thêm khách hàng' : ''"
             placeholder="Tìm khách theo tên, SĐT, email..."
             @action="openCustomerModal"
             @change="chooseCustomer"

@@ -672,6 +672,31 @@ service cloud.firestore {
         || ownsLegacyOrderByUserCode(data);
     }
 
+    // Keep the common edit decision in one user-document evaluation. This is
+    // equivalent to orders.edit AND (owner OR orders.view_all), including '*'.
+    function canEditOrderData(data) {
+      let path = userPath();
+      let user = get(path).data;
+      let permissions = user.get('permissions_flat', []);
+      return signedIn()
+        && exists(path)
+        && activeUserData(user)
+        && permissions is list
+        && (
+          '*' in permissions
+          || (
+            'orders.edit' in permissions
+            && (
+              'orders.view_all' in permissions
+              || emailFieldEquals(data, 'owner_email', email())
+              || emailFieldEquals(data, 'created_by', email())
+              || emailFieldEquals(data, 'sale_email', email())
+              || ownsLegacyOrderByUserCode(data)
+            )
+          )
+        );
+    }
+
     function ownsOrderChildData(data) {
       return ownEmailField(data, 'created_by')
         || ownEmailField(data, 'requested_by')
@@ -867,8 +892,44 @@ service cloud.firestore {
         'owner_email',
         'created_by',
         'sale_email',
+        'sale_name',
         'created_at'
       ]);
+    }
+
+    function orderPaymentSummaryMatchesPayable(data) {
+      let payable = data.get('payable_amount', 0);
+      let paid = data.get('paid_amount', 0);
+      let debt = data.get('debt_amount', 0);
+      let paymentStatus = data.get('payment_status', '');
+      let computedStatus = data.get('computed_payment_status', '');
+      let depositCount = data.get('deposit_count', 0);
+      let collectCount = data.get('collect_count', 0);
+      let expectedDebt = payable - paid;
+      let expectedStatus = paid <= 0
+        ? 'Chưa thanh toán'
+        : debt == 0
+          ? 'Đã thanh toán'
+          : debt < 0
+            ? 'Thanh toán thừa'
+            : depositCount > 0 && collectCount > 0
+              ? 'Đã cọc + thanh toán 1 phần'
+              : depositCount > 0
+                ? 'Đã cọc'
+                : 'Thanh toán một phần';
+      return payable is number
+        && payable >= 0
+        && paid is number
+        && paid >= 0
+        && debt is number
+        && depositCount is int
+        && depositCount >= 0
+        && collectCount is int
+        && collectCount >= 0
+        && debt >= expectedDebt - 0.005
+        && debt <= expectedDebt + 0.005
+        && paymentStatus == computedStatus
+        && paymentStatus == expectedStatus;
     }
 
     function childIdentityUnchanged() {
@@ -1702,6 +1763,7 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         && request.resource.data.get('actual_revenue', -1) is number
         && request.resource.data.get('payable_amount', -1) is number
         && request.resource.data.get('debt_amount', 0) is number
+        && orderPaymentSummaryMatchesPayable(request.resource.data)
         && request.resource.data.get('revision', -1) == resource.data.get('revision', 0) + 1
         && request.resource.data.get('price_revision', -1) == resource.data.get('price_revision', 0) + 1
         && validBoundedString(request.resource.data.get('last_operation_id', ''), 1, 200)
@@ -1886,9 +1948,6 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
     function normalOrderEditKeepsSystemFields() {
       return unchanged([
           'paid_amount',
-          'debt_amount',
-          'computed_payment_status',
-          'payment_status',
           'payment_count',
           'deposit_count',
           'collect_count',
@@ -2768,10 +2827,10 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
                 orderPriceEditAllowed()
                 || fulfilledOrderMetadataUpdateAllowed()
                 || (
-                  hasPerm('orders.edit')
-                  && (ownsOrderData(resource.data) || hasPerm('orders.view_all'))
+                  canEditOrderData(resource.data)
                   && orderIdentityUnchanged()
                   && normalOrderEditKeepsSystemFields()
+                  && orderPaymentSummaryMatchesPayable(request.resource.data)
                   && fulfillmentStatus() != 'da_xuat_du'
                 )
               );

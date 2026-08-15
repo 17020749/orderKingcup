@@ -24,6 +24,7 @@ export const ORDER_IMMUTABLE_IDENTITY_FIELDS = Object.freeze([
   'owner_email',
   'created_by',
   'sale_email',
+  'sale_name',
   'created_at',
 ])
 
@@ -51,6 +52,45 @@ export function preservePersistedOrderIdentityForEdit(payload = {}, persistedOrd
     }
   }
   return next
+}
+
+export function assertOrderEditIdentityUnchanged(requestedOrder = {}, persistedOrder = {}) {
+  const changedFields = ORDER_IMMUTABLE_IDENTITY_FIELDS.filter(field => (
+    Object.prototype.hasOwnProperty.call(requestedOrder || {}, field)
+    && Object.prototype.hasOwnProperty.call(persistedOrder || {}, field)
+    && persistedText(requestedOrder[field]).trim() !== persistedText(persistedOrder[field]).trim()
+  ))
+  if (changedFields.length) {
+    throw new Error(`Không được đổi khách hàng hoặc Sale phụ trách khi sửa đơn (${changedFields.join(', ')}).`)
+  }
+}
+
+function roundMoney(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 0
+  return Math.round((number + Number.EPSILON) * 100) / 100
+}
+
+export function buildOrderPaymentSummaryForPayable(order = {}, payableAmount = 0) {
+  const payable = Math.max(0, roundMoney(payableAmount))
+  const paid = Math.max(0, roundMoney(order?.paid_amount))
+  const debt = roundMoney(payable - paid)
+  const depositCount = Math.max(0, Math.floor(Number(order?.deposit_count) || 0))
+  const collectCount = Math.max(0, Math.floor(Number(order?.collect_count) || 0))
+
+  let status = 'Chưa thanh toán'
+  if (paid <= 0) status = 'Chưa thanh toán'
+  else if (debt === 0) status = 'Đã thanh toán'
+  else if (debt < 0) status = 'Thanh toán thừa'
+  else if (depositCount > 0 && collectCount > 0) status = 'Đã cọc + thanh toán 1 phần'
+  else if (depositCount > 0) status = 'Đã cọc'
+  else status = 'Thanh toán một phần'
+
+  return {
+    debt_amount: debt,
+    payment_status: status,
+    computed_payment_status: status,
+  }
 }
 
 export function resolveOrderOwnershipForSave({
@@ -145,10 +185,16 @@ export function estimateAtomicOrderWrites({
   existingItems = [],
   nextItems = [],
   updateInvoiceStatus = false,
+  invoiceSyncIds = [],
+  invoiceMutationId = '',
 } = {}) {
   const plan = planAtomicOrderItems(existingItems, nextItems)
   const sequenceWrites = mode === 'create' ? 1 : 0
-  const invoiceWrites = mode === 'create' || updateInvoiceStatus ? 1 : 0
+  const invoiceIds = new Set(uniqueDocumentIds(
+    (Array.isArray(invoiceSyncIds) ? invoiceSyncIds : []).map(id => ({ id })),
+  ))
+  if (updateInvoiceStatus) invoiceIds.add(text(invoiceMutationId) || '__invoice_mutation__')
+  const invoiceWrites = mode === 'create' ? 1 : invoiceIds.size
   return sequenceWrites + 1 + 1 + invoiceWrites + plan.upsertItems.length + plan.removedItems.length
 }
 

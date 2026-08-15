@@ -5,7 +5,9 @@ import {
   FIRESTORE_WRITE_LIMIT,
   assertAtomicOrderWriteLimit,
   assertExpectedOrderRevision,
+  assertOrderEditIdentityUnchanged,
   buildOrderItemLifecyclePatch,
+  buildOrderPaymentSummaryForPayable,
   buildOrderOperationId,
   estimateAtomicOrderWrites,
   nextOrderRevision,
@@ -63,6 +65,48 @@ test('tính đúng số write cho tạo và sửa đơn', () => {
     existingItems: [{ id: 'a' }, { id: 'remove' }],
     nextItems: [{ id: 'a' }, { id: 'new' }],
   }), 5) // order + activity + 2 upsert + 1 soft delete
+
+  assert.equal(estimateAtomicOrderWrites({
+    mode: 'edit',
+    existingItems: [{ id: 'a' }, { id: 'remove' }],
+    nextItems: [{ id: 'a' }, { id: 'new' }],
+    invoiceSyncIds: ['invoice-a', 'invoice-b', 'invoice-a'],
+  }), 7) // 5 write cơ bản + 2 hóa đơn active duy nhất
+
+  assert.equal(estimateAtomicOrderWrites({
+    mode: 'edit',
+    existingItems: [{ id: 'a' }, { id: 'remove' }],
+    nextItems: [{ id: 'a' }, { id: 'new' }],
+    updateInvoiceStatus: true,
+    invoiceMutationId: 'invoice-a',
+    invoiceSyncIds: ['invoice-a', 'invoice-b'],
+  }), 7) // hóa đơn đổi trạng thái không bị đếm hai lần
+})
+
+test('đồng bộ công nợ theo payable nhưng không thay đổi số tiền đã thu', () => {
+  assert.deepEqual(buildOrderPaymentSummaryForPayable({ paid_amount: 0 }, 100.126), {
+    debt_amount: 100.13,
+    payment_status: 'Chưa thanh toán',
+    computed_payment_status: 'Chưa thanh toán',
+  })
+  assert.equal(buildOrderPaymentSummaryForPayable({ paid_amount: 100 }, 100).payment_status, 'Đã thanh toán')
+  assert.equal(buildOrderPaymentSummaryForPayable({ paid_amount: 120 }, 100).payment_status, 'Thanh toán thừa')
+  assert.equal(buildOrderPaymentSummaryForPayable({ paid_amount: 20, deposit_count: 1 }, 100).payment_status, 'Đã cọc')
+  assert.equal(buildOrderPaymentSummaryForPayable({ paid_amount: 20, collect_count: 1 }, 100).payment_status, 'Thanh toán một phần')
+  assert.equal(buildOrderPaymentSummaryForPayable({ paid_amount: 20, deposit_count: 1, collect_count: 1 }, 100).payment_status, 'Đã cọc + thanh toán 1 phần')
+})
+
+test('chặn đổi khách hàng hoặc Sale phụ trách khi sửa đơn', () => {
+  const persisted = { customer_id: 'customer-a', customer_code: 'A', sale_name: 'Sale A' }
+  assert.doesNotThrow(() => assertOrderEditIdentityUnchanged({ ...persisted }, persisted))
+  assert.throws(
+    () => assertOrderEditIdentityUnchanged({ ...persisted, customer_id: 'customer-b' }, persisted),
+    /customer_id/,
+  )
+  assert.throws(
+    () => assertOrderEditIdentityUnchanged({ ...persisted, sale_name: 'Sale B' }, persisted),
+    /sale_name/,
+  )
 })
 
 test('chặn đơn vượt giới hạn write thay vì chia batch gây lưu dở dang', () => {
@@ -102,6 +146,8 @@ test('client thực tế dùng một transaction cho order, items, sequence và 
   assert.match(composable, /transaction\.set\(activityRef/)
   assert.match(composable, /assertExpectedOrderRevision/)
   assert.match(composable, /buildOrderItemLifecyclePatch\(item\.isNew\)/)
+  assert.match(composable, /buildOrderPaymentSummaryForPayable\(existingOrder/)
+  assert.match(composable, /after_json: JSON\.stringify\(\{\s*\.\.\.finalOrderPayload/)
   assert.match(page, /saveOrderAtomic\(/)
   assert.doesNotMatch(page, /commitWriteChunks/)
   assert.doesNotMatch(page, /await orderBatch\.commit\(\)/)
@@ -123,6 +169,9 @@ test('sau commit client đọc lại order và order_items chuẩn trước khi 
   assert.ok(syncIndex > commitIndex)
   assert.ok(successIndex > syncIndex)
   assert.match(page, /commitSucceeded = true/)
+  assert.match(page, /const paymentRows = toNumber\(\(order as any\)\.relation_lock_version\) === 1/)
+  assert.match(page, /:disabled="Boolean\(editing\)"/)
+  assert.match(page, /:readonly="Boolean\(editing\)"/)
   assert.doesNotMatch(page, /itemsByOrder\.value\[form\.id\]\s*=/)
   assert.doesNotMatch(page, /const localOrder\s*=/)
 })

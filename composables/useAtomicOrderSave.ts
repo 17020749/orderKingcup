@@ -17,7 +17,9 @@ import { normalizeEmail, toNumber } from '~/utils/format'
 import {
   assertAtomicOrderWriteLimit,
   assertExpectedOrderRevision,
+  assertOrderEditIdentityUnchanged,
   buildOrderItemLifecyclePatch,
+  buildOrderPaymentSummaryForPayable,
   buildOrderOperationId,
   nextOrderRevision,
   planAtomicOrderItems,
@@ -123,6 +125,8 @@ export function useAtomicOrderSave() {
       existingItems: input.existingItems,
       nextItems: input.nextItems,
       updateInvoiceStatus: invoiceMutation?.mode === 'status_update' || invoiceMutation?.mode === 'legacy_create',
+      invoiceSyncIds: input.invoiceSyncIds,
+      invoiceMutationId: invoiceMutation?.invoiceId,
     })
     const itemPlan = planAtomicOrderItems(input.existingItems, input.nextItems)
     const orderRef = doc(db, 'orders', input.orderId)
@@ -292,6 +296,9 @@ export function useAtomicOrderSave() {
       const candidateFinalOrderPayload = {
         ...input.orderPayload,
         ...invoiceRelationPatch,
+        ...(input.mode === 'edit'
+          ? buildOrderPaymentSummaryForPayable(existingOrder, input.orderPayload.payable_amount)
+          : {}),
         order_code: orderCode,
         order_sequence: orderSequence,
         user_code: input.userCode,
@@ -302,6 +309,17 @@ export function useAtomicOrderSave() {
         revision,
         last_operation_id: operationId,
         updated_at: serverTimestamp(),
+      }
+      if (input.mode === 'edit') {
+        assertOrderEditIdentityUnchanged({
+          ...input.orderPayload,
+          customer_id: input.customerId,
+          customer_code: input.customerCode,
+          user_code: input.userCode,
+          owner_email: input.ownerEmail,
+          created_by: input.createdBy,
+          sale_email: input.saleEmail,
+        }, existingOrder)
       }
       const finalOrderPayload = input.mode === 'edit'
         ? preservePersistedOrderIdentityForEdit(candidateFinalOrderPayload, existingOrder)
@@ -414,14 +432,7 @@ export function useAtomicOrderSave() {
         changed_by: input.changedBy,
         before_json: JSON.stringify(input.activityBefore || {}),
         after_json: JSON.stringify({
-          ...input.orderPayload,
-          ...invoiceRelationPatch,
-          order_code: orderCode,
-          order_sequence: orderSequence,
-          user_code: input.userCode,
-          customer_code: input.customerCode,
-          revision,
-          last_operation_id: operationId,
+          ...finalOrderPayload,
           items_count: localItems.length,
           removed_item_ids: itemPlan.removedItems.map(item => item.id || item.firestore_id),
         }),
