@@ -895,7 +895,7 @@ onBeforeUnmount(() => {
         @refresh="loadRows(true)"
       />
       <LoadingState v-if="loading" />
-      <div v-else class="table-wrap table-wrap--sticky-head">
+      <div v-else class="table-wrap table-wrap--page-sticky">
         <table>
           <thead>
             <tr>

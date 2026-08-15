@@ -61,8 +61,9 @@ test('plugin áp dụng toàn cục cho table-wrap và bỏ qua modal/sidebar', 
 })
 
 test('các bảng chính có sticky header dùng chung khi cuộn trong vùng bảng', async () => {
-  const [styles, orders, requests, customers, payments, invoices] = await Promise.all([
+  const [styles, plugin, orders, requests, customers, payments, invoices] = await Promise.all([
     readFile(new URL('../assets/css/main.css', import.meta.url), 'utf8'),
+    readFile(new URL('../plugins/sticky-table-scrollbar.client.ts', import.meta.url), 'utf8'),
     readFile(new URL('../pages/orders.vue', import.meta.url), 'utf8'),
     readFile(new URL('../pages/export-requests.vue', import.meta.url), 'utf8'),
     readFile(new URL('../pages/customers/index.vue', import.meta.url), 'utf8'),
@@ -70,9 +71,12 @@ test('các bảng chính có sticky header dùng chung khi cuộn trong vùng b�
     readFile(new URL('../pages/invoices.vue', import.meta.url), 'utf8'),
   ])
 
-  assert.match(styles, /\.table-wrap--sticky-head\s*\{[\s\S]*max-height: min\(68vh, 720px\)/)
-  assert.match(styles, /\.table-wrap--sticky-head > table > thead > tr > th\s*\{[\s\S]*z-index: 2/)
+  assert.match(styles, /\.table-wrap--page-sticky\s*\{[\s\S]*overflow-x: clip[\s\S]*overflow-y: visible/)
+  assert.match(styles, /transform: translateX\(calc\(-1 \* var\(--table-scroll-x, 0px\)\)\)/)
+  assert.match(styles, /\.table-wrap--page-sticky > table > thead > tr > th\s*\{[\s\S]*z-index: 2/)
+  assert.match(plugin, /function usesPageStickyTable/)
+  assert.match(plugin, /table\.style\.setProperty\('--table-scroll-x'/)
   for (const page of [orders, requests, customers, payments, invoices]) {
-    assert.match(page, /table-wrap table-wrap--sticky-head/)
+    assert.match(page, /table-wrap table-wrap--page-sticky/)
   }
 })

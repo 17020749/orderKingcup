@@ -1564,7 +1564,7 @@ onMounted(loadRows)
   </div>
 </div>
       <LoadingState v-if="loading" />
-      <div v-else class="table-wrap table-wrap--sticky-head">
+      <div v-else class="table-wrap table-wrap--page-sticky">
         <table style="min-width:1510px">
           <thead>
             <tr>
