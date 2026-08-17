@@ -1,0 +1,320 @@
+name: Apply PR 193 review fixes
+
+on:
+  push:
+    branches:
+      - codex/finalize-and-complete-warehouse-changes
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fixes:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/finalize-and-complete-warehouse-changes
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Apply review fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, found {count}')
+              return text.replace(old, new, 1)
+
+          page_path = Path('pages/warehouse-export-requests.vue')
+          page = page_path.read_text()
+          page = replace_once(
+              page,
+              "import { orderWarehouseFulfillmentSummaryFromRequests } from '~/utils/warehouseFulfillment.mjs'\n",
+              "import { orderWarehouseFulfillmentSummaryFromRequests } from '~/utils/warehouseFulfillment.mjs'\n// @ts-ignore Shared safety helper is also executed by Node client tests.\nimport {\n  externalExportManifestCountMatches,\n  notificationDocumentId,\n} from '~/utils/warehouseExportSafety.mjs'\n",
+              'warehouse safety import',
+          )
+          page = replace_once(
+              page,
+              "function notificationDocumentId(operation: string, requestId: string, recipient: string) {\n  return `warehouse__${operation}__${requestId}__${recipient}`\n    .replace(/[^A-Za-z0-9._-]+/g, '_')\n    .slice(0, 500)\n}\n\n",
+              '',
+              'legacy notification id helper',
+          )
+          page = replace_once(
+              page,
+              "      item_count: exportItemPayloads.length,\n",
+              "      item_count: exportItemPayloads.length,\n      manifest_item_ids: exportItemPayloads.map(item => item.id),\n",
+              'external export manifest payload',
+          )
+          page = replace_once(
+              page,
+              "    if (Math.max(0, Math.floor(toNumber(currentExport.item_count))) !== itemSnapshots.length) {\n",
+              "    if (!externalExportManifestCountMatches(currentExport, itemSnapshots.length)) {\n",
+              'legacy external cancellation count guard',
+          )
+          page_path.write_text(page)
+
+          safety_path = Path('utils/warehouseExportSafety.mjs')
+          safety_path.write_text("""export function externalExportManifestCountMatches(exportOrder, observedItemCount) {
+            const observed = Number(observedItemCount)
+            if (!Number.isInteger(observed) || observed < 1) return false
+
+            const rawCount = exportOrder?.item_count
+            if (rawCount === undefined || rawCount === null) return true
+
+            const declared = Number(rawCount)
+            return Number.isInteger(declared) && declared >= 1 && declared === observed
+          }
+
+          function encodeNotificationIdPart(value) {
+            return encodeURIComponent(String(value ?? '').trim())
+          }
+
+          export function notificationDocumentId(operation, requestId, recipient) {
+            const encodedParts = [
+              encodeNotificationIdPart(operation),
+              encodeNotificationIdPart(requestId),
+              encodeNotificationIdPart(String(recipient ?? '').trim().toLowerCase()),
+            ]
+            const framed = encodedParts.map(part => `${part.length}_${part}`).join('__')
+            const id = `warehouse__${framed}`
+            if (id.length > 1500) {
+              throw new Error('Notification document ID exceeds Firestore limit.')
+            }
+            return id
+          }
+          """.replace('          ', ''))
+
+          rules_path = Path('firestore.rules')
+          rules = rules_path.read_text()
+          rules = replace_once(
+              rules,
+              "    function exportOrderPath(exportOrderId) {\n      return /databases/$(database)/documents/export_orders/$(exportOrderId);\n    }\n",
+              "    function exportOrderPath(exportOrderId) {\n      return /databases/$(database)/documents/export_orders/$(exportOrderId);\n    }\n\n    function exportOrderItemPath(exportItemId) {\n      return /databases/$(database)/documents/export_order_items/$(exportItemId);\n    }\n\n    function externalManifestItemExistsAfter(manifestIds, itemCount, index) {\n      return index >= itemCount\n        ? true\n        : (\n          manifestIds[index] is string\n          && validBoundedString(manifestIds[index], 1, 500)\n          && existsAfter(exportOrderItemPath(manifestIds[index]))\n        );\n    }\n",
+              'manifest rules helpers',
+          )
+
+          external_parent = """    function externalGeneratedExportCreateMatchesRequest(exportOrderId) {
+            let itemCount = request.resource.data.get('item_count', 0);
+            let manifestIds = request.resource.data.get('manifest_item_ids', []);
+            return generatedExportOrderData(request.resource.data)
+              && request.resource.data.get('lifecycle_status', '') == 'released_external'
+              && request.resource.data.get('release_mode', '') == 'external_no_inventory'
+              && request.resource.data.get('affects_inventory', true) == false
+              && request.resource.data.get('request_operation_id', '') != ''
+              && request.resource.data.get('stock_movement_ids', []) is list
+              && request.resource.data.get('stock_movement_ids', []).size() == 0
+              && itemCount is int
+              && itemCount >= 1
+              && itemCount <= 10
+              && manifestIds is list
+              && manifestIds.size() == itemCount
+              && manifestIds.toSet().size() == itemCount
+              && externalManifestItemExistsAfter(manifestIds, itemCount, 0)
+              && externalManifestItemExistsAfter(manifestIds, itemCount, 1)
+              && externalManifestItemExistsAfter(manifestIds, itemCount, 2)
+              && externalManifestItemExistsAfter(manifestIds, itemCount, 3)
+              && externalManifestItemExistsAfter(manifestIds, itemCount, 4)
+              && externalManifestItemExistsAfter(manifestIds, itemCount, 5)
+              && externalManifestItemExistsAfter(manifestIds, itemCount, 6)
+              && externalManifestItemExistsAfter(manifestIds, itemCount, 7)
+              && externalManifestItemExistsAfter(manifestIds, itemCount, 8)
+              && externalManifestItemExistsAfter(manifestIds, itemCount, 9);
+          }
+          """.replace('          ', '')
+          rules, count = re.subn(
+              r"    function externalGeneratedExportCreateMatchesRequest\(exportOrderId\) \{.*?\n    \}\n\n(?=    function generatedExportCancelMatchesRequest)",
+              external_parent + "\n",
+              rules,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise SystemExit(f'external parent manifest rule: expected one replacement, found {count}')
+
+          external_item = """    function externalGeneratedExportItemCreateAllowed(exportItemId) {
+            let exportOrderId = request.resource.data.get('export_order_id', '');
+            let path = exportOrderPath(exportOrderId);
+            let exportData = getAfter(path).data;
+            let manifestIds = exportData.get('manifest_item_ids', []);
+            let requestPath = exportRequestPath(exportData.get('source_request_id', ''));
+            let requestData = getAfter(requestPath).data;
+            let sourceItemId = request.resource.data.get('source_order_item_id', '');
+            return exportOrderId is string
+              && exportOrderId != ''
+              && existsAfter(path)
+              && generatedExportOrderData(exportData)
+              && exportData.get('created_at', null) == request.time
+              && exportData.get('lifecycle_status', '') == 'released_external'
+              && exportData.get('release_mode', '') == 'external_no_inventory'
+              && exportData.get('affects_inventory', true) == false
+              && exportData.get('deleted', false) != true
+              && exportData.get('active', true) != false
+              && exportData.get('item_count', 0) is int
+              && manifestIds is list
+              && manifestIds.size() == exportData.get('item_count', 0)
+              && exportItemId in manifestIds
+              && request.resource.data.get('id', '') == exportItemId
+              && existsAfter(requestPath)
+              && requestData.get('status', '') == 'da_xuat'
+              && requestData.get('lifecycle_status', '') == 'released_external'
+              && requestData.get('external_export_order_id', '') == exportOrderId
+              && request.resource.data.get('source_order_id', '') == requestData.get('order_id', '')
+              && requestSnapshotAllowsExportItem(requestData, sourceItemId, request.resource.data)
+              && request.resource.data.get('release_mode', '') == 'external_no_inventory'
+              && request.resource.data.get('affects_inventory', true) == false;
+          }
+          """.replace('          ', '')
+          rules, count = re.subn(
+              r"    function externalGeneratedExportItemCreateAllowed\(\) \{.*?\n    \}\n\n(?=    function generatedExportItemCreateAllowed)",
+              external_item + "\n",
+              rules,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise SystemExit(f'external item manifest rule: expected one replacement, found {count}')
+          rules = replace_once(
+              rules,
+              "&& (generatedExportItemCreateAllowed() || externalGeneratedExportItemCreateAllowed())",
+              "&& (generatedExportItemCreateAllowed() || externalGeneratedExportItemCreateAllowed(docId))",
+              'external item rule call',
+          )
+          rules_path.write_text(rules)
+
+          test_path = Path('tests/external-export-release.rules.test.mjs')
+          tests = test_path.read_text()
+          tests = replace_once(
+              tests,
+              "    release_mode: 'external_no_inventory', affects_inventory: false, stock_movement_ids: [], item_count: 1,\n",
+              "    release_mode: 'external_no_inventory', affects_inventory: false, stock_movement_ids: [], item_count: 1,\n    manifest_item_ids: ['external-item-a'],\n",
+              'default external manifest fixture',
+          )
+          tests = replace_once(
+              tests,
+              "  batch.set(doc(db, 'export_orders', EXPORT_ID), externalExportOrder({ item_count: 8 }))\n",
+              "  const manifestItemIds = Array.from({ length: 8 }, (_, index) => `external-item-${index + 1}`)\n  batch.set(doc(db, 'export_orders', EXPORT_ID), externalExportOrder({ item_count: 8, manifest_item_ids: manifestItemIds }))\n",
+              'multi-line external manifest fixture',
+          )
+          regression_tests = """
+          test('external release rejects an extra item outside the declared manifest', async () => {
+            const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+            const batch = writeBatch(db)
+            batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+            addExternalRecord(db, batch)
+            batch.set(doc(db, 'export_order_items', 'external-item-extra'), externalExportItem({ id: 'external-item-extra' }))
+            await assertFails(batch.commit())
+          })
+
+          test('external release rejects a declared manifest item that is missing from the transaction', async () => {
+            const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+            const batch = writeBatch(db)
+            batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+            batch.set(doc(db, 'export_orders', EXPORT_ID), externalExportOrder({
+              item_count: 2,
+              manifest_item_ids: ['external-item-a', 'external-item-missing'],
+            }))
+            batch.set(doc(db, 'export_order_items', 'external-item-a'), externalExportItem())
+            await assertFails(batch.commit())
+          })
+
+          """.replace('          ', '')
+          marker = "test('external release modern matches product and quantity from the request snapshot', async () => {"
+          if tests.count(marker) != 1:
+              raise SystemExit('regression test insertion marker not found exactly once')
+          tests = tests.replace(marker, regression_tests + marker, 1)
+          test_path.write_text(tests)
+
+          safety_test = Path('tests/warehouse-export-safety.client.test.mjs')
+          safety_test.write_text("""import test from 'node:test'
+          import assert from 'node:assert/strict'
+          import {
+            externalExportManifestCountMatches,
+            notificationDocumentId,
+          } from '../utils/warehouseExportSafety.mjs'
+
+          test('legacy external exports without item_count remain cancellable when item snapshots exist', () => {
+            assert.equal(externalExportManifestCountMatches({}, 2), true)
+            assert.equal(externalExportManifestCountMatches({ item_count: null }, 1), true)
+          })
+
+          test('explicit external manifest counts must match observed item snapshots', () => {
+            assert.equal(externalExportManifestCountMatches({ item_count: 2 }, 2), true)
+            assert.equal(externalExportManifestCountMatches({ item_count: 1 }, 2), false)
+            assert.equal(externalExportManifestCountMatches({ item_count: 'invalid' }, 2), false)
+            assert.equal(externalExportManifestCountMatches({}, 0), false)
+          })
+
+          test('notification document ids keep distinct recipients distinct', () => {
+            const operation = 'export_request_release:request-a:7'
+            const requestId = 'request-a'
+            const plusAddress = notificationDocumentId(operation, requestId, 'sale+ops@example.com')
+            const underscoreAddress = notificationDocumentId(operation, requestId, 'sale_ops@example.com')
+            assert.notEqual(plusAddress, underscoreAddress)
+          })
+
+          test('notification document ids are not truncated before the recipient component', () => {
+            const operation = `external_release:${'x'.repeat(600)}`
+            const first = notificationDocumentId(operation, 'request-a', 'first@example.com')
+            const second = notificationDocumentId(operation, 'request-a', 'second@example.com')
+            assert.notEqual(first, second)
+            assert.ok(first.length <= 1500)
+            assert.ok(second.length <= 1500)
+          })
+          """.replace('          ', ''))
+
+          package_path = Path('package.json')
+          package_data = json.loads(package_path.read_text())
+          test_rules = package_data['scripts']['test:rules']
+          safety_cmd = 'node --test tests/warehouse-export-safety.client.test.mjs'
+          if safety_cmd not in test_rules:
+              test_rules = test_rules.replace(' && firebase emulators:exec', f' && {safety_cmd} && firebase emulators:exec', 1)
+          package_data['scripts']['test:rules'] = test_rules
+          lifecycle = package_data['scripts']['test:warehouse-lifecycle']
+          if 'tests/warehouse-export-safety.client.test.mjs' not in lifecycle:
+              lifecycle = lifecycle.replace(
+                  'tests/warehouse-lifecycle-audit.test.mjs',
+                  'tests/warehouse-lifecycle-audit.test.mjs tests/warehouse-export-safety.client.test.mjs',
+                  1,
+              )
+          package_data['scripts']['test:warehouse-lifecycle'] = lifecycle
+          package_path.write_text(json.dumps(package_data, ensure_ascii=False, indent=2) + '\n')
+          PY
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run focused warehouse lifecycle tests
+        run: npm run test:warehouse-lifecycle
+
+      - name: Commit reviewed fixes to PR branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/fix-pr193-review.yml
+          git add pages/warehouse-export-requests.vue firestore.rules package.json utils/warehouseExportSafety.mjs tests/external-export-release.rules.test.mjs tests/warehouse-export-safety.client.test.mjs
+          git diff --cached --check
+          git commit -m "fix warehouse lifecycle review findings"
+          git push origin HEAD:codex/finalize-and-complete-warehouse-changes
