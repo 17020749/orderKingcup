@@ -27,7 +27,10 @@
     "migrate:dedupe-order-invoices": "node scripts/dedupe-order-invoices.mjs",
     "migrate:backfill-order-invoices": "node scripts/backfill-order-invoices.mjs",
     "test:warehouse-export-history": "node --test tests/warehouse-export-history.client.test.mjs",
-    "test:warehouse-fulfillment": "node --test tests/warehouse-fulfillment.client.test.mjs"
+    "test:warehouse-fulfillment": "node --test tests/warehouse-fulfillment.client.test.mjs",
+    "test:warehouse-lifecycle": "node --test tests/export-lifecycle.client.test.mjs tests/external-export-release.client.test.mjs tests/warehouse-fulfillment.client.test.mjs tests/warehouse-export-client.runtime.test.mjs tests/warehouse-client-payload.static.test.mjs tests/warehouse-print-menu.static.test.mjs tests/warehouse-lifecycle-audit.test.mjs && npx -y firebase-tools@latest emulators:exec --only firestore \"node --test --test-concurrency=1 tests/export-lifecycle.rules.test.mjs tests/external-export-release.rules.test.mjs\"",
+    "audit:warehouse-lifecycle": "node scripts/audit-warehouse-lifecycle.mjs",
+    "deploy:warehouse-lifecycle": "npm run generate && npx -y firebase-tools@latest deploy --only firestore:rules && npx -y firebase-tools@latest deploy --only hosting"
   },
   "dependencies": {
     "@nuxtjs/google-fonts": "^3.2.0",
