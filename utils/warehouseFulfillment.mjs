@@ -249,6 +249,53 @@ export function buildWarehouseFulfillmentRows(items, requests, excludeRequestId 
   return rows
 }
 
+export function buildWarehouseOrderItemsFromRequestSnapshots(requests) {
+  const lines = new Map()
+  ;(Array.isArray(requests) ? requests : []).forEach(request => {
+    requestWarehouseItems(request).forEach(item => {
+      const sourceOrderItemId = String(item?.source_order_item_id || item?.order_item_id || '').trim()
+      const productCode = String(item?.product_code || '').trim()
+      const productId = String(item?.product_id || '').trim()
+      const logo = String(item?.logo || '').trim()
+      const requested = requestedQuantity(item)
+      const ordered = toNumber(
+        item?.order_quantity
+        ?? item?.ordered_quantity
+        ?? item?.ordered_qty
+        ?? item?.source_quantity
+        ?? requested,
+      )
+      if ((!sourceOrderItemId && !productCode) || ordered <= 0) return
+      const key = sourceOrderItemId
+        ? `${sourceOrderItemId}|${logoKey(logo)}`
+        : `${productCode.toUpperCase()}|${logoKey(logo)}`
+      const previous = lines.get(key)
+      const quantity = Math.max(ordered, toNumber(previous?.quantity))
+      lines.set(key, {
+        id: sourceOrderItemId || `legacy:${productCode}:${logoKey(logo)}`,
+        product_id: productId || previous?.product_id || '',
+        product_code: productCode || previous?.product_code || '',
+        product_name: String(item?.product_name || previous?.product_name || '').trim(),
+        unit: String(item?.unit || previous?.unit || '').trim(),
+        quantity,
+        logo_json: logo ? JSON.stringify([{ logo, quantity }]) : '',
+      })
+    })
+  })
+  return Array.from(lines.values())
+}
+
+export function orderWarehouseFulfillmentSummaryFromRequests(requests) {
+  const activeRequests = (Array.isArray(requests) ? requests : []).filter(request => (
+    request?.deleted !== true && request?.active !== false
+  ))
+  const items = buildWarehouseOrderItemsFromRequestSnapshots(activeRequests)
+  return orderWarehouseFulfillmentSummary(
+    buildWarehouseFulfillmentRows(items, activeRequests),
+    activeRequests,
+  )
+}
+
 export function orderWarehouseFulfillmentSummary(rows, requests) {
   const exported = rows.reduce((sum, row) => sum + row.exported_qty, 0)
   const requested = rows.reduce((sum, row) => sum + row.requested_qty, 0)

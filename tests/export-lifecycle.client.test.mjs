@@ -4,13 +4,18 @@ import { test } from 'node:test'
 import {
   activeExportOrderId,
   appendExportLifecycleTimeline,
+  buildCancelledExternalReleaseRequestPatch,
   buildCancelledReleaseRequestPatch,
+  buildRejectedRequestPatch,
   buildGeneratedExportLifecycleFields,
   buildReleasedRequestPatch,
+  canCancelExternalExportRequestRelease,
   canCancelExportRequestRelease,
+  canRejectExportRequest,
   canReleaseExportRequest,
   exportLifecycleLinkError,
   nextExportReleaseSequence,
+  requestExternalExportOrderId,
   requestExportOrderId,
 } from '../utils/exportLifecycle.mjs'
 
@@ -125,4 +130,45 @@ test('source thật có cancel request release và UI không cho hủy từ tran
   assert.match(requestPage, /cancel_release/)
   assert.match(requestPage, /Hủy xuất và hoàn tồn/)
   assert.match(exportPage, /Phiếu sinh từ yêu cầu sale không được hủy tại trang Xuất kho thật/)
+})
+
+test('request reopened after inventory restore can be rejected with a canonical lifecycle', () => {
+  const request = {
+    id: 'request-a', status: 'da_tiep_nhan', lifecycle_status: 'release_cancelled',
+    revision: 4, active_export_order_id: '',
+  }
+  assert.equal(canRejectExportRequest(request), true)
+  const patch = buildRejectedRequestPatch({
+    request, actor: 'Warehouse@Example.com', reason: 'Customer cancelled',
+    operationId: 'export_request_reject:request-a:4', timelineJson: '[]',
+  })
+  assert.equal(patch.status, 'tu_choi')
+  assert.equal(patch.lifecycle_status, 'rejected')
+  assert.equal(patch.revision, 5)
+  assert.equal(patch.warehouse_handled_by, 'warehouse@example.com')
+})
+
+test('external release uses a stable id and can be cancelled without an inventory link', () => {
+  assert.equal(requestExternalExportOrderId('request-a', 1), 'request_external_export__request-a')
+  assert.equal(requestExternalExportOrderId('request-a', 2), 'request_external_export__request-a__2')
+  const request = {
+    id: 'request-a', status: 'da_xuat', lifecycle_status: 'released_external',
+    release_mode: 'external_no_inventory', external_exported: true,
+    external_export_order_id: 'request_external_export__request-a',
+    external_export_code: 'PXK-NGOAI-A', revision: 2, cancel_count: 0,
+  }
+  const exportOrder = {
+    id: request.external_export_order_id, source_request_id: 'request-a',
+    source: 'kingcup_firestore', release_mode: 'external_no_inventory', affects_inventory: false,
+  }
+  assert.equal(canCancelExternalExportRequestRelease(request), true)
+  const patch = buildCancelledExternalReleaseRequestPatch({
+    request, exportOrder, actor: 'warehouse@example.com', reason: 'Recorded by mistake',
+    operationId: 'export_request_external_cancel:request-a:2', timelineJson: '[]',
+  })
+  assert.equal(patch.status, 'da_tiep_nhan')
+  assert.equal(patch.lifecycle_status, 'external_release_cancelled')
+  assert.equal(patch.external_export_order_id, '')
+  assert.equal(patch.stock_movement_ids.length, 0)
+  assert.equal(patch.revision, 3)
 })

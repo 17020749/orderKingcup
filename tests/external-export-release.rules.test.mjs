@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing'
-import { collection, doc, getDocs, serverTimestamp, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
+import { collection, doc, getDocs, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore'
 
 const projectId = 'demo-external-export-release'
 const WAREHOUSE = 'warehouse@example.com'
@@ -29,7 +29,7 @@ async function seed() {
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore()
     await Promise.all([
-      setDoc(doc(db, 'users', WAREHOUSE), { email: WAREHOUSE, active: true, deleted: false, permissions_flat: ['page.warehouse_export_requests', 'export_requests.release'] }),
+      setDoc(doc(db, 'users', WAREHOUSE), { email: WAREHOUSE, active: true, deleted: false, permissions_flat: ['page.warehouse_export_requests', 'export_requests.accept', 'export_requests.release', 'export_requests.reject'] }),
       setDoc(doc(db, 'users', SALE), { email: SALE, active: true, deleted: false, permissions_flat: ['orders.view', 'export_requests.view'] }),
       setDoc(doc(db, 'orders', 'order-a'), {
         id: 'order-a', order_code: 'ORDER-A', owner_email: SALE, created_by: SALE, sale_email: SALE,
@@ -137,6 +137,81 @@ test('external release tạo phiếu hiển thị ở exports nhưng không sinh
   })
 })
 
+test('external release modern matches product and quantity from the request snapshot', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'order_export_requests', 'request-a'), requestData({
+      request_snapshot_version: 1,
+      source_items: {
+        'item-a': {
+          order_id: 'order-a',
+          product_id: 'product-a',
+          product_code: 'SP-A',
+          requested_quantity: 4,
+        },
+      },
+    }))
+  })
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  addExternalRecord(db, batch, {}, { source_order_item_id: 'item-a' })
+  await assertSucceeds(batch.commit())
+})
+
+test('external release modern cannot exceed the quantity in the request snapshot', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'order_export_requests', 'request-a'), requestData({
+      request_snapshot_version: 1,
+      source_items: {
+        'item-a': {
+          order_id: 'order-a',
+          product_id: 'product-a',
+          product_code: 'SP-A',
+          requested_quantity: 4,
+        },
+      },
+    }))
+  })
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  addExternalRecord(db, batch, {}, { source_order_item_id: 'item-a', quantity: 5 })
+  await assertFails(batch.commit())
+})
+
+test('external release supports a realistic multi-line request within Rules limits', async () => {
+  const sourceItems = {}
+  for (let index = 1; index <= 8; index += 1) {
+    sourceItems[`item-${index}`] = {
+      order_id: 'order-a',
+      product_id: `product-${index}`,
+      product_code: `SP-${index}`,
+      requested_quantity: index,
+    }
+  }
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'order_export_requests', 'request-a'), requestData({
+      request_snapshot_version: 1,
+      source_items: sourceItems,
+    }))
+  })
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  batch.set(doc(db, 'export_orders', EXPORT_ID), externalExportOrder())
+  for (let index = 1; index <= 8; index += 1) {
+    const itemId = `external-item-${index}`
+    batch.set(doc(db, 'export_order_items', itemId), externalExportItem({
+      id: itemId,
+      source_order_item_id: `item-${index}`,
+      product_id: `product-${index}`,
+      product_code: `SP-${index}`,
+      quantity: index,
+    }))
+  }
+  await assertSucceeds(batch.commit())
+})
+
 test('external release cho phép đơn hàng chuyển thẳng sang đã xuất đủ', async () => {
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   const batch = writeBatch(db)
@@ -193,12 +268,186 @@ test('phiếu ghi nhận bắt buộc affects_inventory false', async () => {
   await assertFails(batch.commit())
 })
 
-test('external release cập nhật order sai trạng thái bị chặn', async () => {
+test('external release accepts a sibling-compatible order summary', async () => {
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   const batch = writeBatch(db)
   batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
   updateOrderSummary(db, batch, 'cho_xu_ly', 'da_tiep_nhan')
   addExternalRecord(db, batch)
+  await assertSucceeds(batch.commit())
+})
+
+test('external release core write does not require a parent order cache update', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  addExternalRecord(db, batch)
+  await assertSucceeds(batch.commit())
+})
+
+test('a request reopened after release cancellation can be rejected', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'order_export_requests', 'request-a'), requestData({
+      status: 'da_tiep_nhan',
+      lifecycle_status: 'release_cancelled',
+      revision: 4,
+      last_cancelled_export_order_id: 'request_export__request-a',
+      active_export_order_id: '',
+    }))
+  })
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  await assertSucceeds(updateDoc(doc(db, 'order_export_requests', 'request-a'), {
+    status: 'tu_choi',
+    lifecycle_status: 'rejected',
+    warehouse_handled_by: WAREHOUSE,
+    warehouse_handled_at: serverTimestamp(),
+    warehouse_note: 'Customer cancelled after reopening',
+    request_timeline_json: '[{action:reject}]',
+    operation_id: 'export_request_reject:request-a:4',
+    last_operation_id: 'export_request_reject:request-a:4',
+    revision: 5,
+    updated_at: serverTimestamp(),
+  }))
+})
+
+test('accept transaction writes canonical lifecycle and activity atomically', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'order_export_requests', 'request-a'), requestData({
+      status: 'cho_xu_ly',
+      lifecycle_status: 'pending',
+    }))
+  })
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), {
+    status: 'da_tiep_nhan',
+    lifecycle_status: 'accepted',
+    warehouse_handled_by: WAREHOUSE,
+    warehouse_handled_at: serverTimestamp(),
+    warehouse_note: 'Accepted',
+    request_timeline_json: '[{"action":"accept"}]',
+    operation_id: 'export_request_accept:request-a:0',
+    last_operation_id: 'export_request_accept:request-a:0',
+    revision: 1,
+    updated_at: serverTimestamp(),
+  })
+  batch.set(doc(db, 'activity_logs', 'accept-request-a'), {
+    module: 'order_export_requests',
+    action: 'accept',
+    item_code: 'YCXK-A',
+    item_name: 'ORDER-A',
+    changed_by: WAREHOUSE,
+    after_json: '{"status":"da_tiep_nhan"}',
+    created_at: serverTimestamp(),
+    active: true,
+    deleted: false,
+  })
+  await assertSucceeds(batch.commit())
+})
+
+test('external release cancellation reopens the request and never restores inventory', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const releaseBatch = writeBatch(db)
+  releaseBatch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  addExternalRecord(db, releaseBatch)
+  await assertSucceeds(releaseBatch.commit())
+
+  const operationId = 'export_request_external_cancel:request-a:1'
+  const cancelBatch = writeBatch(db)
+  cancelBatch.update(doc(db, 'order_export_requests', 'request-a'), {
+    status: 'da_tiep_nhan', lifecycle_status: 'external_release_cancelled', release_mode: '',
+    external_exported: false, external_export_date: '', external_exported_by: '', external_exported_at: null,
+    external_export_order_id: '', external_export_code: '', exported_at: null, actual_exported_at: null,
+    actual_export_summary_json: '[]', stock_movement_ids: [], warehouse_handled_by: WAREHOUSE,
+    warehouse_handled_at: serverTimestamp(), warehouse_note: 'Recorded by mistake',
+    request_timeline_json: '[{action:external_release_cancel}]', operation_id: operationId,
+    last_operation_id: operationId, last_cancelled_export_order_id: EXPORT_ID,
+    last_cancelled_export_code: EXPORT_CODE, last_cancelled_by: WAREHOUSE,
+    last_cancel_reason: 'Recorded by mistake', last_cancelled_at: serverTimestamp(),
+    cancel_count: 1, revision: 2, updated_at: serverTimestamp(),
+  })
+  cancelBatch.update(doc(db, 'export_orders', EXPORT_ID), {
+    lifecycle_status: 'cancelled', deleted: true, active: false, status: 'cancelled',
+    deleted_at: serverTimestamp(), deleted_by: WAREHOUSE, deleted_reason: 'Recorded by mistake',
+    cancelled_at: serverTimestamp(), cancelled_by: WAREHOUSE, cancel_reason: 'Recorded by mistake',
+    updated_by: WAREHOUSE, operation_id: operationId, last_operation_id: operationId,
+    revision: 2, updated_at: serverTimestamp(),
+  })
+  cancelBatch.update(doc(db, 'export_order_items', 'external-item-a'), {
+    deleted: true, active: false, status: 'cancelled', deleted_at: serverTimestamp(),
+    deleted_by: WAREHOUSE, deleted_reason: 'Recorded by mistake', updated_by: WAREHOUSE,
+    operation_id: operationId, last_operation_id: operationId, revision: 2, updated_at: serverTimestamp(),
+  })
+  await assertSucceeds(cancelBatch.commit())
+
+  await env.withSecurityRulesDisabled(async context => {
+    const adminDb = context.firestore()
+    const request = (await getDocs(collection(adminDb, 'order_export_requests'))).docs[0].data()
+    const movements = await getDocs(collection(adminDb, 'stock_movements'))
+    const balances = await getDocs(collection(adminDb, 'inventory_balances'))
+    assert.equal(request.status, 'da_tiep_nhan')
+    assert.equal(request.lifecycle_status, 'external_release_cancelled')
+    assert.equal(request.external_export_order_id, '')
+    assert.equal(movements.empty, true)
+    assert.equal(balances.empty, true)
+  })
+})
+
+test('external cancellation is blocked if the linked export is not cancelled', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const releaseBatch = writeBatch(db)
+  releaseBatch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  addExternalRecord(db, releaseBatch)
+  await assertSucceeds(releaseBatch.commit())
+  await assertFails(updateDoc(doc(db, 'order_export_requests', 'request-a'), {
+    status: 'da_tiep_nhan', lifecycle_status: 'external_release_cancelled',
+    external_exported: false, external_export_date: '', external_exported_by: '', external_exported_at: null,
+    external_export_order_id: '', external_export_code: '', release_mode: '', exported_at: null,
+    actual_exported_at: null, actual_export_summary_json: '[]', stock_movement_ids: [],
+    warehouse_handled_by: WAREHOUSE, warehouse_handled_at: serverTimestamp(), warehouse_note: 'Invalid one-sided cancel',
+    request_timeline_json: '[]', operation_id: 'one-sided', last_operation_id: 'one-sided',
+    last_cancelled_export_order_id: EXPORT_ID, last_cancelled_export_code: EXPORT_CODE,
+    last_cancelled_by: WAREHOUSE, last_cancel_reason: 'Invalid one-sided cancel',
+    last_cancelled_at: serverTimestamp(), cancel_count: 1, revision: 2, updated_at: serverTimestamp(),
+  }))
+})
+
+test('external cancellation cannot retain stale external-release metadata', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const releaseBatch = writeBatch(db)
+  releaseBatch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  addExternalRecord(db, releaseBatch)
+  await assertSucceeds(releaseBatch.commit())
+
+  const operationId = 'external-cancel-retains-metadata'
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), {
+    status: 'da_tiep_nhan', lifecycle_status: 'external_release_cancelled', release_mode: '',
+    external_exported: false, external_export_date: '2026-08-04', external_exported_by: '',
+    external_exported_at: null, external_export_order_id: '', external_export_code: '',
+    exported_at: null, actual_exported_at: null, actual_export_summary_json: '[]',
+    stock_movement_ids: [], warehouse_handled_by: WAREHOUSE,
+    warehouse_handled_at: serverTimestamp(), warehouse_note: 'Cancel',
+    request_timeline_json: '[{"action":"external_release_cancel"}]',
+    operation_id: operationId, last_operation_id: operationId,
+    last_cancelled_export_order_id: EXPORT_ID, last_cancelled_export_code: EXPORT_CODE,
+    last_cancelled_by: WAREHOUSE, last_cancel_reason: 'Cancel',
+    last_cancelled_at: serverTimestamp(), cancel_count: 1, revision: 2,
+    updated_at: serverTimestamp(),
+  })
+  batch.update(doc(db, 'export_orders', EXPORT_ID), {
+    lifecycle_status: 'cancelled', deleted: true, active: false, status: 'cancelled',
+    deleted_at: serverTimestamp(), deleted_by: WAREHOUSE, deleted_reason: 'Cancel',
+    cancelled_at: serverTimestamp(), cancelled_by: WAREHOUSE, cancel_reason: 'Cancel',
+    updated_by: WAREHOUSE, operation_id: operationId, last_operation_id: operationId,
+    revision: 2, updated_at: serverTimestamp(),
+  })
+  batch.update(doc(db, 'export_order_items', 'external-item-a'), {
+    deleted: true, active: false, status: 'cancelled', deleted_at: serverTimestamp(),
+    deleted_by: WAREHOUSE, deleted_reason: 'Cancel', updated_by: WAREHOUSE,
+    operation_id: operationId, last_operation_id: operationId,
+    revision: 2, updated_at: serverTimestamp(),
+  })
   await assertFails(batch.commit())
 })
 
@@ -209,4 +458,47 @@ test('external release bắt buộc có lý do xác nhận', async () => {
   updateOrderSummary(db, batch)
   addExternalRecord(db, batch)
   await assertFails(batch.commit())
+})
+
+test('warehouse operation lease chỉ cho nhận lại operation processing đã quá hạn', async () => {
+  const staleId = 'stale-operation'
+  const freshId = 'fresh-operation'
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore()
+    const base = {
+      action: 'export_request_release',
+      target_collection: 'export_orders',
+      target_id: 'request_export__request-a',
+      created_by: WAREHOUSE,
+      status: 'processing',
+      result_code: 'PXK-A',
+      target_revision: 0,
+      created_at: Timestamp.fromMillis(Date.now() - 10 * 60 * 1000),
+      active: true,
+      deleted: false,
+      source: 'nuxt',
+    }
+    await Promise.all([
+      setDoc(doc(db, 'warehouse_operations', staleId), {
+        ...base,
+        id: staleId,
+        operation_id: staleId,
+        processing_at: Timestamp.fromMillis(Date.now() - 6 * 60 * 1000),
+      }),
+      setDoc(doc(db, 'warehouse_operations', freshId), {
+        ...base,
+        id: freshId,
+        operation_id: freshId,
+        processing_at: Timestamp.fromMillis(Date.now() - 60 * 1000),
+      }),
+    ])
+  })
+
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  await assertSucceeds(updateDoc(doc(db, 'warehouse_operations', staleId), {
+    processing_at: serverTimestamp(),
+  }))
+  await assertFails(updateDoc(doc(db, 'warehouse_operations', freshId), {
+    processing_at: serverTimestamp(),
+  }))
 })

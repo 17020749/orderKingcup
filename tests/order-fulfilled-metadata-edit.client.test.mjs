@@ -202,12 +202,12 @@ test('repairs a stale persisted fulfilled status before a normal partial-order e
 })
 
 test('warehouse release persists an exact order summary instead of a permanent partial fallback', () => {
-  assert.equal(warehouseRequestsSource.includes('async function deriveOrderSummaryPatch('), true)
-  assert.equal(warehouseRequestsSource.includes('loadPersistedOrder(orderId)'), true)
-  assert.equal(warehouseRequestsSource.includes('loadScopedExportRequests([order], true)'), true)
-  assert.equal(warehouseRequestsSource.includes('orderSummary(buildFulfillmentRows(items, nextRequests), nextRequests)'), true)
-  assert.equal(warehouseRequestsSource.includes("orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_xuat')"), true)
-  assert.equal(warehouseRequestsSource.includes("orderSummaryPatch: await deriveOrderSummaryPatch(row, 'da_tiep_nhan')"), true)
+  assert.equal(warehouseRequestsSource.includes('async function reconcileOrderSummary('), true)
+  assert.equal(warehouseRequestsSource.includes('requestsAfterTransition(row, patch)'), true)
+  assert.equal(warehouseRequestsSource.includes('orderWarehouseFulfillmentSummaryFromRequests('), true)
+  assert.equal(warehouseRequestsSource.includes("}, 'release')"), true)
+  assert.equal(warehouseRequestsSource.includes("}, 'cancel_release')"), true)
+  assert.equal(warehouseRequestsSource.includes('orderSummaryPatch:'), false)
 })
 
 test('fulfilled invoice exception is scoped away from delete lock and duplicate UI', () => {
