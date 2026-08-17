@@ -202,6 +202,17 @@ test('external release rejects a declared manifest item that is missing from the
   await assertFails(batch.commit())
 })
 
+test('external export header cannot reuse a pre-existing manifest item outside the release transaction', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'export_order_items', 'external-item-a'), externalExportItem({
+      created_at: Timestamp.fromMillis(1),
+      updated_at: Timestamp.fromMillis(1),
+    }))
+  })
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  await assertFails(setDoc(doc(db, 'export_orders', EXPORT_ID), externalExportOrder()))
+})
+
 test('external release modern matches product and quantity from the request snapshot', async () => {
   await env.withSecurityRulesDisabled(async context => {
     await setDoc(doc(context.firestore(), 'order_export_requests', 'request-a'), requestData({

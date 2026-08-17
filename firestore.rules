@@ -2072,6 +2072,7 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           manifestIds[index] is string
           && validBoundedString(manifestIds[index], 1, 500)
           && existsAfter(exportOrderItemPath(manifestIds[index]))
+          && getAfter(exportOrderItemPath(manifestIds[index])).data.get('created_at', null) == request.time
         );
     }
 
