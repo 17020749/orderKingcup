@@ -2061,6 +2061,20 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
       return /databases/$(database)/documents/export_orders/$(exportOrderId);
     }
 
+    function exportOrderItemPath(exportItemId) {
+      return /databases/$(database)/documents/export_order_items/$(exportItemId);
+    }
+
+    function externalManifestItemExistsAfter(manifestIds, itemCount, index) {
+      return index >= itemCount
+        ? true
+        : (
+          manifestIds[index] is string
+          && validBoundedString(manifestIds[index], 1, 500)
+          && existsAfter(exportOrderItemPath(manifestIds[index]))
+        );
+    }
+
     function generatedExportOrderData(data) {
       return data.get('source_request_id', '') is string
         && data.get('source_request_id', '') != ''
@@ -2105,29 +2119,32 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
     }
 
     function externalGeneratedExportCreateMatchesRequest(exportOrderId) {
-      let requestId = request.resource.data.get('source_request_id', '');
-      let path = exportRequestPath(requestId);
-      return generatedExportOrderData(request.resource.data)
-        && request.resource.data.get('lifecycle_status', '') == 'released_external'
-        && request.resource.data.get('release_mode', '') == 'external_no_inventory'
-        && request.resource.data.get('affects_inventory', true) == false
-        && request.resource.data.get('request_operation_id', '') != ''
-        && request.resource.data.get('stock_movement_ids', []) is list
-        && request.resource.data.get('stock_movement_ids', []).size() == 0
-        && request.resource.data.get('item_count', 0) is int
-        && request.resource.data.get('item_count', 0) >= 1
-        && request.resource.data.get('item_count', 0) <= 10
-        && exists(path)
-        && existsAfter(path)
-        && getAfter(path).data.get('status', '') == 'da_xuat'
-        && getAfter(path).data.get('lifecycle_status', '') == 'released_external'
-        && getAfter(path).data.get('release_mode', '') == 'external_no_inventory'
-        && getAfter(path).data.get('external_export_order_id', '') == exportOrderId
-        && getAfter(path).data.get('external_export_code', '') == request.resource.data.get('export_code', '')
-        && getAfter(path).data.get('release_sequence', 0) == request.resource.data.get('release_sequence', -1)
-        && request.resource.data.get('source_request_revision', -1) == get(path).data.get('revision', 0)
-        && getAfter(path).data.get('operation_id', '') == request.resource.data.get('request_operation_id', '');
-    }
+  let itemCount = request.resource.data.get('item_count', 0);
+  let manifestIds = request.resource.data.get('manifest_item_ids', []);
+  return generatedExportOrderData(request.resource.data)
+    && request.resource.data.get('lifecycle_status', '') == 'released_external'
+    && request.resource.data.get('release_mode', '') == 'external_no_inventory'
+    && request.resource.data.get('affects_inventory', true) == false
+    && request.resource.data.get('request_operation_id', '') != ''
+    && request.resource.data.get('stock_movement_ids', []) is list
+    && request.resource.data.get('stock_movement_ids', []).size() == 0
+    && itemCount is int
+    && itemCount >= 1
+    && itemCount <= 10
+    && manifestIds is list
+    && manifestIds.size() == itemCount
+    && manifestIds.toSet().size() == itemCount
+    && externalManifestItemExistsAfter(manifestIds, itemCount, 0)
+    && externalManifestItemExistsAfter(manifestIds, itemCount, 1)
+    && externalManifestItemExistsAfter(manifestIds, itemCount, 2)
+    && externalManifestItemExistsAfter(manifestIds, itemCount, 3)
+    && externalManifestItemExistsAfter(manifestIds, itemCount, 4)
+    && externalManifestItemExistsAfter(manifestIds, itemCount, 5)
+    && externalManifestItemExistsAfter(manifestIds, itemCount, 6)
+    && externalManifestItemExistsAfter(manifestIds, itemCount, 7)
+    && externalManifestItemExistsAfter(manifestIds, itemCount, 8)
+    && externalManifestItemExistsAfter(manifestIds, itemCount, 9);
+}
 
     function generatedExportCancelMatchesRequest(exportOrderId) {
       let requestId = resource.data.get('source_request_id', '');
@@ -2187,32 +2204,38 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
         );
     }
 
-    function externalGeneratedExportItemCreateAllowed() {
-      let exportOrderId = request.resource.data.get('export_order_id', '');
-      let path = exportOrderPath(exportOrderId);
-      let exportData = getAfter(path).data;
-      let requestPath = exportRequestPath(exportData.get('source_request_id', ''));
-      let requestData = getAfter(requestPath).data;
-      let sourceItemId = request.resource.data.get('source_order_item_id', '');
-      return exportOrderId is string
-        && exportOrderId != ''
-        && existsAfter(path)
-        && generatedExportOrderData(exportData)
-        && exportData.get('created_at', null) == request.time
-        && exportData.get('lifecycle_status', '') == 'released_external'
-        && exportData.get('release_mode', '') == 'external_no_inventory'
-        && exportData.get('affects_inventory', true) == false
-        && exportData.get('deleted', false) != true
-        && exportData.get('active', true) != false
-        && existsAfter(requestPath)
-        && requestData.get('status', '') == 'da_xuat'
-        && requestData.get('lifecycle_status', '') == 'released_external'
-        && requestData.get('external_export_order_id', '') == exportOrderId
-        && request.resource.data.get('source_order_id', '') == requestData.get('order_id', '')
-        && requestSnapshotAllowsExportItem(requestData, sourceItemId, request.resource.data)
-        && request.resource.data.get('release_mode', '') == 'external_no_inventory'
-        && request.resource.data.get('affects_inventory', true) == false;
-    }
+    function externalGeneratedExportItemCreateAllowed(exportItemId) {
+  let exportOrderId = request.resource.data.get('export_order_id', '');
+  let path = exportOrderPath(exportOrderId);
+  let exportData = getAfter(path).data;
+  let manifestIds = exportData.get('manifest_item_ids', []);
+  let requestPath = exportRequestPath(exportData.get('source_request_id', ''));
+  let requestData = getAfter(requestPath).data;
+  let sourceItemId = request.resource.data.get('source_order_item_id', '');
+  return exportOrderId is string
+    && exportOrderId != ''
+    && existsAfter(path)
+    && generatedExportOrderData(exportData)
+    && exportData.get('created_at', null) == request.time
+    && exportData.get('lifecycle_status', '') == 'released_external'
+    && exportData.get('release_mode', '') == 'external_no_inventory'
+    && exportData.get('affects_inventory', true) == false
+    && exportData.get('deleted', false) != true
+    && exportData.get('active', true) != false
+    && exportData.get('item_count', 0) is int
+    && manifestIds is list
+    && manifestIds.size() == exportData.get('item_count', 0)
+    && exportItemId in manifestIds
+    && request.resource.data.get('id', '') == exportItemId
+    && existsAfter(requestPath)
+    && requestData.get('status', '') == 'da_xuat'
+    && requestData.get('lifecycle_status', '') == 'released_external'
+    && requestData.get('external_export_order_id', '') == exportOrderId
+    && request.resource.data.get('source_order_id', '') == requestData.get('order_id', '')
+    && requestSnapshotAllowsExportItem(requestData, sourceItemId, request.resource.data)
+    && request.resource.data.get('release_mode', '') == 'external_no_inventory'
+    && request.resource.data.get('affects_inventory', true) == false;
+}
 
     function generatedExportItemCreateAllowed() {
       let exportOrderId = request.resource.data.get('export_order_id', '');
@@ -3623,7 +3646,7 @@ hasAnyPerm([
         && quantityIsNumber(request.resource.data)
         && request.resource.data.get('quantity', 0) > 0
         && ownEmailField(request.resource.data, 'created_by')
-        && (generatedExportItemCreateAllowed() || externalGeneratedExportItemCreateAllowed())
+        && (generatedExportItemCreateAllowed() || externalGeneratedExportItemCreateAllowed(docId))
         || (
           request.resource.data.get('source', '') != 'kingcup_firestore'
           && hasAnyPerm(['export.create', 'export.edit'])

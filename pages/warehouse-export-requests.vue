@@ -25,6 +25,11 @@ import {
 } from '~/utils/exportLifecycle.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { orderWarehouseFulfillmentSummaryFromRequests } from '~/utils/warehouseFulfillment.mjs'
+// @ts-ignore Shared safety helper is also executed by Node client tests.
+import {
+  externalExportManifestCountMatches,
+  notificationDocumentId,
+} from '~/utils/warehouseExportSafety.mjs'
 import {
   buildNotificationPayload,
   resolveSaleNotificationRecipients,
@@ -324,12 +329,6 @@ function saleNotificationRecipients(row: any) {
     request: row,
     actorEmail: appUser.value?.email || '',
   })
-}
-
-function notificationDocumentId(operation: string, requestId: string, recipient: string) {
-  return `warehouse__${operation}__${requestId}__${recipient}`
-    .replace(/[^A-Za-z0-9._-]+/g, '_')
-    .slice(0, 500)
 }
 
 function addSaleNotifications(batch: any, row: any, input: { type: string; title: string; message: string }, operation: string) {
@@ -797,6 +796,7 @@ async function submitExternalRelease(row: any) {
       affects_inventory: false,
       stock_movement_ids: [],
       item_count: exportItemPayloads.length,
+      manifest_item_ids: exportItemPayloads.map(item => item.id),
       release_sequence: releaseSequence,
       source_request_revision: currentRevision,
       request_operation_id: operationId,
@@ -926,7 +926,7 @@ async function submitCancelExternalRelease(row: any) {
     if (itemSnapshots.some(snapshot => !snapshot.exists())) {
       throw new Error('Chi tiết phiếu xuất ngoài vừa thay đổi. Vui lòng tải lại dữ liệu.')
     }
-    if (Math.max(0, Math.floor(toNumber(currentExport.item_count))) !== itemSnapshots.length) {
+    if (!externalExportManifestCountMatches(currentExport, itemSnapshots.length)) {
       throw new Error('Số dòng phiếu xuất ngoài không khớp manifest đã khóa. Không thể hủy an toàn.')
     }
     exportCode = String(currentExport.code || currentExport.export_code || exportCode)
