@@ -38,21 +38,15 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-
-          def replace_once(text, old, new, label):
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'{label}: expected exactly one match, found {count}')
-              return text.replace(old, new, 1)
+          import re
 
           rules_path = Path('firestore.rules')
           rules = rules_path.read_text()
-          old = """          && existsAfter(exportOrderItemPath(manifestIds[index]))
-          );"""
-          new = """          && existsAfter(exportOrderItemPath(manifestIds[index]))
-          && getAfter(exportOrderItemPath(manifestIds[index])).data.get('created_at', null) == request.time
-          );"""
-          rules = replace_once(rules, old, new, 'external manifest transaction binding')
+          pattern = r"(function externalManifestItemExistsAfter\(manifestIds, itemCount, index\) \{.*?&& existsAfter\(exportOrderItemPath\(manifestIds\[index\]\)\))(\s*\n\s*\);\s*\n\s*\})"
+          replacement = r"\1\n          && getAfter(exportOrderItemPath(manifestIds[index])).data.get('created_at', null) == request.time\2"
+          rules, count = re.subn(pattern, replacement, rules, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'external manifest transaction binding: expected exactly one regex match, found {count}')
           rules_path.write_text(rules)
 
           test_path = Path('tests/external-export-release.rules.test.mjs')
