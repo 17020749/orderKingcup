@@ -38,7 +38,6 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
 
           def replace_once(text, old, new, label):
               count = text.count(old)
@@ -48,35 +47,12 @@ jobs:
 
           rules_path = Path('firestore.rules')
           rules = rules_path.read_text()
-
-          new_helper = """    function externalManifestItemExistsAfter(exportOrderId, manifestIds, itemCount, index) {
-              return index >= itemCount
-                ? true
-                : (
-                  manifestIds[index] is string
-                  && validBoundedString(manifestIds[index], 1, 500)
-                  && existsAfter(exportOrderItemPath(manifestIds[index]))
-                  && getAfter(exportOrderItemPath(manifestIds[index])).data.get('id', '') == manifestIds[index]
-                  && getAfter(exportOrderItemPath(manifestIds[index])).data.get('export_order_id', '') == exportOrderId
-                  && getAfter(exportOrderItemPath(manifestIds[index])).data.get('created_at', null) == request.time
-                  && getAfter(exportOrderItemPath(manifestIds[index])).data.get('source', '') == 'kingcup_firestore'
-                  && getAfter(exportOrderItemPath(manifestIds[index])).data.get('lifecycle_status', '') == 'released_external'
-                  && getAfter(exportOrderItemPath(manifestIds[index])).data.get('release_mode', '') == 'external_no_inventory'
-                );
-            }""".replace('          ', '')
-
-          pattern = r"    function externalManifestItemExistsAfter\(manifestIds, itemCount, index\) \{.*?\n    \}"
-          rules, count = re.subn(pattern, new_helper, rules, count=1, flags=re.S)
-          if count != 1:
-              raise SystemExit(f'external manifest helper: expected exactly one regex match, found {count}')
-
-          for index in range(10):
-              rules = replace_once(
-                  rules,
-                  f"externalManifestItemExistsAfter(manifestIds, itemCount, {index})",
-                  f"externalManifestItemExistsAfter(exportOrderId, manifestIds, itemCount, {index})",
-                  f'external manifest call {index}',
-              )
+          old = """          && existsAfter(exportOrderItemPath(manifestIds[index]))
+          );"""
+          new = """          && existsAfter(exportOrderItemPath(manifestIds[index]))
+          && getAfter(exportOrderItemPath(manifestIds[index])).data.get('created_at', null) == request.time
+          );"""
+          rules = replace_once(rules, old, new, 'external manifest transaction binding')
           rules_path.write_text(rules)
 
           test_path = Path('tests/external-export-release.rules.test.mjs')
@@ -115,5 +91,5 @@ jobs:
           git rm .github/workflows/harden-pr193-manifest.yml
           git add firestore.rules tests/external-export-release.rules.test.mjs
           git diff --cached --check
-          git commit -m "harden external manifest item binding"
+          git commit -m "harden external manifest transaction binding"
           git push origin HEAD:codex/finalize-and-complete-warehouse-changes
