@@ -71,6 +71,7 @@ async function seed() {
         customer_id: 'customer-edit',
         customer_code: 'DEF002',
         customer_name: 'Khách sửa nguyên tử',
+        sale_name: 'Sale sửa nguyên tử',
         owner_email: EDITOR,
         created_by: EDITOR,
         sale_email: EDITOR,
@@ -78,6 +79,7 @@ async function seed() {
         warehouse_fulfillment_status: 'chua_xuat',
         warehouse_request_status: '',
         invoice_status: 'Không xuất',
+        payable_amount: 100,
         paid_amount: 0,
         debt_amount: 100,
         computed_payment_status: 'Chưa thanh toán',
@@ -186,6 +188,14 @@ async function atomicCreate(
       warehouse_fulfillment_status: 'chua_xuat',
       warehouse_request_status: '',
       invoice_status: 'Không xuất',
+      payable_amount: 200,
+      paid_amount: 0,
+      debt_amount: 200,
+      payment_status: 'Chưa thanh toán',
+      computed_payment_status: 'Chưa thanh toán',
+      payment_count: 0,
+      deposit_count: 0,
+      collect_count: 0,
       items_count: 2,
       revision: 1,
       last_operation_id: 'operation-create',
@@ -447,6 +457,48 @@ test('người chỉ có orders.edit vẫn thêm, sửa và bỏ dòng sản ph�
   assert.equal((await getDoc(doc(db, 'order_items', 'item-keep'))).data().product_name, 'Sản phẩm A đã sửa')
   assert.equal((await getDoc(doc(db, 'order_items', 'item-new'))).data().product_code, 'SP-C')
   assert.equal((await getDoc(doc(db, 'order_items', 'item-remove'))).data().deleted, true)
+})
+
+test('sửa giá trị đơn đồng bộ công nợ theo payable trong cùng update', async () => {
+  const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  await assertSucceeds(setDoc(doc(db, 'orders', 'order-edit'), {
+    payable_amount: 120,
+    debt_amount: 120,
+    payment_status: 'Chưa thanh toán',
+    computed_payment_status: 'Chưa thanh toán',
+    revision: 2,
+    last_operation_id: 'operation-payment-sync',
+    updated_at: '2026-07-19T02:30:00.000Z',
+  }, { merge: true }))
+
+  const persisted = (await getDoc(doc(db, 'orders', 'order-edit'))).data()
+  assert.equal(persisted.payable_amount, 120)
+  assert.equal(persisted.debt_amount, 120)
+})
+
+test('Rules chặn giả mạo công nợ hoặc trạng thái thanh toán khi sửa đơn', async () => {
+  const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  await assertFails(setDoc(doc(db, 'orders', 'order-edit'), {
+    payable_amount: 120,
+    debt_amount: 1,
+    payment_status: 'Đã thanh toán',
+    computed_payment_status: 'Đã thanh toán',
+    revision: 2,
+    last_operation_id: 'operation-forged-payment',
+    updated_at: '2026-07-19T02:31:00.000Z',
+  }, { merge: true }))
+
+  assert.equal((await getDoc(doc(db, 'orders', 'order-edit'))).data().debt_amount, 100)
+})
+
+test('Rules chặn đổi Sale phụ trách trên đơn đã tồn tại', async () => {
+  const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  await assertFails(setDoc(doc(db, 'orders', 'order-edit'), {
+    sale_name: 'Sale khác',
+    revision: 2,
+    last_operation_id: 'operation-forged-sale',
+    updated_at: '2026-07-19T02:32:00.000Z',
+  }, { merge: true }))
 })
 
 test('một item mới sai ownership làm rollback toàn bộ transaction sửa đơn', async () => {

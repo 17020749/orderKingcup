@@ -10,10 +10,6 @@ import { makeCode, makeId, normalizeEmail, toNumber, todayKey } from '~/utils/fo
 import { invalidateScopedCache } from '~/composables/useScopedQueries'
 import { useWarehouseTransactions as useLegacyWarehouseTransactions } from '~/composables/useWarehouseTransactions'
 import {
-  buildNotificationPayload,
-  resolveSaleNotificationRecipients,
-} from '~/composables/useNotifications'
-import {
   allocateInventoryLots,
   allocateManualInventoryLots,
   normalizeLots,
@@ -348,6 +344,15 @@ export function useWarehouseCostTransactions() {
     return normalizeEmail(appUser.value?.email)
   }
 
+  const operationProcessingLeaseMs = 5 * 60 * 1000
+
+  function timestampMillis(value: any) {
+    if (typeof value?.toMillis === 'function') return Number(value.toMillis()) || 0
+    if (Number.isFinite(Number(value?.seconds))) return Number(value.seconds) * 1000
+    const parsed = Date.parse(String(value || ''))
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
   async function loadIssueSetting() {
     const snapshot = await getDoc(doc(db, 'app_meta', 'warehouse_issue'))
     if (!snapshot.exists()) return settingDefaults()
@@ -385,7 +390,14 @@ export function useWarehouseCostTransactions() {
           }
           return
         }
-        if (String(data.status || '') === 'processing') throw new Error('Nghiệp vụ này đang được xử lý ở phiên khác.')
+        if (String(data.status || '') === 'processing') {
+          const processingAt = timestampMillis(data.processing_at)
+          if (!processingAt || Date.now() - processingAt < operationProcessingLeaseMs) {
+            throw new Error('Nghiệp vụ này đang được xử lý ở phiên khác.')
+          }
+          tx.update(ref, { processing_at: serverTimestamp() })
+          return
+        }
         tx.update(ref, {
           status: 'processing',
           processing_at: serverTimestamp(),
@@ -1658,10 +1670,6 @@ export function useWarehouseCostTransactions() {
     const replay = await claimOperation({ operationId, action: 'export_request_release', targetCollection: 'export_orders', targetId: orderId, resultCode: code, actor })
     if (replay) return { ...replay, operationId, alreadyProcessed: true, stockMovementIds: [], notificationCount: 0 }
     const refs = await buildBalanceRefs(lines.map((line: any) => ({ product: line.product, warehouse: line.fromWarehouse, logo: line.sourceLogo })))
-    const saleRecipients = Array.isArray(input.notification_recipients)
-      ? Array.from(new Set(input.notification_recipients.map(normalizeEmail).filter(Boolean))).filter(recipient => recipient !== actor)
-      : resolveSaleNotificationRecipients({ request, actorEmail: actor })
-    const notificationRefs = saleRecipients.map(() => doc(collection(db, 'notifications')))
     const timeline = Array.isArray(input.timeline) ? input.timeline : []
     const nextTimeline = appendExportLifecycleTimeline(timeline, {
       action: 'warehouse_export',
@@ -1853,18 +1861,6 @@ export function useWarehouseCostTransactions() {
           updated_at: serverTimestamp(),
         })
         tx.set(doc(collection(db, 'activity_logs')), activityPayload('order_export_requests', 'warehouse_export', request.request_id || requestDocId, { request_id: request.request_id || requestDocId, export_order_id: orderId, export_code: code, strategy: setting.strategy }, actor))
-        notificationRefs.forEach((notificationRef, index) => tx.set(notificationRef, buildNotificationPayload({
-          type: 'warehouse_export_request_released',
-          title: 'Kho đã cho xuất hàng',
-          message: `${request.request_id || requestDocId} · Đã tạo phiếu xuất ${code}.`,
-          route: '/export-requests',
-          entity_collection: 'order_export_requests',
-          entity_id: requestDocId,
-          entity_code: request.request_id || requestDocId,
-          created_by: actor,
-          to_email: saleRecipients[index],
-          metadata: { order_id: request.order_id || '', order_code: request.order_code || '', export_order_id: orderId, export_code: code },
-        })))
         completeOperationTx(tx, operationId, code, 1)
       })
       invalidateWarehouseCaches()
@@ -1874,7 +1870,7 @@ export function useWarehouseCostTransactions() {
         stockMovementIds,
         operationId,
         alreadyProcessed,
-        notificationCount: alreadyProcessed ? 0 : saleRecipients.length,
+        notificationCount: 0,
         releaseSequence,
         revision: 1,
       }
@@ -1954,10 +1950,6 @@ export function useWarehouseCostTransactions() {
     })
     if (replay) return { ...replay, operationId, alreadyProcessed: true, notificationCount: 0 }
 
-    const saleRecipients = Array.isArray(input.notification_recipients)
-      ? Array.from(new Set(input.notification_recipients.map(normalizeEmail).filter(Boolean))).filter(recipient => recipient !== actor)
-      : resolveSaleNotificationRecipients({ request, actorEmail: actor })
-    const notificationRefs = saleRecipients.map(() => doc(collection(db, 'notifications')))
     let exportCode = String(request.warehouse_export_code || exportOrderId)
     let resultRevision = expectedExportRevision
 
@@ -2165,24 +2157,6 @@ export function useWarehouseCostTransactions() {
           export_code: exportCode,
           reason,
         }, actor))
-        notificationRefs.forEach((notificationRef, index) => tx.set(notificationRef, buildNotificationPayload({
-          type: 'warehouse_export_request_cancelled',
-          title: 'Kho đã hủy xuất và hoàn tồn',
-          message: `${currentRequest.request_id || requestDocId} · Phiếu ${exportCode} đã được hủy. Lý do: ${reason}`,
-          route: '/export-requests',
-          entity_collection: 'order_export_requests',
-          entity_id: requestDocId,
-          entity_code: currentRequest.request_id || requestDocId,
-          created_by: actor,
-          to_email: saleRecipients[index],
-          metadata: {
-            order_id: currentRequest.order_id || '',
-            order_code: currentRequest.order_code || '',
-            export_order_id: exportOrderId,
-            export_code: exportCode,
-            reason,
-          },
-        })))
         completeOperationTx(tx, operationId, exportCode, resultRevision)
       })
       invalidateWarehouseCaches()
@@ -2192,7 +2166,7 @@ export function useWarehouseCostTransactions() {
         revision: resultRevision,
         operationId,
         alreadyProcessed: false,
-        notificationCount: saleRecipients.length,
+        notificationCount: 0,
       }
     } catch (error) {
       await failOperation(operationId, actor, error).catch(() => undefined)

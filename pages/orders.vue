@@ -394,9 +394,12 @@ async function synchronizePersistedOrder(orderId: string) {
 
   const orderRequests = exportRequests.value
     .filter(request => request.order_id === orderId && isActive(request))
+  const paymentRows = toNumber((order as any).relation_lock_version) === 1
+    ? []
+    : (paymentsByOrder.value[orderId] || [])
   const canonicalOrder = {
     ...order,
-    ...computePaymentStatus(order, paymentsByOrder.value[orderId] || []),
+    ...computePaymentStatus(order, paymentRows),
     ...orderSummary(buildFulfillmentRows(items, orderRequests), orderRequests),
   } as OrderDoc
   const rowIndex = rows.value.findIndex(row => row.id === orderId)
@@ -954,6 +957,10 @@ async function saveOrder() {
   saving.value = true
   let saveStage = 'prepare_payload'
   let commitSucceeded = false
+  let persistedWarehouseStatus = String(editing.value?.warehouse_fulfillment_status || '')
+  let computedWarehouseStatus = persistedWarehouseStatus
+  let warehouseSummaryReconciled = false
+  let persistedEditItems: OrderItemDoc[] | null = null
   await withLoading(async () => {
     const ownerEmail = form.owner_email || appUser.value?.email || ''
     const saleEmail = form.sale_email || appUser.value?.email || ''
@@ -998,10 +1005,12 @@ async function saveOrder() {
     const saveItems = buildSaveItems()
     if (editing.value) {
       saveStage = 'load_edit_dependencies'
-      const [latestRequests, latestPrinting] = await Promise.all([
+      const [{ order: persistedOrder, items: persistedItems }, latestRequests, latestPrinting] = await Promise.all([
+        loadPersistedOrder(editing.value.id),
         loadScopedExportRequests([editing.value], true),
         loadPrintingDependenciesForOrders([editing.value]),
       ])
+      persistedEditItems = persistedItems
       exportRequests.value = [
         ...exportRequests.value.filter(request => request.order_id !== editing.value?.id),
         ...latestRequests.filter(request => request.order_id === editing.value?.id),
@@ -1015,11 +1024,41 @@ async function saveOrder() {
         ...printingProgressItems.value.filter(item => !latestPrintOrderIds.has(item.print_order_id)),
         ...latestPrinting.printItems,
       ]
+      const orderRequests = latestRequests.filter(request => request.order_id === editing.value?.id && isActive(request))
+      const latestSummary = orderSummary(
+        buildFulfillmentRows(persistedItems, orderRequests),
+        orderRequests,
+      )
+      persistedWarehouseStatus = String(persistedOrder.warehouse_fulfillment_status || 'chua_xuat')
+      computedWarehouseStatus = String(latestSummary.warehouse_fulfillment_status || 'chua_xuat')
+
+      // The orders table displays a live summary derived from requests. Legacy
+      // or interrupted warehouse writes can leave the persisted parent at
+      // da_xuat_du even though the current requests are only partial/pending.
+      // Firestore Rules correctly lock order_items from that persisted state,
+      // so repair only the warehouse summary before the normal order edit.
+      if (isFulfilledOrder(latestSummary)) {
+        await synchronizePersistedOrder(editing.value.id).catch(() => null)
+        throw new Error('Đơn hàng hiện đã xuất đủ. Dữ liệu đã được làm mới; vui lòng mở lại đơn để chỉ sửa đơn giá và thông tin được phép.')
+      }
+      if (isFulfilledOrder(persistedOrder)) {
+        if (!hasPermission('orders.warehouse_export')) {
+          throw new Error('Phiếu xuất hiện chưa xuất đủ nhưng trạng thái tổng hợp của đơn vẫn là Đã xuất đủ. Vui lòng nhờ người có quyền xuất kho đồng bộ lại trạng thái đơn.')
+        }
+        saveStage = 'reconcile_warehouse_summary'
+        await updateDoc(doc(db, 'orders', editing.value.id), {
+          warehouse_fulfillment_status: latestSummary.warehouse_fulfillment_status,
+          warehouse_request_status: latestSummary.warehouse_request_status,
+          updated_at: serverTimestamp(),
+        })
+        warehouseSummaryReconciled = true
+        saveStage = 'load_edit_dependencies'
+      }
       const dependencyError = validateOrderItemEdit({
         order: editing.value,
-        previousItems: itemsByOrder.value[editing.value.id] || [],
+        previousItems: persistedItems,
         nextItems: saveItems,
-        exportRequests: exportRequests.value.filter(request => request.order_id === editing.value?.id),
+        exportRequests: orderRequests,
         printOrders: printingProgress.value.filter(progress => progress.order_id === editing.value?.id),
         printItems: printingProgressItems.value,
       })
@@ -1069,9 +1108,10 @@ async function saveOrder() {
       ? stripOrderEditSystemFields({ ...form, ...totals })
       : { ...form, ...totals }
 
-    const localPaymentSummary = computePaymentStatus(baseOrder, paymentsByOrder.value[form.id] || [])
-    const paymentSummary = editing.value ? {} : localPaymentSummary
-    const existingItems = itemsByOrder.value[form.id] || []
+    const paymentSummary = editing.value
+      ? {}
+      : computePaymentStatus(baseOrder, paymentsByOrder.value[form.id] || [])
+    const existingItems = persistedEditItems || itemsByOrder.value[form.id] || []
     const orderPayload = {
       ...baseOrder,
       ...paymentSummary,
@@ -1196,11 +1236,17 @@ async function saveOrder() {
           context: {
             collection: saveStage === 'load_edit_dependencies'
               ? 'order_export_requests/print_orders'
-              : 'orders/order_items',
+              : saveStage === 'reconcile_warehouse_summary'
+                ? 'orders'
+                : 'orders/order_items/invoices',
+            collections: ['orders', 'order_items', 'invoices'],
             commit_succeeded: false,
             permission_expression: editing.value
               ? 'orders.edit AND (owner OR orders.view_all)'
               : 'orders.create',
+            persisted_warehouse_status: persistedWarehouseStatus,
+            computed_warehouse_status: computedWarehouseStatus,
+            warehouse_summary_reconciled: warehouseSummaryReconciled,
           },
         })
       : ((error as any)?.message || 'Lưu đơn thất bại. Toàn bộ thay đổi đã được hoàn tác.'),
@@ -1678,13 +1724,14 @@ onMounted(loadRows)
           <div v-if="!editing" class="small subtle">Mã Người dùng - Mã khách - số thứ tự riêng của khách, bắt đầu từ 0001.</div>
         </div>
         <div v-if="!editingFulfilledOrder" class="form-group"><label>Ngày giờ đơn</label><input v-model="form.order_date" class="input" type="datetime-local" /></div>
-        <div class="form-group"><label>Sale phụ trách</label><input v-model="form.sale_name" class="input" /></div>
+        <div class="form-group"><label>Sale phụ trách</label><input v-model="form.sale_name" class="input" :class="{ 'readonly-field': Boolean(editing) }" :readonly="Boolean(editing)" /></div>
         <div class="form-group">
           <label>Khách hàng</label>
           <SearchableSelect
             v-model="form.customer_id"
             :options="customerOptions"
-            :action-label="hasPermission('customers.create') ? '+ Thêm khách hàng' : ''"
+            :disabled="Boolean(editing)"
+            :action-label="!editing && hasPermission('customers.create') ? '+ Thêm khách hàng' : ''"
             placeholder="Tìm khách theo tên, SĐT, email..."
             @action="openCustomerModal"
             @change="chooseCustomer"

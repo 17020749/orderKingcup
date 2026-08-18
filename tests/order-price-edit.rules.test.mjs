@@ -14,7 +14,7 @@ function order(overrides = {}) {
     created_by: OWNER, sale_email: OWNER, revision: 1, price_revision: 0,
     actual_revenue: 1000, subtotal_no_vat: 1000, vat_amount: 0, total_vat: 1000,
     payable_amount: 1000, discount_amount: 0, paid_amount: 200, debt_amount: 800,
-    payment_status: 'partial', computed_payment_status: 'partial',
+    payment_status: 'Thanh toán một phần', computed_payment_status: 'Thanh toán một phần',
     payment_count: 1, deposit_count: 0, collect_count: 1, invoice_status: 'not_issued',
     payment_record_count: 1, invoice_record_count: 0, shipment_record_count: 0,
     payment_relation_revision: 1, invoice_relation_revision: 0, shipment_relation_revision: 0,
@@ -46,13 +46,17 @@ async function seed(orderOverrides = {}) {
   })
 }
 
-function priceBatch(db, { quantity = 10 } = {}) {
+function priceBatch(db, {
+  quantity = 10,
+  debtAmount = 1000,
+  status = 'Thanh toán một phần',
+} = {}) {
   const batch = writeBatch(db)
   const updatedAt = serverTimestamp()
   batch.update(doc(db, 'orders', 'order-price'), {
     subtotal_no_vat: 1200, vat_amount: 0, total_vat: 1200, actual_revenue: 1200,
-    payable_amount: 1200, debt_amount: 1000, payment_status: 'partial',
-    computed_payment_status: 'partial', revision: 2, price_revision: 1,
+    payable_amount: 1200, debt_amount: debtAmount, payment_status: status,
+    computed_payment_status: status, revision: 2, price_revision: 1,
     last_operation_id: 'price-update-1', updated_at: updatedAt,
   })
   batch.update(doc(db, 'order_items', 'item-price'), {
@@ -74,6 +78,12 @@ test('allows price-only edits on a fully fulfilled order', async () => {
   await seed()
   const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
   await assertSucceeds(priceBatch(db).commit())
+})
+
+test('rejects forged debt and payment status in a price edit transaction', async () => {
+  await seed()
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+  await assertFails(priceBatch(db, { debtAmount: 0, status: 'Đã thanh toán' }).commit())
 })
 
 test('rejects quantity changes in a price edit transaction', async () => {

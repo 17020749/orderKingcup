@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { after, before, beforeEach, test } from 'node:test'
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing'
-import { doc, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
+import { doc, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
 
 const projectId = 'demo-order-item-dependencies'
 const EDITOR = 'editor@example.com'
@@ -119,6 +119,25 @@ test('fulfilled order content is locked for editor and admin', async () => {
   }
 })
 
+test('stale fulfilled parent must be reconciled by warehouse authority before item editing', async () => {
+  const editorDb = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  const adminDb = env.authenticatedContext(ADMIN, { email: ADMIN }).firestore()
+
+  await assertFails(updateDoc(doc(editorDb, 'orders', 'order-full'), {
+    warehouse_fulfillment_status: 'da_xuat_1_phan',
+    warehouse_request_status: 'da_xuat',
+    updated_at: 'now',
+  }))
+  await assertFails(updateDoc(doc(adminDb, 'order_items', 'item-full'), { quantity: 11 }))
+
+  await assertSucceeds(updateDoc(doc(adminDb, 'orders', 'order-full'), {
+    warehouse_fulfillment_status: 'da_xuat_1_phan',
+    warehouse_request_status: 'da_xuat',
+    updated_at: 'now',
+  }))
+  await assertSucceeds(updateDoc(doc(adminDb, 'order_items', 'item-full'), { quantity: 11 }))
+})
+
 test('orders.edit owner can read export and printing dependencies used by client guard', async () => {
   const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
   assert.equal((await assertSucceeds(getDoc(doc(db, 'order_export_requests', 'request-active')))).exists(), true)
@@ -147,6 +166,7 @@ function releaseBatch(db, itemOverrides = {}) {
     sync_source: 'kingcup_firestore:request-active', source: 'kingcup_firestore', lifecycle_status: 'released',
     release_sequence: 1, source_request_revision: 0, request_operation_id: 'op-release',
     created_by: WAREHOUSE, operation_id: 'op-release', last_operation_id: 'op-release', revision: 1,
+    created_at: serverTimestamp(), updated_at: serverTimestamp(),
     active: true, deleted: false, status: 'completed',
   })
   batch.set(doc(db, 'export_order_items', 'export-item'), {
