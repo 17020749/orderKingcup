@@ -65,7 +65,8 @@ function externalExportOrder(overrides = {}) {
     source_request_id: 'request-a', sync_source: 'kingcup_firestore:external_no_inventory',
     customer_name: 'Khách A', destination_name: 'Khách A', to_warehouse_id: '', to_warehouse_name: '',
     note: 'Đã xuất thực tế trước khi nhập tồn', status: 'completed', lifecycle_status: 'released_external',
-    release_mode: 'external_no_inventory', affects_inventory: false, stock_movement_ids: [],
+    release_mode: 'external_no_inventory', affects_inventory: false, stock_movement_ids: [], item_count: 1,
+    manifest_item_ids: ['external-item-a'],
     release_sequence: 1, source_request_revision: 0,
     request_operation_id: 'external-release:request-a:0', active: true, deleted: false,
     created_by: WAREHOUSE, created_at: serverTimestamp(), updated_at: serverTimestamp(),
@@ -97,6 +98,23 @@ function updateOrderSummary(db, batch, fulfillment = 'da_xuat_1_phan', requestSt
 function addExternalRecord(db, batch, orderOverrides = {}, itemOverrides = {}) {
   batch.set(doc(db, 'export_orders', EXPORT_ID), externalExportOrder(orderOverrides))
   batch.set(doc(db, 'export_order_items', 'external-item-a'), externalExportItem(itemOverrides))
+}
+
+function completedOperation(action, operationId, targetRevision) {
+  return {
+    operation_id: operationId,
+    action,
+    target_collection: 'order_export_requests',
+    target_id: 'request-a',
+    status: 'completed',
+    created_by: WAREHOUSE,
+    created_at: serverTimestamp(),
+    processing_at: serverTimestamp(),
+    completed_at: serverTimestamp(),
+    target_revision: targetRevision,
+    result_code: 'request-a',
+    source: 'warehouse_export_requests',
+  }
 }
 
 before(async () => {
@@ -135,6 +153,64 @@ test('external release tạo phiếu hiển thị ở exports nhưng không sinh
     assert.equal(movements.empty, true)
     assert.equal(balances.empty, true)
   })
+})
+
+test('external release atomically records its completed warehouse operation', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const operationId = 'external-release:request-a:0'
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  addExternalRecord(db, batch)
+  batch.set(doc(db, 'warehouse_operations', operationId), completedOperation('external_release', operationId, 1))
+  await assertSucceeds(batch.commit())
+})
+
+test('a completed warehouse operation without its paired request transition is rejected', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const operationId = 'external-release:request-a:0'
+  await assertFails(setDoc(doc(db, 'warehouse_operations', operationId), completedOperation('external_release', operationId, 1)))
+})
+
+test('an external export item cannot be appended after the release transaction', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  addExternalRecord(db, batch)
+  await assertSucceeds(batch.commit())
+  await assertFails(setDoc(doc(db, 'export_order_items', 'late-item'), externalExportItem({ id: 'late-item' })))
+})
+
+
+test('external release rejects an extra item outside the declared manifest', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  addExternalRecord(db, batch)
+  batch.set(doc(db, 'export_order_items', 'external-item-extra'), externalExportItem({ id: 'external-item-extra' }))
+  await assertFails(batch.commit())
+})
+
+test('external release rejects a declared manifest item that is missing from the transaction', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  batch.set(doc(db, 'export_orders', EXPORT_ID), externalExportOrder({
+    item_count: 2,
+    manifest_item_ids: ['external-item-a', 'external-item-missing'],
+  }))
+  batch.set(doc(db, 'export_order_items', 'external-item-a'), externalExportItem())
+  await assertFails(batch.commit())
+})
+
+test('external export header cannot reuse a pre-existing manifest item outside the release transaction', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'export_order_items', 'external-item-a'), externalExportItem({
+      created_at: Timestamp.fromMillis(1),
+      updated_at: Timestamp.fromMillis(1),
+    }))
+  })
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  await assertFails(setDoc(doc(db, 'export_orders', EXPORT_ID), externalExportOrder()))
 })
 
 test('external release modern matches product and quantity from the request snapshot', async () => {
@@ -198,7 +274,8 @@ test('external release supports a realistic multi-line request within Rules limi
   const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
   const batch = writeBatch(db)
   batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
-  batch.set(doc(db, 'export_orders', EXPORT_ID), externalExportOrder())
+  const manifestItemIds = Array.from({ length: 8 }, (_, index) => `external-item-${index + 1}`)
+  batch.set(doc(db, 'export_orders', EXPORT_ID), externalExportOrder({ item_count: 8, manifest_item_ids: manifestItemIds }))
   for (let index = 1; index <= 8; index += 1) {
     const itemId = `external-item-${index}`
     batch.set(doc(db, 'export_order_items', itemId), externalExportItem({
@@ -210,6 +287,14 @@ test('external release supports a realistic multi-line request within Rules limi
     }))
   }
   await assertSucceeds(batch.commit())
+})
+
+test('external release rejects a manifest above the client and Rules safety limit', async () => {
+  const db = env.authenticatedContext(WAREHOUSE, { email: WAREHOUSE }).firestore()
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'order_export_requests', 'request-a'), externalPatch())
+  addExternalRecord(db, batch, { item_count: 20 })
+  await assertFails(batch.commit())
 })
 
 test('external release cho phép đơn hàng chuyển thẳng sang đã xuất đủ', async () => {

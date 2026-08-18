@@ -25,6 +25,11 @@ import {
 } from '~/utils/exportLifecycle.mjs'
 // @ts-ignore Shared ESM helper is executed directly by Node client tests.
 import { orderWarehouseFulfillmentSummaryFromRequests } from '~/utils/warehouseFulfillment.mjs'
+// @ts-ignore Shared safety helper is also executed by Node client tests.
+import {
+  externalExportManifestCountMatches,
+  notificationDocumentId,
+} from '~/utils/warehouseExportSafety.mjs'
 import {
   buildNotificationPayload,
   resolveSaleNotificationRecipients,
@@ -76,6 +81,31 @@ const warehouseOptions = computed(() => warehouses.value.map(warehouse => ({
   subLabel: warehouse.address || '',
   search: `${warehouse.name || ''} ${warehouse.warehouse_code || ''} ${warehouse.address || ''}`
 })))
+
+const MAX_WAREHOUSE_RELEASE_LINES = 10
+
+function warehouseOperationPayload(input: {
+  operationId: string
+  action: string
+  requestId: string
+  actor: string
+  targetRevision: number
+}) {
+  return {
+    operation_id: input.operationId,
+    action: input.action,
+    target_collection: 'order_export_requests',
+    target_id: input.requestId,
+    status: 'completed',
+    created_by: input.actor,
+    created_at: serverTimestamp(),
+    processing_at: serverTimestamp(),
+    completed_at: serverTimestamp(),
+    target_revision: input.targetRevision,
+    result_code: input.requestId,
+    source: 'warehouse_export_requests',
+  }
+}
 
 function requestHasLogo(row: any) {
   return rowsHaveLogo(requestLineProgress(row), line => [line?.logo, line?.source_logo])
@@ -301,11 +331,12 @@ function saleNotificationRecipients(row: any) {
   })
 }
 
-function addSaleNotifications(batch: any, row: any, input: { type: string; title: string; message: string }) {
+function addSaleNotifications(batch: any, row: any, input: { type: string; title: string; message: string }, operation: string) {
   const recipients = saleNotificationRecipients(row)
   recipients.forEach(toEmail => {
+    const notificationId = notificationDocumentId(operation, String(row.id || row.request_id || ''), toEmail)
     batch.set(
-      doc(collection(db, 'notifications')),
+      doc(db, 'notifications', notificationId),
       buildNotificationPayload({
         type: input.type,
         title: input.title,
@@ -346,31 +377,52 @@ function requestsAfterTransition(row: any, patch: Record<string, any>) {
 async function reconcileOrderSummary(row: any, patch: Record<string, any>, operation: string) {
   const orderId = String(row?.order_id || '').trim()
   if (!orderId) return true
-  const summaryPatch = orderWarehouseFulfillmentSummaryFromRequests(requestsAfterTransition(row, patch))
-  try {
-    await updateDoc(doc(db, 'orders', orderId), {
-      ...summaryPatch,
-      updated_at: serverTimestamp(),
-    })
-    invalidateScopedCache('orders')
-    return true
-  } catch (error) {
-    reportFirebaseError(error, 'Nghiệp vụ kho đã thành công nhưng chưa đồng bộ được trạng thái tổng của đơn.', {
-      module: 'warehouse_export_requests',
-      operation: `${operation}_order_summary`,
-      stage: 'post_commit_reconcile',
-      record: orderId,
-      status: String(patch.status || row.status || ''),
-      actionPermissions: ['export_requests.accept', 'export_requests.reject', 'export_requests.release', 'export_requests.process'],
-      context: { request_id: row.id || '', lifecycle_status: patch.lifecycle_status || '' },
-    })
-    return false
+  let lastError: unknown = null
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const latestSnapshot = await getDocs(query(
+        collection(db, 'order_export_requests'),
+        where('order_id', '==', orderId),
+      ))
+      const latestRequests = latestSnapshot.docs
+        .map(snapshot => ({ ...snapshot.data(), id: snapshot.id }))
+        .filter(isActive)
+      const targetId = String(row?.id || row?.request_id || '').trim()
+      const reconciledRequests = latestRequests.map(request => (
+        String(request.id || request.request_id || '').trim() === targetId
+          ? { ...request, ...patch }
+          : request
+      ))
+      const summaryPatch = orderWarehouseFulfillmentSummaryFromRequests(
+        reconciledRequests.length ? reconciledRequests : requestsAfterTransition(row, patch),
+      )
+      await updateDoc(doc(db, 'orders', orderId), {
+        ...summaryPatch,
+        updated_at: serverTimestamp(),
+      })
+      invalidateScopedCache('orders')
+      return true
+    } catch (error) {
+      lastError = error
+      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 250))
+    }
   }
+  reportFirebaseError(lastError, 'Nghiệp vụ kho đã thành công nhưng chưa đồng bộ được trạng thái tổng của đơn.', {
+    module: 'warehouse_export_requests',
+    operation: `${operation}_order_summary`,
+    stage: 'post_commit_reconcile',
+    record: orderId,
+    status: String(patch.status || row.status || ''),
+    actionPermissions: ['export_requests.accept', 'export_requests.reject', 'export_requests.release', 'export_requests.process'],
+    context: { request_id: row.id || '', lifecycle_status: patch.lifecycle_status || '', retry_count: 3 },
+  })
+  return false
 }
 
 async function sendSaleNotificationAfterCommit(row: any, input: { type: string; title: string; message: string }, operation: string) {
   const batch = writeBatch(db)
-  const notificationCount = addSaleNotifications(batch, row, input)
+  const operationKey = String(row.last_operation_id || row.operation_id || operation)
+  const notificationCount = addSaleNotifications(batch, row, input, operationKey)
   if (!notificationCount) return 0
   try {
     await batch.commit()
@@ -436,6 +488,13 @@ async function transitionRequest(
       updated_at: serverTimestamp(),
     }
     tx.update(requestRef, patch)
+    tx.set(doc(db, 'warehouse_operations', operationId), warehouseOperationPayload({
+      operationId,
+      action: type,
+      requestId: current.id,
+      actor,
+      targetRevision: lifecyclePatch.revision,
+    }))
     tx.set(doc(collection(db, 'activity_logs')), {
       module: 'order_export_requests',
       action: type,
@@ -517,6 +576,9 @@ async function submitRelease(row: any) {
     .map((line: any, index: number) => ({ ...line, __release_index: index }))
     .filter((line: any) => toNumber(line.requested_qty) > 0)
   if (!lines.length) return showToast('Yêu cầu xuất kho chưa có dòng hàng hợp lệ.', 'error')
+  if (lines.length > MAX_WAREHOUSE_RELEASE_LINES) {
+    return showToast(`Một lần xuất kho hỗ trợ tối đa ${MAX_WAREHOUSE_RELEASE_LINES} dòng để bảo đảm giới hạn kiểm tra Firestore Rules. Vui lòng tách yêu cầu.`, 'error')
+  }
 
   const missingSource = lines.filter((line: any) => !String(line.order_item_id || line.source_order_item_id || '').trim())
   if (missingSource.length) return showToast('Yêu cầu thiếu tham chiếu dòng đơn hàng nguồn. Sale cần mở và lưu lại yêu cầu trước khi xuất.', 'error')
@@ -576,6 +638,7 @@ async function submitRelease(row: any) {
       status: 'da_xuat',
       lifecycle_status: 'released',
       warehouse_handled_by: appUser.value?.email || '',
+      operation_id: result.operationId || `export_request_release:${row.id}:${toNumber(row.revision)}`,
     },
     {
       type: 'warehouse_export_request_released',
@@ -601,6 +664,9 @@ async function submitExternalRelease(row: any) {
 
   const lines = requestLineProgress(row).filter((line: any) => toNumber(line.requested_qty) > 0)
   if (!lines.length) return showToast('Yêu cầu xuất kho chưa có dòng hàng hợp lệ.', 'error')
+  if (lines.length > MAX_WAREHOUSE_RELEASE_LINES) {
+    return showToast(`Một lần xuất ngoài hỗ trợ tối đa ${MAX_WAREHOUSE_RELEASE_LINES} dòng. Vui lòng tách yêu cầu trước khi xác nhận.`, 'error')
+  }
 
   const confirmed = await askConfirm({
     title: 'Xác nhận đã xuất ngoài hệ thống',
@@ -729,6 +795,8 @@ async function submitExternalRelease(row: any) {
       release_mode: 'external_no_inventory',
       affects_inventory: false,
       stock_movement_ids: [],
+      item_count: exportItemPayloads.length,
+      manifest_item_ids: exportItemPayloads.map(item => item.id),
       release_sequence: releaseSequence,
       source_request_revision: currentRevision,
       request_operation_id: operationId,
@@ -755,6 +823,13 @@ async function submitExternalRelease(row: any) {
       actual_exported_at: serverTimestamp(),
       updated_at: serverTimestamp(),
     })
+    tx.set(doc(db, 'warehouse_operations', operationId), warehouseOperationPayload({
+      operationId,
+      action: 'external_release',
+      requestId: current.id,
+      actor,
+      targetRevision: externalPatch.revision,
+    }))
     tx.set(doc(collection(db, 'activity_logs')), {
       module: 'order_export_requests',
       action: 'external_release',
@@ -851,6 +926,9 @@ async function submitCancelExternalRelease(row: any) {
     if (itemSnapshots.some(snapshot => !snapshot.exists())) {
       throw new Error('Chi tiết phiếu xuất ngoài vừa thay đổi. Vui lòng tải lại dữ liệu.')
     }
+    if (!externalExportManifestCountMatches(currentExport, itemSnapshots.length)) {
+      throw new Error('Số dòng phiếu xuất ngoài không khớp manifest đã khóa. Không thể hủy an toàn.')
+    }
     exportCode = String(currentExport.code || currentExport.export_code || exportCode)
     const timelineJson = appendTimeline(
       current,
@@ -909,6 +987,13 @@ async function submitCancelExternalRelease(row: any) {
       last_cancelled_at: serverTimestamp(),
       updated_at: serverTimestamp(),
     })
+    tx.set(doc(db, 'warehouse_operations', operationId), warehouseOperationPayload({
+      operationId,
+      action: 'cancel_external_release',
+      requestId: current.id,
+      actor,
+      targetRevision: lifecyclePatch.revision,
+    }))
     tx.set(doc(collection(db, 'activity_logs')), {
       module: 'order_export_requests',
       action: 'external_release_cancel',
@@ -979,6 +1064,7 @@ async function submitCancelRelease(row: any) {
       status: 'da_tiep_nhan',
       lifecycle_status: 'release_cancelled',
       warehouse_handled_by: appUser.value?.email || '',
+      operation_id: result.operationId || `export_request_cancel:${row.id}:${toNumber(row.revision)}`,
     },
     {
       type: 'warehouse_export_request_cancelled',

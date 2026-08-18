@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { after, before, beforeEach, test } from 'node:test'
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing'
-import { doc, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
+import { doc, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
 
 const projectId = 'demo-order-item-dependencies'
 const EDITOR = 'editor@example.com'
@@ -166,6 +166,7 @@ function releaseBatch(db, itemOverrides = {}) {
     sync_source: 'kingcup_firestore:request-active', source: 'kingcup_firestore', lifecycle_status: 'released',
     release_sequence: 1, source_request_revision: 0, request_operation_id: 'op-release',
     created_by: WAREHOUSE, operation_id: 'op-release', last_operation_id: 'op-release', revision: 1,
+    created_at: serverTimestamp(), updated_at: serverTimestamp(),
     active: true, deleted: false, status: 'completed',
   })
   batch.set(doc(db, 'export_order_items', 'export-item'), {

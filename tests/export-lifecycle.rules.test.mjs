@@ -8,6 +8,7 @@ import {
 import {
   doc,
   getDoc,
+  serverTimestamp,
   setDoc,
   updateDoc,
   writeBatch,
@@ -96,6 +97,8 @@ function generatedExportData(overrides = {}) {
     customer_name: 'Khách A',
     destination_name: 'Khách A',
     created_by: WAREHOUSE,
+    created_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
     operation_id: 'op-release-a',
     last_operation_id: 'op-release-a',
     revision: 1,
