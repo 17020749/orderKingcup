@@ -168,7 +168,7 @@ function aggregateReferenceMatches(matches = []) {
   }
 }
 
-function resolveReference(lines, reference = {}) {
+function resolveReference(lines, reference = {}, options = {}) {
   const sourceId = referenceOrderItemId(reference)
   if (sourceId) {
     const logo = normalizedIdentity(reference.logo ?? reference.target_logo ?? reference.source_logo)
@@ -184,6 +184,19 @@ function resolveReference(lines, reference = {}) {
         error: `Dòng đơn hàng được tham chiếu (${sourceId}${logo ? ` / ${logo}` : ''}) không thể đối chiếu an toàn.`,
       }
     }
+
+    if (options.allowIdentityFallback) {
+      const fallbackMatches = matchingLegacyLines(lines, reference)
+      const fallback = aggregateReferenceMatches(fallbackMatches)
+      if (fallback) return { line: fallback, error: '' }
+      if (fallbackMatches.length) {
+        return {
+          line: null,
+          error: `${lineLabel(reference)} có tham chiếu ID cũ nhưng bị trùng; không thể đối chiếu an toàn.`,
+        }
+      }
+    }
+
     return {
       line: null,
       error: `Không tìm thấy dòng đơn hàng được tham chiếu (${sourceId}${logo ? ` / ${logo}` : ''}).`,
@@ -221,7 +234,7 @@ export function collectOrderItemDependencies(input = {}) {
     for (const reference of rows) {
       const committed = released ? releasedQuantity(reference) : requestedQuantity(reference)
       if (committed <= 0) continue
-      const resolved = resolveReference(previousLines, reference)
+      const resolved = resolveReference(previousLines, reference, { allowIdentityFallback: true })
       if (!resolved.line) {
         errors.push(resolved.error)
         continue
@@ -240,7 +253,7 @@ export function collectOrderItemDependencies(input = {}) {
   )
   for (const reference of Array.isArray(input.printItems) ? input.printItems : []) {
     if (!isActiveDocument(reference) || !activePrintOrderIds.has(text(reference.print_order_id))) continue
-    const resolved = resolveReference(previousLines, reference)
+    const resolved = resolveReference(previousLines, reference, { allowIdentityFallback: true })
     if (!resolved.line) {
       errors.push(resolved.error)
       continue
