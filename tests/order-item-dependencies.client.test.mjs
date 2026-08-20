@@ -292,3 +292,93 @@ test('dữ liệu cũ không có order_item_id vẫn gộp được nhiều màu
     exportRequests: [legacy],
   }), '')
 })
+
+test('tham chiếu ID cũ được đối chiếu theo sản phẩm + logo duy nhất khi sửa đơn', () => {
+  const stale = request('da_tiep_nhan', [{
+    order_item_id: 'item-b-old',
+    source_order_item_id: 'item-b-old',
+    product_id: 'product-b',
+    product_code: 'B',
+    logo: '',
+    export_quantity: 4,
+  }])
+
+  assert.equal(validateOrderItemEdit({
+    order,
+    previousItems,
+    nextItems: previousItems,
+    exportRequests: [stale],
+  }), '')
+
+  const belowCommitted = previousItems.map(item => item.id === 'item-b'
+    ? { ...item, quantity: 3 }
+    : item)
+  assert.match(validateOrderItemEdit({
+    order,
+    previousItems,
+    nextItems: belowCommitted,
+    exportRequests: [stale],
+  }), /không thể giảm số lượng/)
+})
+
+test('tham chiếu ID cũ không fallback khi sản phẩm + logo bị trùng giữa nhiều dòng', () => {
+  const duplicateItems = [
+    previousItems[0],
+    { ...previousItems[0], id: 'item-b-duplicate' },
+  ]
+  const stale = request('cho_xu_ly', [{
+    order_item_id: 'item-b-old',
+    source_order_item_id: 'item-b-old',
+    product_id: 'product-b',
+    product_code: 'B',
+    logo: '',
+    export_quantity: 2,
+  }])
+
+  assert.match(validateOrderItemEdit({
+    order,
+    previousItems: duplicateItems,
+    nextItems: duplicateItems,
+    exportRequests: [stale],
+  }), /ID cũ.*bị trùng.*không thể đối chiếu/)
+})
+
+test('tiến độ in có ID cũ cũng chỉ fallback khi product + logo khớp an toàn', () => {
+  const printing = printData([{
+    source_order_item_id: 'item-logo-old',
+    product_id: 'product-logo',
+    product_code: 'LOGO',
+    logo: 'Trước',
+  }])
+
+  assert.equal(validateOrderItemEdit({
+    order,
+    previousItems,
+    nextItems: previousItems,
+    ...printing,
+  }), '')
+})
+
+test('chốt xuất kho vẫn không tự remap source_order_item_id cũ', () => {
+  const staleRequest = request('da_tiep_nhan', [{
+    order_item_id: 'item-b-old',
+    source_order_item_id: 'item-b-old',
+    product_id: 'product-b',
+    product_code: 'B',
+    export_quantity: 4,
+  }])
+  const releaseLine = {
+    source_order_id: order.id,
+    source_order_item_id: 'item-b',
+    product: { id: 'product-b', product_code: 'B' },
+    logo: '',
+    quantity: 4,
+  }
+
+  assert.match(validateWarehouseReleaseSources({
+    request: staleRequest,
+    order,
+    orderItems: previousItems,
+    releaseLines: [releaseLine],
+  }), /Không tìm thấy dòng đơn hàng/)
+})
