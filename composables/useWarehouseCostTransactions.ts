@@ -1153,7 +1153,6 @@ export function useWarehouseCostTransactions() {
       const stockMovementIds: string[] = []
       await runTransaction(db, async tx => {
         const operationSnap = await tx.get(doc(db, 'warehouse_operations', operationId))
-        const adjustmentCostItemSnap = adjustmentCostItemId ? await tx.get(doc(db, 'import_order_items', adjustmentCostItemId)) : null
         const states = await readBalanceStates(tx, balanceRefs, exportDate)
         if (!operationSnap.exists() || operationSnap.data()?.status !== 'processing') throw new Error('Operation xuất kho không hợp lệ.')
 
