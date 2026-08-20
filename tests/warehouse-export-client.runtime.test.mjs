@@ -191,3 +191,14 @@ test('Nuxt auto-import dùng wrapper có preflight trước cost transaction', a
   assert.match(wrapperSource, /await checkExportStock\(preflightInput, 'customer'\)/)
   assert.match(wrapperSource, /return await base\.processExportRequestToExportOrder\(preflightInput\)/)
 })
+
+test('tạo phiếu xuất/chuyển kho không tham chiếu biến adjustment chưa khai báo', async () => {
+  const { readFileSync } = await import('node:fs')
+  const source = readFileSync('composables/useWarehouseCostTransactions.ts', 'utf8')
+  const start = source.indexOf('async function createExportOrder(input: any)')
+  const end = source.indexOf('async function restoreExistingExportToStates', start)
+  assert.ok(start >= 0 && end > start)
+
+  const createExportSource = source.slice(start, end)
+  assert.doesNotMatch(createExportSource, /adjustmentCostItemId|adjustmentCostItemSnap/)
+})
