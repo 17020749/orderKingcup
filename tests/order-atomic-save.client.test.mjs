@@ -185,3 +185,27 @@ test('lỗi đồng bộ sau commit không bị báo thành lưu thất bại ho
   assert.match(page, /return !isOrderSyncPending\(row\) && orderActionDecision\('edit', row\)\.allowed/)
   assert.match(page, /scopeSatisfied: editing\.value[\s\S]*orderActionDecision\('edit', editing\.value\)\.allowed/)
 })
+
+test('kiểm tra scope sửa đơn trước khi đọc invoice con trong transaction', () => {
+  const composable = readFileSync('composables/useAtomicOrderSave.ts', 'utf8')
+  const existingOrderIndex = composable.indexOf(
+    'const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}',
+  )
+  const decisionIndex = composable.indexOf(
+    "actionPermission: 'orders.edit'",
+    existingOrderIndex,
+  )
+  const invoiceGuardIndex = composable.indexOf(
+    'shouldReadExistingInvoiceSnapshot({',
+    existingOrderIndex,
+  )
+  const syncedInvoiceReadIndex = composable.indexOf(
+    'syncedInvoiceRefs.map(ref => transaction.get(ref))',
+    existingOrderIndex,
+  )
+
+  assert.ok(existingOrderIndex >= 0)
+  assert.ok(decisionIndex > existingOrderIndex)
+  assert.ok(invoiceGuardIndex > decisionIndex)
+  assert.ok(syncedInvoiceReadIndex > decisionIndex)
+})
