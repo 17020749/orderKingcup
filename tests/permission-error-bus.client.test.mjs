@@ -23,6 +23,7 @@ test('permission reporter keeps diagnostics out of the user-facing message', () 
   assert.equal(message, PERMISSION_DENIED_USER_MESSAGE)
   assert.deepEqual(events[0].missingPermissions, ['payments.edit'])
   assert.equal(events[0].recordId, 'payment-01')
+  assert.equal(events[0].context.scope_satisfied, true)
   assert.doesNotMatch(message, /payments\.edit|payment-01|permission-denied/)
 })
 
@@ -48,10 +49,11 @@ test('ownership đã thỏa scope không bị chẩn đoán thiếu orders.view_
   unsubscribe()
 
   assert.deepEqual(events[0].requiredPermissions, ['orders.edit'])
+  assert.deepEqual(events[0].missingPermissions, [])
   assert.equal(events[0].context.scope_satisfied, true)
 })
 
-test('scope chưa thỏa vẫn ghi đúng quyền view_all thay thế ownership', () => {
+test('scope chưa thỏa ghi orders.view_all vào cả required và missing permissions', () => {
   const events = []
   const unsubscribe = subscribePermissionErrors(event => events.push(event))
 
@@ -64,7 +66,24 @@ test('scope chưa thỏa vẫn ghi đúng quyền view_all thay thế ownership'
   unsubscribe()
 
   assert.deepEqual(events[0].requiredPermissions, ['orders.edit', 'orders.view_all'])
+  assert.deepEqual(events[0].missingPermissions, ['orders.view_all'])
   assert.equal(events[0].context.scope_satisfied, false)
+})
+
+test('operation không có scope riêng không bị ghi scope_satisfied false giả', () => {
+  const events = []
+  const unsubscribe = subscribePermissionErrors(event => events.push(event))
+
+  permissionDeniedUserMessage({
+    module: 'products',
+    operation: 'products.edit',
+    actionPermission: 'products.edit',
+  })
+  unsubscribe()
+
+  assert.deepEqual(events[0].requiredPermissions, ['products.edit'])
+  assert.deepEqual(events[0].missingPermissions, [])
+  assert.equal(events[0].context.scope_satisfied, true)
 })
 
 test('permission error logs have a 30-day Firestore TTL field policy', () => {
