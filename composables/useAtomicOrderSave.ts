@@ -156,6 +156,30 @@ export function useAtomicOrderSave() {
       }
 
       const existingOrder = orderSnapshot?.exists() ? orderSnapshot.data() : {}
+
+      // Check mutation scope immediately after reading the parent order. A user
+      // can be allowed to read an order through another relation (for example
+      // customers.orders_view) without being allowed to edit that order. If we
+      // read invoice children first, Firestore can throw a generic
+      // permission-denied before the app can report the missing orders.view_all
+      // scope. Keep this decision before every relation read.
+      if (input.mode === 'edit') {
+        const decision = moduleActionDecision({
+          actionPermission: 'orders.edit',
+          viewAllPermission: 'orders.view_all',
+          permissions: permissions.value,
+          record: { ...existingOrder, id: input.orderId },
+          currentUserEmail: actor,
+          currentUserCode: appUser.value?.user_code || '',
+          allowLegacyOrderCodeOwnership: true,
+        })
+        if (!decision.allowed) {
+          throw new Error(permissionDecisionMessage(decision, {
+            operation: 'orders.edit', record: input.orderId, status: existingOrder.status,
+          }))
+        }
+      }
+
       const invoiceSnapshot = invoiceRef && shouldReadExistingInvoiceSnapshot({
         mode: input.mode,
         invoiceMutation,
@@ -174,22 +198,6 @@ export function useAtomicOrderSave() {
           saleEmail: input.saleEmail,
         },
       })
-      if (input.mode === 'edit') {
-        const decision = moduleActionDecision({
-          actionPermission: 'orders.edit',
-          viewAllPermission: 'orders.view_all',
-          permissions: permissions.value,
-          record: { ...existingOrder, id: input.orderId },
-          currentUserEmail: actor,
-          currentUserCode: appUser.value?.user_code || '',
-          allowLegacyOrderCodeOwnership: true,
-        })
-        if (!decision.allowed) {
-          throw new Error(permissionDecisionMessage(decision, {
-            operation: 'orders.edit', record: input.orderId, status: existingOrder.status,
-          }))
-        }
-      }
 
       let requestedInvoiceStatus = ''
       let existingInvoice: Record<string, any> | null = null
