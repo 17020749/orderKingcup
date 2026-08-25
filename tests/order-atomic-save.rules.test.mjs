@@ -459,6 +459,79 @@ test('người chỉ có orders.edit vẫn thêm, sửa và bỏ dòng sản ph�
   assert.equal((await getDoc(doc(db, 'order_items', 'item-remove'))).data().deleted, true)
 })
 
+test('đơn có 10 item vẫn sửa được khi transaction chỉ ghi item thay đổi', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore()
+    await Promise.all([
+      setDoc(doc(db, 'orders', 'order-edit'), { items_count: 10 }, { merge: true }),
+      ...Array.from({ length: 8 }, (_, index) => setDoc(
+        doc(db, 'order_items', `item-unchanged-${index}`),
+        {
+          id: `item-unchanged-${index}`,
+          order_id: 'order-edit',
+          order_code: 'EDIT1-DEF002-0001',
+          product_id: `product-${index + 2}`,
+          product_code: `SP-${index + 2}`,
+          product_name: `Sản phẩm không đổi ${index + 2}`,
+          quantity: index + 1,
+          unit_price: 10,
+          owner_email: EDITOR,
+          created_by: EDITOR,
+          sale_email: EDITOR,
+          order_revision: 1,
+          last_operation_id: 'operation-before-sparse-edit',
+          active: true,
+          deleted: false,
+          status: 'active',
+          created_at: '2026-07-19T00:00:00.000Z',
+        },
+      )),
+    ])
+  })
+
+  const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
+  await assertSucceeds(runTransaction(db, async transaction => {
+    const orderRef = doc(db, 'orders', 'order-edit')
+    const changedItemRef = doc(db, 'order_items', 'item-keep')
+    const activityRef = doc(db, 'activity_logs', 'activity-sparse-edit')
+    const orderSnapshot = await transaction.get(orderRef)
+    assert.equal(orderSnapshot.data().revision, 1)
+
+    transaction.update(orderRef, {
+      customer_name: 'Khách sửa một trong mười sản phẩm',
+      revision: 2,
+      last_operation_id: 'operation-sparse-edit',
+      updated_at: '2026-07-19T02:15:00.000Z',
+    })
+    transaction.update(changedItemRef, {
+      quantity: 11,
+      owner_email: EDITOR,
+      created_by: EDITOR,
+      sale_email: EDITOR,
+      order_revision: 2,
+      last_operation_id: 'operation-sparse-edit',
+      updated_at: '2026-07-19T02:15:00.000Z',
+    })
+    transaction.set(activityRef, {
+      module: 'orders',
+      action: 'update',
+      item_code: 'EDIT1-DEF002-0001',
+      item_name: 'Khách sửa một trong mười sản phẩm',
+      changed_by: EDITOR,
+      operation_id: 'operation-sparse-edit',
+      active: true,
+      deleted: false,
+      created_at: serverTimestamp(),
+    })
+  }))
+
+  assert.equal((await getDoc(doc(db, 'order_items', 'item-keep'))).data().quantity, 11)
+  assert.equal(
+    (await getDoc(doc(db, 'order_items', 'item-unchanged-0'))).data().last_operation_id,
+    'operation-before-sparse-edit',
+  )
+})
+
 test('sửa giá trị đơn đồng bộ công nợ theo payable trong cùng update', async () => {
   const db = env.authenticatedContext(EDITOR, { email: EDITOR }).firestore()
   await assertSucceeds(setDoc(doc(db, 'orders', 'order-edit'), {

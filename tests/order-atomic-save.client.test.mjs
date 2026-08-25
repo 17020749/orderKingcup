@@ -30,7 +30,74 @@ test('lập kế hoạch upsert và xóa mềm item trong cùng giao dịch', ()
     ['item-keep', false],
     ['item-new', true],
   ])
+  assert.deepEqual(plan.unchangedItems, [])
   assert.deepEqual(plan.removedItems.map(item => item.id), ['item-remove'])
+})
+
+test('chỉ ghi item thực sự thay đổi khi sửa đơn nhiều sản phẩm', () => {
+  const existingItems = Array.from({ length: 10 }, (_, index) => ({
+    id: `item-${index}`,
+    product_id: `product-${index}`,
+    product_code: `SP-${index}`,
+    product_name: `Sản phẩm ${index}`,
+    unit: 'cái',
+    quantity: index + 1,
+    unit_price: 10,
+    cost_price: 0,
+    vat_rate: 0,
+    line_total: (index + 1) * 10,
+    line_cost: 0,
+    line_profit: (index + 1) * 10,
+    packing_standard: '',
+    box_quantity: 0,
+    odd_quantity: 0,
+    logo_json: '',
+    note: '',
+    order_revision: 3,
+    last_operation_id: 'old-operation',
+  }))
+  const nextItems = existingItems.map(item => ({
+    ...item,
+    ...(item.id === 'item-4' ? {
+      quantity: 20,
+      line_total: 200,
+      line_profit: 200,
+    } : {}),
+  }))
+
+  const plan = planAtomicOrderItems(existingItems, nextItems)
+  assert.deepEqual(plan.upsertItems.map(item => item.id), ['item-4'])
+  assert.equal(plan.unchangedItems.length, 9)
+  assert.deepEqual(plan.removedItems, [])
+  assert.equal(estimateAtomicOrderWrites({
+    mode: 'edit',
+    existingItems,
+    nextItems,
+  }), 3) // order + activity + 1 item thay đổi
+})
+
+test('so sánh item bỏ qua metadata transaction và chuẩn hóa logo JSON', () => {
+  const plan = planAtomicOrderItems(
+    [{
+      id: 'item-a',
+      product_code: 'SP-A',
+      quantity: 1,
+      logo_json: JSON.stringify([{ unit_price: 10, logo: 'A' }]),
+      order_revision: 1,
+      last_operation_id: 'operation-old',
+    }],
+    [{
+      id: 'item-a',
+      product_code: 'SP-A',
+      quantity: '1',
+      logo_json: JSON.stringify([{ logo: 'A', unit_price: 10 }]),
+      order_revision: 2,
+      last_operation_id: 'operation-new',
+    }],
+  )
+
+  assert.equal(plan.upsertItems.length, 0)
+  assert.deepEqual(plan.unchangedItems.map(item => item.id), ['item-a'])
 })
 
 test('item legacy đang tồn tại không bị tự thêm lifecycle khi Sale sửa đơn', () => {
@@ -64,14 +131,14 @@ test('tính đúng số write cho tạo và sửa đơn', () => {
     mode: 'edit',
     existingItems: [{ id: 'a' }, { id: 'remove' }],
     nextItems: [{ id: 'a' }, { id: 'new' }],
-  }), 5) // order + activity + 2 upsert + 1 soft delete
+  }), 4) // order + activity + 1 item mới + 1 soft delete
 
   assert.equal(estimateAtomicOrderWrites({
     mode: 'edit',
     existingItems: [{ id: 'a' }, { id: 'remove' }],
     nextItems: [{ id: 'a' }, { id: 'new' }],
     invoiceSyncIds: ['invoice-a', 'invoice-b', 'invoice-a'],
-  }), 7) // 5 write cơ bản + 2 hóa đơn active duy nhất
+  }), 6) // 4 write cơ bản + 2 hóa đơn active duy nhất
 
   assert.equal(estimateAtomicOrderWrites({
     mode: 'edit',
@@ -80,7 +147,7 @@ test('tính đúng số write cho tạo và sửa đơn', () => {
     updateInvoiceStatus: true,
     invoiceMutationId: 'invoice-a',
     invoiceSyncIds: ['invoice-a', 'invoice-b'],
-  }), 7) // hóa đơn đổi trạng thái không bị đếm hai lần
+  }), 6) // hóa đơn đổi trạng thái không bị đếm hai lần
 })
 
 test('đồng bộ công nợ theo payable nhưng không thay đổi số tiền đã thu', () => {

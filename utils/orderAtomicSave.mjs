@@ -129,20 +129,97 @@ export function uniqueDocumentIds(rows = []) {
   return result
 }
 
+// The edit form recalculates every row before save. Compare only persisted
+// business fields so transaction metadata does not turn unchanged rows into
+// writes and exhaust the Firestore Rules expression budget.
+const ORDER_ITEM_TEXT_FIELDS = Object.freeze([
+  'product_id',
+  'product_code',
+  'product_name',
+  'unit',
+  'packing_standard',
+  'note',
+])
+
+const ORDER_ITEM_NUMBER_FIELDS = Object.freeze([
+  'quantity',
+  'unit_price',
+  'cost_price',
+  'vat_rate',
+  'line_total',
+  'line_cost',
+  'line_profit',
+  'box_quantity',
+  'odd_quantity',
+])
+
+function canonicalJsonValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalJsonValue)
+  if (!value || typeof value !== 'object') return value
+  return Object.keys(value)
+    .sort()
+    .reduce((result, key) => {
+      result[key] = canonicalJsonValue(value[key])
+      return result
+    }, {})
+}
+
+function comparableLogoJson(value) {
+  if (value == null || value === '') return '[]'
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value
+    return JSON.stringify(canonicalJsonValue(Array.isArray(parsed) ? parsed : []))
+  } catch {
+    return String(value)
+  }
+}
+
+export function comparableOrderItem(item = {}) {
+  const comparable = {}
+  ORDER_ITEM_TEXT_FIELDS.forEach(field => {
+    comparable[field] = String(item?.[field] ?? '')
+  })
+  ORDER_ITEM_NUMBER_FIELDS.forEach(field => {
+    const value = Number(item?.[field])
+    comparable[field] = Number.isFinite(value) ? value : 0
+  })
+  comparable.logo_json = comparableLogoJson(item?.logo_json)
+  return comparable
+}
+
+export function orderItemContentChanged(existingItem = {}, nextItem = {}) {
+  return JSON.stringify(comparableOrderItem(existingItem))
+    !== JSON.stringify(comparableOrderItem(nextItem))
+}
+
 export function planAtomicOrderItems(existingItems = [], nextItems = []) {
-  const existingIds = new Set(uniqueDocumentIds(existingItems))
+  const existingRows = Array.isArray(existingItems) ? existingItems : []
+  const existingById = new Map(existingRows.map(item => [
+    text(item?.id || item?.firestore_id),
+    item,
+  ]).filter(([id]) => id))
+  const existingIds = new Set(existingById.keys())
   const nextIds = uniqueDocumentIds(nextItems)
   if (nextIds.length !== (Array.isArray(nextItems) ? nextItems.length : 0)) {
     throw new Error('Dòng sản phẩm thiếu ID hoặc bị trùng ID; chưa thể lưu đơn an toàn.')
   }
   const nextIdSet = new Set(nextIds)
-  return {
-    upsertItems: nextItems.map(item => ({
+  const plannedItems = nextItems.map(item => {
+    const id = text(item.id || item.firestore_id)
+    return {
       ...item,
-      id: text(item.id || item.firestore_id),
-      isNew: !existingIds.has(text(item.id || item.firestore_id)),
-    })),
-    removedItems: (Array.isArray(existingItems) ? existingItems : [])
+      id,
+      isNew: !existingIds.has(id),
+    }
+  })
+  return {
+    upsertItems: plannedItems.filter(item => (
+      item.isNew || orderItemContentChanged(existingById.get(item.id), item)
+    )),
+    unchangedItems: plannedItems.filter(item => (
+      !item.isNew && !orderItemContentChanged(existingById.get(item.id), item)
+    )),
+    removedItems: existingRows
       .filter(item => {
         const id = text(item?.id || item?.firestore_id)
         return id && !nextIdSet.has(id)
