@@ -129,9 +129,12 @@ export function uniqueDocumentIds(rows = []) {
   return result
 }
 
-// The edit form recalculates every row before save. Compare only persisted
-// business fields so transaction metadata does not turn unchanged rows into
-// writes and exhaust the Firestore Rules expression budget.
+// The order form intentionally drops persisted calculated fields before calling
+// calcItems(), which derives cost/VAT/totals again. Those derived values can
+// differ on legacy rows even when the user did not edit the row. Comparing them
+// here would turn an otherwise sparse edit into N order_item writes and can
+// exhaust the Firestore Rules budget. Only fields the order form actually lets
+// the user change decide whether an existing item needs to be written.
 const ORDER_ITEM_TEXT_FIELDS = Object.freeze([
   'product_id',
   'product_code',
@@ -144,11 +147,6 @@ const ORDER_ITEM_TEXT_FIELDS = Object.freeze([
 const ORDER_ITEM_NUMBER_FIELDS = Object.freeze([
   'quantity',
   'unit_price',
-  'cost_price',
-  'vat_rate',
-  'line_total',
-  'line_cost',
-  'line_profit',
   'box_quantity',
   'odd_quantity',
 ])
