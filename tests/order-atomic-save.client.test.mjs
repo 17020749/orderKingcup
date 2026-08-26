@@ -100,6 +100,66 @@ test('so sánh item bỏ qua metadata transaction và chuẩn hóa logo JSON', (
   assert.deepEqual(plan.unchangedItems.map(item => item.id), ['item-a'])
 })
 
+test('item legacy không bị ghi lại chỉ vì calcItems sinh lại các field dẫn xuất', () => {
+  const existingItems = Array.from({ length: 12 }, (_, index) => ({
+    id: `legacy-${index}`,
+    product_id: `product-${index}`,
+    product_code: `LEG-${index}`,
+    product_name: `Sản phẩm legacy ${index}`,
+    unit: 'cái',
+    quantity: index + 1,
+    unit_price: 12.5,
+    packing_standard: '',
+    box_quantity: 0,
+    odd_quantity: 0,
+    note: '',
+    logo_json: '',
+    // Các field này không có trong form sửa đơn và có thể khác với calcItems().
+    cost_price: 7.25,
+    vat_rate: 8,
+    line_total: 999 + index,
+    line_cost: 123 + index,
+    line_profit: 456 + index,
+    order_revision: 1,
+    last_operation_id: 'legacy-operation',
+  }))
+  const normalizedByForm = existingItems.map(item => ({
+    id: item.id,
+    product_id: item.product_id,
+    product_code: item.product_code,
+    product_name: item.product_name,
+    unit: item.unit,
+    quantity: item.quantity,
+    unit_price: item.unit_price,
+    packing_standard: item.packing_standard,
+    box_quantity: item.box_quantity,
+    odd_quantity: item.odd_quantity,
+    note: item.note,
+    logo_json: '',
+    cost_price: 0,
+    vat_rate: 10,
+    line_total: item.quantity * item.unit_price,
+    line_cost: 0,
+    line_profit: item.quantity * item.unit_price,
+  }))
+
+  const unchangedPlan = planAtomicOrderItems(existingItems, normalizedByForm)
+  assert.equal(unchangedPlan.upsertItems.length, 0)
+  assert.equal(unchangedPlan.unchangedItems.length, 12)
+  assert.equal(estimateAtomicOrderWrites({
+    mode: 'edit',
+    existingItems,
+    nextItems: normalizedByForm,
+  }), 2) // chỉ order + activity
+
+  const editedItems = normalizedByForm.map(item => item.id === 'legacy-7'
+    ? { ...item, unit_price: 20, line_total: item.quantity * 20, line_profit: item.quantity * 20 }
+    : item)
+  const editedPlan = planAtomicOrderItems(existingItems, editedItems)
+  assert.deepEqual(editedPlan.upsertItems.map(item => item.id), ['legacy-7'])
+  assert.equal(editedPlan.unchangedItems.length, 11)
+})
+
 test('item legacy đang tồn tại không bị tự thêm lifecycle khi Sale sửa đơn', () => {
   assert.deepEqual(buildOrderItemLifecyclePatch(false), {})
   assert.deepEqual(buildOrderItemLifecyclePatch(true), {
