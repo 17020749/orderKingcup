@@ -21,6 +21,22 @@ test('orders print modal adds delivery slip using warehouse template and order i
   assert.ok(!orderPrint.includes('requestLineProgress'))
 })
 
+test('orders delivery slip keeps warehouse request recipient snapshot and only replaces product rows', () => {
+  const orderPrint = readFileSync('components/OrderPrintModal.vue', 'utf8')
+  const requestPrint = readFileSync('components/ExportRequestPrintModal.vue', 'utf8')
+
+  for (const field of ['receiver_name', 'receiver_phone', 'receiver_address']) {
+    assert.ok(orderPrint.includes(field))
+    assert.ok(requestPrint.includes(field))
+  }
+  assert.ok(orderPrint.includes('const deliverySnapshot = computed'))
+  assert.ok(orderPrint.includes('const deliveryOrder = computed'))
+  assert.ok(orderPrint.includes('const deliveryCustomer = computed'))
+  assert.ok(orderPrint.includes('order: deliveryOrder.value'))
+  assert.ok(orderPrint.includes('customer: deliveryCustomer.value'))
+  assert.ok(orderPrint.includes('rows: deliveryRows.value'))
+})
+
 test('orders delivery slip can print without export request and uses latest active request when available', () => {
   const orderPrint = readFileSync('components/OrderPrintModal.vue', 'utf8')
 
