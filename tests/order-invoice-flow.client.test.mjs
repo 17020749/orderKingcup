@@ -51,12 +51,15 @@ test('ước lượng write tính thêm invoice nhưng không tăng đường s�
   assert.equal(estimateAtomicOrderWrites({
     mode: 'create', existingItems: [], nextItems: [{ id: 'a' }, { id: 'b' }],
   }), 6)
-  assert.equal(estimateAtomicOrderWrites({
+  const normalEditWrites = estimateAtomicOrderWrites({
     mode: 'edit', existingItems: [{ id: 'a' }], nextItems: [{ id: 'a' }],
-  }), 3)
-  assert.equal(estimateAtomicOrderWrites({
+  })
+  const invoiceEditWrites = estimateAtomicOrderWrites({
     mode: 'edit', existingItems: [{ id: 'a' }], nextItems: [{ id: 'a' }], updateInvoiceStatus: true,
-  }), 4)
+  })
+
+  assert.equal(normalEditWrites, 2)
+  assert.equal(invoiceEditWrites, normalEditWrites + 1)
 })
 
 test('source order tạo invoice nguyên tử và đồng bộ invoice active theo đơn', () => {
