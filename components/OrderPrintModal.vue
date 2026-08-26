@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import type { OrderDoc, OrderItemDoc } from '~/types/models'
-import { buildCommercialPrintHtml, openPrintDocument, type CommercialPrintKind } from '~/utils/orderPrintDocuments'
+import {
+  buildCommercialPrintHtml,
+  buildDeliveryPrintHtml,
+  openPrintDocument,
+  type CommercialPrintKind,
+  type DeliveryPrintRow,
+} from '~/utils/orderPrintDocuments'
 import { applyCommercialPrintAlignment } from '~/utils/commercialPrintAlignment'
-import { toNumber } from '~/utils/format'
+import { safeJsonParse, toNumber } from '~/utils/format'
 
 const props = defineProps<{
   order: OrderDoc
@@ -17,14 +23,17 @@ const customer = ref<any>(null)
 const depositPercent = ref(50)
 const paymentDepositAmount = ref(0)
 
+type OrderPrintChoiceKey = CommercialPrintKind | 'delivery'
+
 const printChoices: Array<{
-  key: CommercialPrintKind
+  key: OrderPrintChoiceKey
   title: string
   description: string
 }> = [
   { key: 'quotation', title: 'Phiếu báo giá', description: 'Mẫu báo giá mới nhất theo Google Sheet.' },
   { key: 'order', title: 'Phiếu đặt hàng', description: 'Có cấu hình phần trăm tiền cọc trước khi in.' },
   { key: 'payment', title: 'Phiếu thanh toán', description: 'Có cấu hình trực tiếp số tiền đặt cọc trước khi in.' },
+  { key: 'delivery', title: 'Phiếu xuất hàng', description: 'Cùng mẫu ở trang yêu cầu xuất kho; sản phẩm lấy toàn bộ từ đơn hàng.' },
 ]
 
 watch(
@@ -50,7 +59,96 @@ watch(
   { immediate: true },
 )
 
-function printDocument(kind: CommercialPrintKind) {
+const deliveryRows = computed<DeliveryPrintRow[]>(() => (props.items || []).flatMap((item: any) => {
+  const logoLines = safeJsonParse(item.logo_json || item.logos_json || item.logos, [])
+  if (Array.isArray(logoLines) && logoLines.length) {
+    return logoLines.map((line: any) => ({
+      productCode: item.product_code || '',
+      productName: item.product_name || '',
+      logo: line.logo || '',
+      unit: item.unit || '',
+      quantity: toNumber(line.quantity ?? line.qty),
+      packingStandard: item.packing_standard || '',
+    }))
+  }
+
+  return [{
+    productCode: item.product_code || '',
+    productName: item.product_name || '',
+    logo: '',
+    unit: item.unit || '',
+    quantity: toNumber(item.quantity),
+    packingStandard: item.packing_standard || '',
+    boxQuantity: toNumber(item.box_quantity),
+    oddQuantity: toNumber(item.odd_quantity),
+  }]
+}).filter((row: DeliveryPrintRow) => toNumber(row.quantity) > 0))
+
+function requestTimeValue(request: any) {
+  const value = request?.exported_at
+    || request?.warehouse_handled_at
+    || request?.updated_at
+    || request?.requested_at
+    || request?.created_at
+  if (value && typeof value?.toMillis === 'function') return value.toMillis()
+  const parsed = Date.parse(String(value || ''))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const deliveryRequest = computed(() => {
+  const activeRequest = [...(props.requests || [])]
+    .filter(request => request?.deleted !== true && request?.active !== false)
+    .sort((left, right) => requestTimeValue(right) - requestTimeValue(left))[0]
+  if (activeRequest) return activeRequest
+
+  return {
+    request_id: props.order.order_code || props.order.id || '',
+    order_id: props.order.id || '',
+    order_code: props.order.order_code || '',
+    requested_at: (props.order as any).order_date || (props.order as any).created_at || '',
+    export_date: (props.order as any).order_date || (props.order as any).created_at || '',
+    payload_json: JSON.stringify({
+      note: (props.order as any).note || '',
+      sale_name: (props.order as any).sale_name || '',
+    }),
+  }
+})
+
+function deliveryWarehouseName() {
+  const request = deliveryRequest.value || {}
+  const payload = safeJsonParse(request.payload_json, {})
+  const firstItem = Array.isArray(payload?.items) ? payload.items[0] : null
+  return String(
+    request.warehouse_name
+      || request.export_warehouse_name
+      || request.from_warehouse_name
+      || payload?.warehouse_name
+      || payload?.warehouse?.name
+      || firstItem?.warehouse_name
+      || firstItem?.from_warehouse_name
+      || (props.order as any).warehouse_name
+      || '',
+  )
+}
+
+function printDocument(kind: OrderPrintChoiceKey) {
+  if (kind === 'delivery') {
+    if (!deliveryRows.value.length) {
+      showToast('Đơn hàng chưa có sản phẩm để in phiếu xuất hàng.', 'error')
+      return
+    }
+    const html = buildDeliveryPrintHtml({
+      order: props.order,
+      request: deliveryRequest.value,
+      customer: customer.value,
+      rows: deliveryRows.value,
+      warehouseName: deliveryWarehouseName(),
+      assetBase: window.location.origin,
+    })
+    openPrintDocument(html, () => showToast('Trình duyệt đang chặn cửa sổ in. Hãy cho phép pop-up cho trang này.', 'error'))
+    return
+  }
+
   const html = buildCommercialPrintHtml({
     kind,
     order: props.order,
