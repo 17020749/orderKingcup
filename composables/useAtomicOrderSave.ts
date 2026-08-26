@@ -390,7 +390,7 @@ export function useAtomicOrderSave() {
         })
       })
 
-      const localItems = itemPlan.upsertItems.map(item => {
+      const writtenItems = itemPlan.upsertItems.map(item => {
         const itemPayload = {
           ...item,
           order_id: input.orderId,
@@ -410,6 +410,21 @@ export function useAtomicOrderSave() {
           ...itemPayload,
           id: item.id,
           firestore_id: item.id,
+        } as OrderItemDoc
+      })
+
+      const writtenItemsById = new Map(writtenItems.map(item => [item.id, item]))
+      const existingItemsById = new Map(input.existingItems.map(item => [
+        String(item.id || (item as any).firestore_id || ''),
+        item,
+      ]))
+      const localItems = input.nextItems.map(item => {
+        const itemId = String(item.id || item.firestore_id || '')
+        return writtenItemsById.get(itemId) || {
+          ...(existingItemsById.get(itemId) || {}),
+          ...item,
+          id: itemId,
+          firestore_id: itemId,
         } as OrderItemDoc
       })
 
