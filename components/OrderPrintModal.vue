@@ -33,7 +33,7 @@ const printChoices: Array<{
   { key: 'quotation', title: 'Phiếu báo giá', description: 'Mẫu báo giá mới nhất theo Google Sheet.' },
   { key: 'order', title: 'Phiếu đặt hàng', description: 'Có cấu hình phần trăm tiền cọc trước khi in.' },
   { key: 'payment', title: 'Phiếu thanh toán', description: 'Có cấu hình trực tiếp số tiền đặt cọc trước khi in.' },
-  { key: 'delivery', title: 'Phiếu xuất hàng', description: 'Cùng mẫu ở trang yêu cầu xuất kho; sản phẩm lấy toàn bộ từ đơn hàng.' },
+  { key: 'delivery', title: 'Phiếu xuất hàng', description: 'Giống phiếu ở yêu cầu xuất kho; chỉ thay sản phẩm bằng toàn bộ sản phẩm của đơn.' },
 ]
 
 watch(
@@ -114,6 +114,46 @@ const deliveryRequest = computed(() => {
   }
 })
 
+const deliverySnapshot = computed(() => {
+  const request = deliveryRequest.value || {}
+  const payload = safeJsonParse(request.payload_json, {})
+  return {
+    customerId: request.customer_id || payload?.customer_id || props.order.customer_id || '',
+    receiverName: request.receiver_name || payload?.receiver_name || props.order.customer_name || '',
+    receiverPhone: request.receiver_phone || payload?.receiver_phone || props.order.phone || '',
+    receiverAddress: request.receiver_address
+      || payload?.receiver_address
+      || (props.order as any).shipping_address
+      || (props.order as any).billing_address
+      || '',
+    saleName: request.sale_name || payload?.sale_name || (props.order as any).sale_name || '',
+  }
+})
+
+const deliveryOrder = computed(() => ({
+  ...props.order,
+  id: deliveryRequest.value?.order_id || props.order.id || '',
+  order_code: deliveryRequest.value?.order_code || props.order.order_code || deliveryRequest.value?.request_id || '',
+  order_date: deliveryRequest.value?.order_date
+    || deliveryRequest.value?.requested_at
+    || deliveryRequest.value?.created_at
+    || (props.order as any).order_date
+    || '',
+  customer_id: deliverySnapshot.value.customerId,
+  customer_name: deliverySnapshot.value.receiverName,
+  phone: deliverySnapshot.value.receiverPhone,
+  shipping_address: deliverySnapshot.value.receiverAddress,
+  billing_address: deliverySnapshot.value.receiverAddress,
+  sale_name: deliverySnapshot.value.saleName,
+}))
+
+const deliveryCustomer = computed(() => ({
+  customer_name: deliverySnapshot.value.receiverName,
+  phone: deliverySnapshot.value.receiverPhone,
+  shipping_address: deliverySnapshot.value.receiverAddress,
+  billing_address: deliverySnapshot.value.receiverAddress,
+}))
+
 function deliveryWarehouseName() {
   const request = deliveryRequest.value || {}
   const payload = safeJsonParse(request.payload_json, {})
@@ -138,9 +178,9 @@ function printDocument(kind: OrderPrintChoiceKey) {
       return
     }
     const html = buildDeliveryPrintHtml({
-      order: props.order,
+      order: deliveryOrder.value,
       request: deliveryRequest.value,
-      customer: customer.value,
+      customer: deliveryCustomer.value,
       rows: deliveryRows.value,
       warehouseName: deliveryWarehouseName(),
       assetBase: window.location.origin,
