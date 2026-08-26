@@ -125,6 +125,31 @@ test('absolute admin can reconcile a fully exported order without opening normal
   await assertSucceeds(updateDoc(doc(db, 'orders', 'order-a'), reconciledPatch()))
 })
 
+test('absolute admin can repair legacy relation/payment numeric strings to canonical numbers', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore()
+    await updateDoc(doc(db, 'orders', 'order-a'), {
+      relation_lock_version: '1',
+      payment_record_count: '1',
+      invoice_record_count: '1',
+      shipment_record_count: '1',
+      paid_amount: '200',
+      debt_amount: '800',
+      payment_count: '1',
+      deposit_count: '1',
+      collect_count: '0',
+      shipping_fee_total: '25',
+      cod_amount_total: '500',
+      payment_relation_revision: '0',
+      invoice_relation_revision: '0',
+      shipment_relation_revision: '0',
+    })
+  })
+
+  const db = env.authenticatedContext(ADMIN, { email: ADMIN }).firestore()
+  await assertSucceeds(updateDoc(doc(db, 'orders', 'order-a'), reconciledPatch()))
+})
+
 test('normal owner cannot forge the admin reconciliation marker', async () => {
   const db = env.authenticatedContext(USER, { email: USER }).firestore()
   await assertFails(updateDoc(doc(db, 'orders', 'order-a'), reconciledPatch(USER)))
