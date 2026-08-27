@@ -28,8 +28,8 @@ export type ReconcileLegacyOrderForEditResult = {
   order: OrderDoc
 }
 
-function rows(snapshot: Awaited<ReturnType<typeof getDocs>>) {
-  return snapshot.docs.map(item => ({ ...item.data(), id: item.id }))
+function rows(snapshot: any) {
+  return snapshot.docs.map((item: any) => ({ ...item.data(), id: item.id }))
 }
 
 /**
