@@ -13,6 +13,7 @@ import {
   normalizeInvoiceStatus,
 } from '~/utils/orderInvoiceFlow.mjs'
 import { normalizeEmail, toNumber } from '~/utils/format'
+import { reconcileLegacyOrderForEdit } from '~/utils/reconcileLegacyOrderForEdit'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import {
   assertAtomicOrderWriteLimit,
@@ -118,6 +119,19 @@ export function useAtomicOrderSave() {
     } else if (invoiceMutation?.mode === 'legacy_create'
       && invoiceMutation.invoiceId !== buildOrderInvoiceId(input.orderId)) {
       throw new Error('ID hóa đơn legacy không khớp đơn hàng.')
+    }
+
+    // Legacy orders may still persist payment/relation counters as numeric
+    // strings. Firestore Rules validate the real types, so the normal edit
+    // branch can return permission-denied even when the actor has '*'. Repair
+    // exactly the order being edited before opening the atomic transaction;
+    // this avoids racing the slower background reconciliation of all orders.
+    if (input.mode === 'edit' && (permissions.value || []).includes('*')) {
+      await reconcileLegacyOrderForEdit({
+        db,
+        orderId: input.orderId,
+        actor,
+      })
     }
 
     const writeCount = assertAtomicOrderWriteLimit({
