@@ -150,6 +150,37 @@ test('đối soát chạy ngầm chỉ ghi khi dữ liệu khóa thực sự l�
   assert.equal(relationReconcileNeeded({ ...readyOrder, ...patch }, patch), false)
 })
 
+test('đối soát phát hiện numeric string legacy dù giá trị nhìn giống number', () => {
+  const patch = buildReconciledOrderRelationPatch({
+    order: readyOrder,
+    actor: 'admin@example.com',
+    updatedAt: 'now',
+  })
+  const canonical = { ...readyOrder, ...patch }
+  const legacyStringTypes = {
+    ...canonical,
+    relation_lock_version: '1',
+    payment_record_count: '0',
+    invoice_record_count: '0',
+    shipment_record_count: '0',
+    paid_amount: '0',
+    debt_amount: '1000',
+    payment_count: '0',
+    deposit_count: '0',
+    collect_count: '0',
+    shipping_fee_total: '0',
+    cod_amount_total: '0',
+    payment_relation_revision: '0',
+    invoice_relation_revision: '0',
+    shipment_relation_revision: '0',
+  }
+
+  assert.equal(relationLockReady(legacyStringTypes), false)
+  assert.equal(relationReconcileNeeded(legacyStringTypes, patch), true)
+  assert.equal(relationLockReady(canonical), true)
+  assert.equal(relationReconcileNeeded(canonical, patch), false)
+})
+
 test('thay chứng từ theo ID không làm trùng dữ liệu client', () => {
   const next = replaceRelationRecord([{ id: 'a', amount: 1 }, { id: 'b', amount: 2 }], { id: 'a', amount: 3 })
   assert.deepEqual(next, [{ id: 'b', amount: 2 }, { id: 'a', amount: 3 }])

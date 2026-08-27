@@ -16,6 +16,14 @@ function round2(value) {
   return Math.round((number(value) + Number.EPSILON) * 100) / 100
 }
 
+function canonicalNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function canonicalNonNegativeInt(value) {
+  return Number.isInteger(value) && value >= 0
+}
+
 export function isActiveOrderRelation(record = {}) {
   const status = text(record.status).toLowerCase()
   return record.deleted !== true
@@ -174,12 +182,12 @@ export function buildOrderRelationPatch({
 }
 
 export function relationLockReady(order = {}) {
-  return number(order.relation_lock_version) === ORDER_RELATION_LOCK_VERSION
+  return order.relation_lock_version === ORDER_RELATION_LOCK_VERSION
     && RELATION_MODULES.every(module => {
       const count = order[relationCountField(module)]
       const revision = order[relationRevisionField(module)]
-      return Number.isInteger(Number(count)) && Number(count) >= 0
-        && Number.isInteger(Number(revision)) && Number(revision) >= 0
+      return canonicalNonNegativeInt(count)
+        && canonicalNonNegativeInt(revision)
     })
 }
 
@@ -222,7 +230,12 @@ export function relationReconcileNeeded(order = {}, patch = {}) {
     if (!Object.prototype.hasOwnProperty.call(order, field)) return true
     const current = order[field]
     const next = patch[field]
-    if (typeof next === 'number') return Number(current) !== next
+    // Firestore Rules validate the persisted types, not only their semantic
+    // numeric value. Legacy data such as "0" must therefore be reconciled to
+    // the canonical numeric 0 instead of being treated as already equal.
+    if (typeof next === 'number') {
+      return !canonicalNumber(current) || current !== next
+    }
     return text(current) !== text(next)
   })
 }
