@@ -159,7 +159,15 @@ beforeEach(async () => {
 
 after(async () => env.cleanup())
 
-test('absolute admin can edit one quantity even when parent order rewrites embedded 10-item snapshot', async () => {
+test('client strips legacy embedded items and system fields before atomic edit', () => {
+  const source = readFileSync('composables/useAtomicOrderSave.ts', 'utf8')
+  assert.match(source, /stripOrderEditSystemFields\(input\.orderPayload/)
+  assert.match(source, /function withoutLegacyEmbeddedItems/)
+  assert.match(source, /before_json: JSON\.stringify\(withoutLegacyEmbeddedItems\(input\.activityBefore/)
+  assert.match(source, /\.\.\.withoutLegacyEmbeddedItems\(finalOrderPayload\)/)
+})
+
+test('absolute admin can edit one quantity while legacy parent embedded snapshot stays untouched', async () => {
   const db = env.authenticatedContext(ADMIN, { email: ADMIN }).firestore()
   const nextItems = Array.from({ length: 10 }, (_, index) => item(index + 1, index === 0 ? 5001 : 5000))
 
@@ -174,7 +182,6 @@ test('absolute admin can edit one quantity even when parent order rewrites embed
     assert.equal(invoiceSnapshot.exists(), true)
 
     transaction.update(orderRef, {
-      items: nextItems,
       subtotal_no_vat: 101000,
       vat_amount: 8080,
       total_vat: 109080,
@@ -208,8 +215,8 @@ test('absolute admin can edit one quantity even when parent order rewrites embed
       item_code: 'LEGACY-EMBEDDED-0001',
       item_name: 'Khách embedded',
       changed_by: ADMIN,
-      before_json: JSON.stringify({ items: Array.from({ length: 10 }, (_, index) => item(index + 1)) }),
-      after_json: JSON.stringify({ items: nextItems }),
+      before_json: JSON.stringify({ revision: 1, items_count: 10 }),
+      after_json: JSON.stringify({ revision: 2, items_count: 10, removed_item_ids: [] }),
       operation_id: 'embedded-edit',
       order_revision: 2,
       active: true,
@@ -219,5 +226,5 @@ test('absolute admin can edit one quantity even when parent order rewrites embed
   }))
 
   assert.equal((await getDoc(doc(db, 'order_items', 'item-1'))).data().quantity, 5001)
-  assert.equal((await getDoc(doc(db, 'orders', 'order-embedded'))).data().items[0].quantity, 5001)
+  assert.equal((await getDoc(doc(db, 'orders', 'order-embedded'))).data().items[0].quantity, 5000)
 })
