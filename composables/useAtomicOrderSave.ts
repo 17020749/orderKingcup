@@ -27,6 +27,7 @@ import {
   preservePersistedOrderIdentityForEdit,
   resolveOrderOwnershipForSave,
   shouldReadExistingInvoiceSnapshot,
+  stripOrderEditSystemFields,
 } from '~/utils/orderAtomicSave.mjs'
 // @ts-ignore Shared ESM helpers are executed directly by Node client tests.
 import { moduleActionDecision, permissionDecisionMessage } from '~/utils/permissionDecisions.mjs'
@@ -78,6 +79,18 @@ export type AtomicOrderSaveResult = {
   invoiceStatus?: string
 }
 
+// Old order documents may still contain a top-level `items` snapshot from the
+// pre-order_items schema. The live form is hydrated from the whole order row,
+// so copying that field back into an edit needlessly enlarges the parent write
+// and the activity JSON. Large logo-heavy snapshots can push Firestore Rules
+// evaluation/audit limits and surface as permission-denied even for '*'. The
+// canonical item source is order_items, so never persist/audit this legacy copy.
+function withoutLegacyEmbeddedItems(payload: Record<string, any> | null | undefined) {
+  const clean = { ...(payload || {}) }
+  delete clean.items
+  return clean
+}
+
 export function useAtomicOrderSave() {
   const { db } = useFirebaseServices()
   const { appUser, permissions } = useAuth()
@@ -88,6 +101,15 @@ export function useAtomicOrderSave() {
     if (!input.nextItems.length) throw new Error('Vui lòng thêm ít nhất một sản phẩm.')
     const actor = normalizeEmail(input.changedBy || appUser.value?.email || '')
     if (!actor) throw new Error('Không xác định được người thao tác.')
+
+    // A form opened from a legacy row can still carry persisted relation,
+    // payment, warehouse and embedded-items fields. Dedicated transaction
+    // branches own those system fields; a normal edit must not replay them.
+    const editableOrderPayload = withoutLegacyEmbeddedItems(
+      input.mode === 'edit'
+        ? stripOrderEditSystemFields(input.orderPayload || {})
+        : input.orderPayload || {},
+    )
 
     const invoiceMutation = input.invoiceMutation
     if (input.mode === 'create') {
@@ -264,10 +286,10 @@ export function useAtomicOrderSave() {
         ? (sequenceSnapshot?.exists()
           ? Math.max(ORDER_SEQUENCE_START - 1, toNumber(sequenceSnapshot.data().last_number)) + 1
           : ORDER_SEQUENCE_START)
-        : toNumber(existingOrder.order_sequence || input.orderPayload.order_sequence)
+        : toNumber(existingOrder.order_sequence || editableOrderPayload.order_sequence)
       const orderCode = input.mode === 'create'
         ? buildOrderCode(input.userCode, input.customerCode, orderSequence)
-        : String(existingOrder.order_code || input.orderPayload.order_code || '')
+        : String(existingOrder.order_code || editableOrderPayload.order_code || '')
 
       const invoiceRelationPatch = invoiceMutation?.mode === 'create'
         ? {
@@ -308,10 +330,10 @@ export function useAtomicOrderSave() {
             : {}
 
       const candidateFinalOrderPayload = {
-        ...input.orderPayload,
+        ...editableOrderPayload,
         ...invoiceRelationPatch,
         ...(input.mode === 'edit'
-          ? buildOrderPaymentSummaryForPayable(existingOrder, input.orderPayload.payable_amount)
+          ? buildOrderPaymentSummaryForPayable(existingOrder, editableOrderPayload.payable_amount)
           : {}),
         order_code: orderCode,
         order_sequence: orderSequence,
@@ -326,7 +348,7 @@ export function useAtomicOrderSave() {
       }
       if (input.mode === 'edit') {
         assertOrderEditIdentityUnchanged({
-          ...input.orderPayload,
+          ...editableOrderPayload,
           customer_id: input.customerId,
           customer_code: input.customerCode,
           user_code: input.userCode,
@@ -459,9 +481,9 @@ export function useAtomicOrderSave() {
         item_code: orderCode,
         item_name: input.activityItemName || orderCode,
         changed_by: input.changedBy,
-        before_json: JSON.stringify(input.activityBefore || {}),
+        before_json: JSON.stringify(withoutLegacyEmbeddedItems(input.activityBefore || {})),
         after_json: JSON.stringify({
-          ...finalOrderPayload,
+          ...withoutLegacyEmbeddedItems(finalOrderPayload),
           items_count: localItems.length,
           removed_item_ids: itemPlan.removedItems.map(item => item.id || item.firestore_id),
         }),
