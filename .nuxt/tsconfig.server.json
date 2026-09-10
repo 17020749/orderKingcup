@@ -110,6 +110,9 @@
       "#internal/nuxt/paths": [
         "../node_modules/@nuxt/nitro-server/dist/runtime/utils/paths"
       ],
+      "~/composables/useScopedQueries": [
+        "../runtime/useScopedQueriesBridge"
+      ],
       "#unhead/composables": [
         "../node_modules/nuxt/dist/head/runtime/composables/v3"
       ]
@@ -124,6 +127,8 @@
   },
   "include": [
     "./types/nitro-nuxt.d.ts",
+    "../modules/runtime/server",
+    "../modules/dist/runtime/server",
     "../node_modules/runtime/server",
     "../node_modules/dist/runtime/server",
     "../server/**/*",
