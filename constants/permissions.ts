@@ -157,7 +157,7 @@ export const PERMISSION_CATALOG: PermissionItem[] = [
   { key: 'activity_logs.view', group: 'Nhật ký', name: 'Xem nhật ký hoạt động' }
 ]
 
-export const ORDER_STATUS_OPTIONS = ['Mới tạo', 'Đã báo giá', 'Đã cọc', 'Đang sản xuất', 'Chờ xuất kho', 'Đang giao', 'Đã hoàn thành', 'Đã hủy']
+export const ORDER_STATUS_OPTIONS = ['Nháp', 'Mới tạo', 'Đã báo giá', 'Đã cọc', 'Đang sản xuất', 'Chờ xuất kho', 'Đang giao', 'Đã hoàn thành', 'Đã hủy']
 export const ORDER_CLASSIFICATION_OPTIONS = ['Chăm sóc', 'Số mới', 'Đại lý', 'Ads', 'Chuỗi']
 export const PAYMENT_STATUS_OPTIONS = ['Chưa thanh toán', 'Đã cọc', 'Đã cọc + thanh toán 1 phần', 'Thanh toán một phần', 'Đã thanh toán', 'Thanh toán thừa']
 export const PAYMENT_TYPES = ['Cọc', 'Thu 1', 'Thu 2', 'Thu 3', 'Thanh toán đủ']
