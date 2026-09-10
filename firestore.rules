@@ -1743,7 +1743,8 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
     }
 
     function orderPriceEditAllowed() {
-      return hasPerm('orders.edit')
+      return changedAny(['price_revision'])
+        && hasPerm('orders.edit')
         && (
           ownEmailField(resource.data, 'owner_email')
           || ownEmailField(resource.data, 'created_by')
@@ -1751,7 +1752,6 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           || hasPerm('orders.view_all')
         )
         && orderIdentityUnchanged()
-        && changedAny(['price_revision'])
         && onlyChanged([
           'subtotal_no_vat', 'vat_amount', 'total_vat', 'actual_revenue', 'payable_amount',
           'debt_amount', 'payment_status', 'computed_payment_status',
@@ -1811,7 +1811,7 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
     function fulfilledOrderInvoiceMutationFieldsAllowed() {
       let orderDate = request.resource.data.get('order_date', null);
       return onlyChanged([
-          'order_date', 'order_status',
+          'order_date', 'order_status', 'order_classification',
           'invoice_status', 'invoice_record_count', 'invoice_relation_revision',
           'relation_lock_version', 'relation_last_module', 'relation_last_action',
           'relation_last_document_id', 'relation_updated_by', 'relation_updated_at',
@@ -1830,6 +1830,10 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           !changedAny(['order_status'])
           || validBoundedString(request.resource.data.get('order_status', ''), 1, 200)
         )
+        && (
+          !changedAny(['order_classification'])
+          || validBoundedString(request.resource.data.get('order_classification', null), 0, 200)
+        )
         && request.resource.data.get('revision', -1) is int
         && request.resource.data.get('revision', -1)
           == resource.data.get('revision', 0) + 1
@@ -1843,8 +1847,7 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
     function orderSaleInvoiceStatusUpdateAllowed(orderId) {
       let documentId = request.resource.data.get('relation_last_document_id', '');
       let childPath = invoicePath(documentId);
-      return hasPerm('orders.edit')
-        && (ownsOrderData(resource.data) || hasPerm('orders.view_all') || isAdmin())
+      return canEditOrderData(resource.data)
         && orderIdentityUnchanged()
         && orderEditKeepsNonInvoiceSystemFields()
         && (
@@ -1886,8 +1889,7 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
       let invoiceId = request.resource.data.get('relation_last_document_id', '');
       let childPath = invoicePath(invoiceId);
       let currentRevision = resource.data.get('invoice_relation_revision', 0);
-      return hasPerm('orders.edit')
-        && (ownsOrderData(resource.data) || hasPerm('orders.view_all') || isAdmin())
+      return canEditOrderData(resource.data)
         && orderIdentityUnchanged()
         && orderLegacyInvoiceCreateKeepsOtherSystemFields()
         && (
@@ -1985,19 +1987,17 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
     function fulfilledOrderMetadataUpdateAllowed() {
       let orderDate = request.resource.data.get('order_date', null);
       return fulfillmentStatus() == 'da_xuat_du'
-        && hasPerm('orders.edit')
-        && (
-          ownsOrderData(resource.data)
-          || hasPerm('orders.view_all')
-        )
+        && canEditOrderData(resource.data)
         && orderIdentityUnchanged()
         && changedAny([
           'order_date',
-          'order_status'
+          'order_status',
+          'order_classification'
         ])
         && onlyChanged([
           'order_date',
           'order_status',
+          'order_classification',
           'revision',
           'last_operation_id',
           'updated_at'
@@ -2014,6 +2014,10 @@ function saleInvoiceStatusUpdateAllowed(invoiceId) {
           request.resource.data.get('order_status', ''),
           1,
           200
+        )
+        && (
+          !changedAny(['order_classification'])
+          || validBoundedString(request.resource.data.get('order_classification', null), 0, 200)
         )
         && request.resource.data.get('revision', -1) is int
         && request.resource.data.get('revision', -1)
