@@ -779,11 +779,13 @@ async function saveFulfilledMetadataOnly() {
   const currentMetadata = {
     order_date: dateTimeLocal(currentOrder.order_date) || String(currentOrder.order_date || ''),
     order_status: String(currentOrder.order_status || ''),
+    order_classification: String(currentOrder.order_classification || ''),
     invoice_status: normalizeInvoiceStatus(currentOrder.invoice_status),
   }
   const nextMetadata = {
     order_date: form.order_date,
     order_status: form.order_status,
+    order_classification: form.order_classification,
     invoice_status: normalizeInvoiceStatus(form.invoice_status),
   }
   const candidateTotals = calcItems(buildSaveItems(), form)
@@ -794,7 +796,7 @@ async function saveFulfilledMetadataOnly() {
 
   try {
     if (!fulfilledOrderMetadataChanged(currentMetadata, nextMetadata) && !candidatePriceChanged) {
-      showToast('Ngày giờ, trạng thái đơn và hóa đơn chưa thay đổi.', 'info')
+      showToast('Đơn giá, ngày giờ, phân loại, trạng thái đơn và hóa đơn chưa thay đổi.', 'info')
       return
     }
   } catch (error) {
@@ -876,6 +878,7 @@ async function saveFulfilledMetadataOnly() {
         expectedRevision,
         orderDate: form.order_date,
         orderStatus: form.order_status,
+        orderClassification: form.order_classification || '',
         invoiceStatus: requestedInvoiceStatus,
         invoiceMutation,
       })
@@ -1661,7 +1664,7 @@ onMounted(loadRows)
 
     <BaseModal
       v-if="showModal"
-      :title="editingFulfilledOrder ? 'Sửa đơn giá / ngày giờ / trạng thái / hóa đơn' : editing ? 'Sửa đơn hàng' : 'Tạo đơn hàng'"
+      :title="editing ? 'Sửa đơn hàng' : 'Tạo đơn hàng'"
       size="xl"
       save-label="Lưu đơn"
       :loading="saving"
@@ -1670,11 +1673,12 @@ onMounted(loadRows)
     >
       <div v-if="editingFulfilledOrder" class="card" style="padding:16px; margin-bottom:16px;">
         <div class="small subtle" style="margin-bottom:12px;">
-          Đơn đã xuất đủ. Hệ thống chỉ cho phép cập nhật đơn giá, ngày giờ, trạng thái đơn và trạng thái hóa đơn; sản phẩm, số lượng và dữ liệu kho được giữ nguyên.
+          Đơn đã xuất đủ. Có thể cập nhật đơn giá, ngày giờ, phân loại đơn, trạng thái đơn và trạng thái hóa đơn; sản phẩm, số lượng và dữ liệu kho được giữ nguyên.
         </div>
         <div class="form-row-3">
           <div class="form-group"><label>Mã đơn</label><input v-model="form.order_code" class="input readonly-field" readonly /></div>
           <div class="form-group"><label>Ngày giờ đơn</label><input v-model="form.order_date" class="input" type="datetime-local" /></div>
+          <div class="form-group"><label>Phân loại đơn</label><select v-model="form.order_classification" class="select"><option v-for="s in ORDER_CLASSIFICATION_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
           <div class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
           <div class="form-group">
             <label>Hóa đơn</label>
@@ -1738,7 +1742,7 @@ onMounted(loadRows)
           />
         </div>
         <div class="form-group"><label>SĐT</label><input v-model="form.phone" class="input" /></div>
-        <div class="form-group"><label>Phân loại đơn</label><select v-model="form.order_classification" class="select"><option v-for="s in ORDER_CLASSIFICATION_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
+        <div v-if="!editingFulfilledOrder" class="form-group"><label>Phân loại đơn</label><select v-model="form.order_classification" class="select"><option v-for="s in ORDER_CLASSIFICATION_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div v-if="!editingFulfilledOrder" class="form-group"><label>Trạng thái đơn</label><select v-model="form.order_status" class="select"><option v-for="s in ORDER_STATUS_OPTIONS" :key="s" :value="s">{{ s }}</option></select></div>
         <div v-if="!editingFulfilledOrder" class="form-group">
           <label>Hóa đơn</label>

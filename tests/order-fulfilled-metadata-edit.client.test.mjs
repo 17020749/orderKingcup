@@ -38,16 +38,18 @@ test('recognizes only fully exported orders as fulfilled', () => {
   assert.equal(isFulfilledOrder({ warehouse_fulfillment_status: '' }), false)
 })
 
-test('normalizes the three editable fulfilled-order fields', () => {
-  assert.deepEqual(FULFILLED_ORDER_METADATA_FIELDS, ['order_date', 'order_status', 'invoice_status'])
+test('normalizes the editable fulfilled-order fields including classification', () => {
+  assert.deepEqual(FULFILLED_ORDER_METADATA_FIELDS, ['order_date', 'order_status', 'order_classification', 'invoice_status'])
   assert.deepEqual(normalizeFulfilledOrderMetadata({
     orderDate: ' 2026-08-06T19:30 ',
     orderStatus: ' Hoàn thành ',
     invoiceStatus: ' Yêu cầu xuất ',
+    orderClassification: ' Chuỗi ',
   }), {
     order_date: '2026-08-06T19:30',
     order_status: 'Hoàn thành',
     invoice_status: 'Yêu cầu xuất',
+    order_classification: 'Chuỗi',
   })
 })
 
@@ -57,6 +59,7 @@ test('base fulfilled metadata patch excludes invoice relation fields and advance
     orderDate: '2026-08-06T19:30',
     orderStatus: 'Hoàn thành',
     invoiceStatus: 'Không xuất',
+    orderClassification: 'Ads',
     currentRevision: 7,
     operationId: 'order:ord_1:edit:abc',
     updatedAt,
@@ -67,12 +70,13 @@ test('base fulfilled metadata patch excludes invoice relation fields and advance
     order_date: '2026-08-06T19:30',
     order_status: 'Hoàn thành',
     revision: 8,
+    order_classification: 'Ads',
     last_operation_id: 'order:ord_1:edit:abc',
     updated_at: updatedAt,
   })
 })
 
-test('detects date, order status or invoice status changes', () => {
+test('detects date, classification, order status or invoice status changes', () => {
   const current = {
     order_date: '2026-08-06T19:30',
     order_status: 'Hoàn thành',
@@ -80,6 +84,14 @@ test('detects date, order status or invoice status changes', () => {
   }
 
   assert.equal(fulfilledOrderMetadataChanged(current, current), false)
+  assert.equal(fulfilledOrderMetadataChanged(current, {
+    ...current,
+    order_classification: 'Ads',
+  }), true)
+  assert.equal(fulfilledOrderMetadataChanged({ ...current, order_classification: 'Ads' }, {
+    ...current,
+    order_classification: 'Chuỗi',
+  }), true)
   assert.equal(fulfilledOrderMetadataChanged(current, {
     ...current,
     order_status: 'Đang xử lý',
@@ -92,6 +104,15 @@ test('detects date, order status or invoice status changes', () => {
     ...current,
     invoice_status: 'Yêu cầu xuất',
   }), true)
+})
+
+test('classification stays compatible with unclassified legacy orders and rejects invalid values', () => {
+  const current = { order_date: '2026-08-06T19:30', order_status: 'Hoàn thành', invoice_status: 'Đã xuất' }
+  assert.equal(normalizeFulfilledOrderMetadata(current).order_classification, '')
+  assert.equal(fulfilledOrderMetadataChanged(current, { ...current, order_classification: '' }), false)
+  for (const value of [123, [], {}, 'x'.repeat(201)]) {
+    assert.throws(() => normalizeFulfilledOrderMetadata({ ...current, order_classification: value }), /Phân loại đơn/)
+  }
 })
 
 test('fulfilled invoice transition lets Sale toggle request state but locks Đã xuất', () => {
@@ -138,8 +159,10 @@ test('keeps one edit button and exposes price plus metadata for fulfilled orders
     ordersPageSource,
     /if \(editing\.value && editingFulfilledOrder\.value\) return saveFulfilledMetadataOnly\(\)/,
   )
-  assert.match(ordersPageSource, /Sửa đơn giá \/ ngày giờ \/ trạng thái \/ hóa đơn/)
-  assert.match(ordersPageSource, /Đơn đã xuất đủ\. Hệ thống chỉ cho phép cập nhật đơn giá, ngày giờ, trạng thái đơn và trạng thái hóa đơn/)
+  assert.match(ordersPageSource, /Đơn đã xuất đủ\. Có thể cập nhật đơn giá, ngày giờ, phân loại đơn, trạng thái đơn và trạng thái hóa đơn/)
+  const unlockedFields = ordersPageSource.slice(ordersPageSource.indexOf('<BaseModal'), ordersPageSource.indexOf('<fieldset :disabled="editingFulfilledOrder"'))
+  assert.match(unlockedFields, /v-model="form.order_classification"/)
+  assert.match(ordersPageSource, /orderClassification: form\.order_classification/)
   assert.match(ordersPageSource, /useOrderPriceSave/)
   assert.match(ordersPageSource, /v-model\.number="item\.unit_price"/)
   assert.match(ordersPageSource, /<fieldset :disabled="editingFulfilledOrder"/)
@@ -163,7 +186,7 @@ test('firestore rules keep plain metadata strict and allow invoice relation only
   assert.match(firestoreRulesSource, /function fulfilledOrderMetadataUpdateAllowed\(\)/)
   assert.match(
     firestoreRulesSource,
-    /onlyChanged\(\[\s*'order_date',\s*'order_status',\s*'revision',\s*'last_operation_id',\s*'updated_at'\s*\]\)/,
+    /onlyChanged\(\[\s*'order_date',\s*'order_status',\s*'order_classification',\s*'revision',\s*'last_operation_id',\s*'updated_at'\s*\]\)/,
   )
   assert.match(firestoreRulesSource, /function fulfilledOrderInvoiceMutationFieldsAllowed\(\)/)
   assert.match(

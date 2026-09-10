@@ -42,6 +42,7 @@ type FulfilledOrderMetadataSaveInput = {
   expectedRevision: number
   orderDate: string
   orderStatus: string
+  orderClassification: string
   invoiceStatus: string
   invoiceMutation?: FulfilledInvoiceMutation
 }
@@ -49,6 +50,7 @@ type FulfilledOrderMetadataSaveInput = {
 type FulfilledOrderMetadataSaveResult = {
   order_date: string
   order_status: string
+  order_classification: string
   invoice_status: string
   revision: number
   invoice_relation_revision: number
@@ -245,6 +247,7 @@ export function useFulfilledOrderMetadataSave() {
         before_json: JSON.stringify({
           order_date: current.order_date || '',
           order_status: current.order_status || '',
+          order_classification: current.order_classification || '',
           invoice_status: currentInvoiceStatus,
         }),
         after_json: JSON.stringify(normalized),

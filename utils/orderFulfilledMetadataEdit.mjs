@@ -9,6 +9,7 @@ export const FULFILLED_ORDER_STATUS = 'da_xuat_du'
 export const FULFILLED_ORDER_METADATA_FIELDS = Object.freeze([
   'order_date',
   'order_status',
+  'order_classification',
   'invoice_status',
 ])
 
@@ -17,6 +18,7 @@ export const FULFILLED_ORDER_METADATA_FIELDS = Object.freeze([
 export const FULFILLED_ORDER_METADATA_WRITE_FIELDS = Object.freeze([
   'order_date',
   'order_status',
+  'order_classification',
   'revision',
   'last_operation_id',
   'updated_at',
@@ -41,6 +43,11 @@ export function isFulfilledOrder(order = {}) {
 export function normalizeFulfilledOrderMetadata(input = {}) {
   const orderDate = text(input.orderDate ?? input.order_date)
   const orderStatus = text(input.orderStatus ?? input.order_status)
+  const rawClassification = input.orderClassification ?? input.order_classification ?? ''
+  if (typeof rawClassification !== 'string' || rawClassification.trim().length > 200) {
+    throw new Error('Phân loại đơn không hợp lệ.')
+  }
+  const orderClassification = text(rawClassification)
   const invoiceStatus = normalizeInvoiceStatus(input.invoiceStatus ?? input.invoice_status)
 
   if (!orderDate) throw new Error('Ngày giờ đơn không được để trống.')
@@ -52,6 +59,7 @@ export function normalizeFulfilledOrderMetadata(input = {}) {
   return {
     order_date: orderDate,
     order_status: orderStatus,
+    order_classification: orderClassification,
     invoice_status: invoiceStatus,
   }
 }
@@ -76,6 +84,7 @@ export function fulfilledOrderMetadataChanged(current = {}, next = {}) {
   const normalized = normalizeFulfilledOrderMetadata(next)
   return text(current.order_date) !== normalized.order_date
     || text(current.order_status) !== normalized.order_status
+    || text(current.order_classification) !== normalized.order_classification
     || normalizeInvoiceStatus(current.invoice_status) !== normalized.invoice_status
 }
 
@@ -91,6 +100,7 @@ export function buildFulfilledOrderMetadataPatch(input = {}) {
   return {
     order_date: normalized.order_date,
     order_status: normalized.order_status,
+    order_classification: normalized.order_classification,
     revision: revision(input.currentRevision ?? input.revision) + 1,
     last_operation_id: operationId,
     updated_at: input.updatedAt,

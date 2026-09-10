@@ -9,6 +9,7 @@ import {
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   query,
   serverTimestamp,
@@ -269,7 +270,7 @@ test('đơn chỉ có trạng thái nghiệp vụ Hoàn thành vẫn xóa đư�
   }))
 })
 
-test('đơn đã xuất đủ chỉ cho sửa ngày giờ và trạng thái đơn', async () => {
+test('đơn đã xuất đủ cho sửa ngày giờ và trạng thái đơn nhưng vẫn khóa ghi chú', async () => {
   await seed({
     order_status: 'Hoàn thành',
     warehouse_fulfillment_status: 'da_xuat_du',
@@ -295,6 +296,101 @@ test('đơn đã xuất đủ cho Sale đổi trạng thái hóa đơn cùng par
   const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
 
   await assertSucceeds(fulfilledInvoiceUpdateBatch(db, 'Yêu cầu xuất').commit())
+})
+
+function classificationPatch(value = 'Ads', overrides = {}) {
+  return {
+    order_classification: value,
+    revision: 5,
+    last_operation_id: 'classification-edit:test',
+    updated_at: serverTimestamp(),
+    ...overrides,
+  }
+}
+
+for (const fulfillment of ['chua_xuat', 'da_xuat_1_phan', 'da_xuat_du']) {
+  for (const classification of ['Chăm sóc', 'Số mới', 'Đại lý', 'Ads', 'Chuỗi']) {
+    test(`editor can change classification to ${classification} for ${fulfillment}`, async () => {
+      await seed({ warehouse_fulfillment_status: fulfillment, revision: 4 })
+      const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+      const ref = doc(db, 'orders', 'order-delete')
+      await assertSucceeds(updateDoc(ref, classificationPatch(classification)))
+      const saved = (await getDoc(ref)).data()
+      assert.equal(saved.order_classification, classification)
+      assert.equal(saved.warehouse_fulfillment_status, fulfillment)
+      assert.equal(saved.payable_amount, 0)
+    })
+  }
+}
+
+test('classification remains editable after the invoice has been issued', async () => {
+  await seedFulfilledInvoice('Đã xuất')
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+  await assertSucceeds(updateDoc(doc(db, 'orders', 'order-delete'), classificationPatch('Chuỗi')))
+  const saved = (await getDoc(doc(db, 'orders', 'order-delete'))).data()
+  assert.equal(saved.invoice_status, 'Đã xuất')
+  assert.equal(saved.invoice_relation_revision, 3)
+})
+
+test('classification can change together with an allowed invoice transition', async () => {
+  await seedFulfilledInvoice()
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+  await assertSucceeds(fulfilledInvoiceUpdateBatch(db, 'Yêu cầu xuất', {
+    extraOrder: { order_classification: 'Ads' },
+  }).commit())
+})
+
+test('classification edits require edit permission and ownership or view_all', async () => {
+  await seed({ warehouse_fulfillment_status: 'da_xuat_du', revision: 4 })
+  const other = 'classification-other@example.com'
+  const cases = [
+    { email: OWNER, permissions: ['orders.view'], allowed: false },
+    { email: other, permissions: ['orders.edit', 'orders.view'], allowed: false },
+    { email: other, permissions: ['orders.view_all'], allowed: false },
+    { email: other, permissions: ['orders.edit', 'orders.view_all'], allowed: true },
+  ]
+  await assertFails(updateDoc(doc(env.unauthenticatedContext().firestore(), 'orders', 'order-delete'), classificationPatch()))
+  for (const scenario of cases) {
+    await env.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), 'users', scenario.email), {
+        email: scenario.email, active: true, deleted: false,
+        permissions_flat: ['page.orders', ...scenario.permissions],
+      })
+    })
+    const db = env.authenticatedContext(scenario.email, { email: scenario.email }).firestore()
+    const result = updateDoc(doc(db, 'orders', 'order-delete'), classificationPatch())
+    await (scenario.allowed ? assertSucceeds(result) : assertFails(result))
+  }
+})
+
+test('classification changes cannot bypass fulfilled order field locks or revision checks', async () => {
+  await seed({ warehouse_fulfillment_status: 'da_xuat_du', revision: 4 })
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+  for (const extra of [
+    { owner_email: 'other@example.com' },
+    { note: 'forged' },
+    { payable_amount: 99 },
+    { warehouse_fulfillment_status: 'chua_xuat' },
+    { invoice_status: 'Đã xuất' },
+    { revision: 4 },
+    { revision: 6 },
+    { last_operation_id: '' },
+    { updated_at: 'forged' },
+    { extra_field: 'forged' },
+  ]) {
+    await assertFails(updateDoc(doc(db, 'orders', 'order-delete'), classificationPatch('Ads', extra)))
+  }
+})
+
+test('classification validates type and length in plain and invoice-linked saves', async () => {
+  await seedFulfilledInvoice()
+  const db = env.authenticatedContext(OWNER, { email: OWNER }).firestore()
+  for (const classification of [123, null, [], {}, 'x'.repeat(201)]) {
+    await assertFails(updateDoc(doc(db, 'orders', 'order-delete'), classificationPatch(classification)))
+    await assertFails(fulfilledInvoiceUpdateBatch(db, 'Yêu cầu xuất', {
+      extraOrder: { order_classification: classification },
+    }).commit())
+  }
 })
 
 test('đơn đã xuất đủ không cho lợi dụng cập nhật hóa đơn để sửa field khác', async () => {
